@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "tnt-coating",
+  "version": "${version}",
+  "name": "Comet by Boyonabike",
+  "authors": [
+    "Boyonabike"
+  ],
+  "description": "Comet by Boyonabike: TNT surface coating, priority jump placement, scaffold strips and tunnel backfill.",
+  "environment": "client",
+  "license": "CC0-1.0",
+  "entrypoints": {
+    "meteor": [
+      "dev.tntcoating.TntCoatingAddon"
+    ]
+  },
+  "custom": {
+    "meteor-client:color": "225,80,55"
+  },
+  "depends": {
+    "java": ">=${jdk_version}",
+    "minecraft": "${minecraft_version}",
+    "fabricloader": ">=0.19.3",
+    "meteor-client": "*"
+  },
+  "mixins": [
+    "comet.mixins.json"
+  ]
+}
