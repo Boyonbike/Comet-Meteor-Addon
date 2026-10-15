@@ -6,7 +6,7 @@
   "authors": [
     "Boyonabike"
   ],
-  "description": "Comet by Boyonabike: TNT surface coating, priority jump placement, scaffold strips and tunnel backfill.",
+  "description": "Comet by Boyonabike: TNT surface coating, priority jump placement, scaffold strips, tunnel backfill, Meteor waypoints on Xaero's maps, look-to-delete waypoints, Baritone elytra trips, elytra replacement, low-elytra logout and ElytraFly for Stash-Hunter.",
   "environment": "client",
   "license": "CC0-1.0",
   "entrypoints": {
@@ -22,6 +22,12 @@
     "minecraft": "${minecraft_version}",
     "fabricloader": ">=0.19.3",
     "meteor-client": "*"
+  },
+  "suggests": {
+    "xaerominimap": "*",
+    "xaeroworldmap": "*",
+    "baritone-meteor": "*",
+    "stash-hunter": "*"
   },
   "mixins": [
     "comet.mixins.json"

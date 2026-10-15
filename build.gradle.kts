@@ -20,6 +20,17 @@ repositories {
         name = "meteor-maven-snapshots"
         url = uri("https://maven.meteordev.org/snapshots")
     }
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "Modrinth"
+                url = uri("https://api.modrinth.com/maven")
+            }
+        }
+        filter {
+            includeGroup("maven.modrinth")
+        }
+    }
 }
 
 dependencies {
@@ -29,6 +40,10 @@ dependencies {
 
     // Meteor
     implementation(libs.meteor.client)
+
+    // Optional integrations, present at runtime only if the player installed them
+    compileOnly(libs.xaero.minimap)
+    compileOnly(libs.baritone)
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

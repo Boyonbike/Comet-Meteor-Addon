@@ -4,21 +4,6 @@ import java.util.List;
 public final class ModeGeometry {
     private ModeGeometry() {}
     public record Cell(int x, int y, int z) {}
-    /** Cardinal strip with centre first, then adjacent widths, current row before the next row. */
-    public static List<Cell> strip(int x, int y, int z, double dx, double dz, int width) {
-        if (width < 1 || width > 9) throw new IllegalArgumentException("width");
-        boolean alongX = Math.abs(dx) > Math.abs(dz);
-        int forward = (alongX ? dx : dz) < 0 ? -1 : 1;
-        List<Cell> cells = new ArrayList<>();
-        for (int row = 0; row <= 1; row++) {
-            for (int i = 0; i < width; i++) {
-                int lateral = i == 0 ? 0 : (i % 2 == 1 ? (i + 1) / 2 : -i / 2);
-                cells.add(new Cell(x + (alongX ? row * forward : lateral), y,
-                    z + (alongX ? lateral : row * forward)));
-            }
-        }
-        return cells;
-    }
     /** Follow the actual horizontal trajectory, including diagonal boundary crossings, two blocks ahead. */
     public static List<Cell> path(double x, int y, double z, double dx, double dz, int width) {
         if (width < 1 || width > 9) throw new IllegalArgumentException("width");

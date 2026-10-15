@@ -1,7 +1,8 @@
 package dev.tntcoating.modules;
 
 import dev.tntcoating.core.ServerPacer;
-import dev.tntcoating.core.RetrySchedule;
+import dev.tntcoating.core.PacketBudget;
+import dev.tntcoating.core.PlacementTracker;
 import dev.tntcoating.core.PlacementGeometry;
 import dev.tntcoating.core.PlacementOrder;
 import dev.tntcoating.core.CoatingRules;
@@ -50,11 +51,12 @@ import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Coating with optional container interactions; never ignites placed blocks. */
 public final class BlockCoat extends Module {
     public enum SurfaceTypes { All, Floors, Walls, Ceilings }
-    public enum AutoSwitch { Silent, Normal, Disabled }
+    public enum AutoSwitch { Sticky, Silent, Normal, Disabled }
     public enum Priority { Nearest, Farthest }
     public enum ServerMode { Adaptive, Conservative, Fast }
 
@@ -71,6 +73,8 @@ public final class BlockCoat extends Module {
     private final Setting<Integer> pendingCap = integer(server, "max-pending", "Maximum outstanding interactions in Adaptive mode.", 6, 1, 16);
     private final Setting<Boolean> containerSupports = bool(server, "container-supports", "Sneak-use chests and other interactive supports. Disable if the server rejects these placements.", true);
     private final Setting<Boolean> narrowGaps = bool(server, "narrow-gap-targeting", "Experimental: sample very close to face edges. Leave off for ordinary targeting.", false);
+    private final Setting<Integer> packetLimit = integer(server, "max-packets-per-second", "Skip placements that would push everything you sent in the last second above this. ViaVersion's default sustained limit is 200.", 150, 40, 800);
+    private final Setting<Boolean> extraRotations = bool(server, "extra-rotation-packets", "Allow more than one rotated placement per tick. Each extra one sends its own rotation packet; off places at most one rotated block per tick.", false);
     private final SettingGroup jumping = settings.createGroup("Smart Jump Place");
     private final SettingGroup modes = settings.createGroup("Scaffold and Tunnel");
     private final Setting<Boolean> scaffold = bool(modes, "scaffold", "Build a strip below movement while continuing surface coating. Disabled during flight.", false);
@@ -88,13 +92,12 @@ public final class BlockCoat extends Module {
     private final Setting<SurfaceTypes> surfaces = general.add(new EnumSetting.Builder<SurfaceTypes>()
         .name("surface-types").description("Exposed terrain faces to coat.").defaultValue(SurfaceTypes.All).build());
     private final Setting<AutoSwitch> autoSwitch = general.add(new EnumSetting.Builder<AutoSwitch>()
-        .name("auto-switch").description("Silent restores the selected hotbar slot after interacting.")
-        .defaultValue(AutoSwitch.Silent).build());
+        .name("auto-switch").description("Sticky holds the block while placing and switches back after a second idle. Silent switches to it and back for every placement (two extra packets each). Normal leaves it selected.")
+        .defaultValue(AutoSwitch.Sticky).build());
     private final Setting<Integer> retryDelay = integer(general, "retry-delay", "Ticks before retrying a rejected surrounding placement.", 3, 1, 40);
-    private final Setting<Boolean> rotate = bool(general, "rotate", "Rotate toward the support face before interacting.", true);
-    private final Setting<Boolean> preferNearby = bool(general, "prefer-nearby", "Prioritise nearby placements, including retries. Overrides the older placement-priority setting when on.", true);
-    private final Setting<Priority> priority = general.add(new EnumSetting.Builder<Priority>()
-        .name("placement-priority").description("Order reachable candidates by distance.").defaultValue(Priority.Nearest).build());
+    private final Setting<Boolean> rotate = bool(general, "rotate", "Rotate toward the support face before interacting, in every server mode. Turn off only to test whether the server needs it.", true);
+    private final Setting<Priority> order = general.add(new EnumSetting.Builder<Priority>()
+        .name("placement-order").description("Order reachable candidates, including retries, by distance.").defaultValue(Priority.Nearest).build());
     private final Setting<Integer> confirmTimeout = integer(general, "confirmation-timeout", "Ticks to wait for a server block update before resolving a rejected attempt.", 20, 5, 100);
 
     private final Setting<Boolean> smartJump = bool(jumping, "smart-jump-place", "Prioritise a supported block beneath the moving player during a jump; retry until sent or landed.", true);
@@ -103,8 +106,13 @@ public final class BlockCoat extends Module {
     private final Setting<Boolean> rejectedPreview = bool(rendering, "render-rejected", "Also render a bounded sample of rejected candidates in red.", false);
 
     private final ServerPacer pacer = new ServerPacer();
+    private final PacketBudget packetBudget = new PacketBudget();
+    private final AtomicInteger sentPackets = new AtomicInteger();
+    private int plannedPackets, rotationsPlanned, corrections;
+    private boolean packetLimited;
+    private static final int STICKY_HOLD_TICKS = 20;
+    private int stickyRestore = -1, stickySlot = -1, stickyUsed;
     private final Set<BlockPos> changed = ConcurrentHashMap.newKeySet();
-    private final Set<BlockPos> unconfirmed = ConcurrentHashMap.newKeySet();
     private final Deque<BlockPos> searchQueue = new ArrayDeque<>();
     private final Map<BlockPos, BlockHitResult> hitCache = new HashMap<>();
     private boolean reorder = true;
@@ -112,12 +120,19 @@ public final class BlockCoat extends Module {
     private int rays;
     private Priority queuedPriority;
     private final Set<BlockPos> candidates = new HashSet<>();
-    private final Map<BlockPos, Pending> pending = new ConcurrentHashMap<>();
-    private final Map<BlockPos, Integer> retryAfter = new HashMap<>();
-    private final Map<BlockPos, Integer> watched = new ConcurrentHashMap<>();
-    private final Map<BlockPos, Integer> failures = new HashMap<>();
     private final Map<BlockPos, Integer> visibilityRetry = new HashMap<>();
-    private final Map<BlockPos, Integer> lastAttempt = new HashMap<>();
+    private final PlacementTracker<BlockPos, Block> tracker = new PlacementTracker<>(new PlacementTracker.Listener<>() {
+        @Override public void accepted(BlockPos pos, int latencyTicks) { pacer.accepted(latencyTicks, rateCap()); }
+
+        @Override public void retryScheduled(BlockPos pos, boolean failure) {
+            changed.add(pos); hitCache.remove(pos); visibilityRetry.remove(pos); reorder = true;
+            // A correction already paused the pacer; placements it discarded are not rejections.
+            if (failure) pacer.failed(tick, retryDelay.get());
+            if (pos.equals(jumpPending) && jumpActive) { jumpPlaced = false; jumpPending = null; }
+        }
+
+        @Override public void retryReady(BlockPos pos) { changed.add(pos); reorder = true; }
+    });
     private final List<BlockPos> validPreview = new ArrayList<>();
     private final List<BlockPos> invalidPreview = new ArrayList<>();
     private final ConcurrentLinkedQueue<Update> updates = new ConcurrentLinkedQueue<>();
@@ -144,14 +159,7 @@ public final class BlockCoat extends Module {
     private int readyCount, protectedCount, reachCount;
     private String status = "Starting";
 
-    private static final class Pending {
-        final int started;
-        final Block block;
-        volatile boolean sent;
-        int sentTick;
-        Pending(int started, Block block) { this.started = started; this.block = block; }
-    }
-    private record Update(BlockPos pos, boolean matchesBlock, boolean replaceable, Pending attempt) {}
+    private record Update(BlockPos pos, boolean matchesBlock, boolean replaceable, PlacementTracker.Attempt<Block> attempt) {}
     private enum Rejection { None, Occupied, Retry, Powered, Entity, Protected, Height, NoTerrain, Reach }
     private record Validation(Rejection reason, BlockHitResult hit) {
         boolean valid() { return reason == Rejection.None; }
@@ -174,12 +182,14 @@ public final class BlockCoat extends Module {
     @Override public String getInfoString() { return status; }
 
     private void reset() {
+        releaseSticky();
         generation++;
-        pacer.reset();
+        pacer.reset(); packetBudget.reset(); sentPackets.set(0);
+        plannedPackets = rotationsPlanned = corrections = 0; packetLimited = false;
         jumpActive = jumpPlaced = false; pauseUntil = 0; strip.clear(); criticalStrip.clear(); travel = new Vec3(0, 0, 1);
-        watched.clear(); failures.clear(); visibilityRetry.clear();
-        changed.clear(); unconfirmed.clear(); searchQueue.clear(); hitCache.clear(); reorder = true;
-        candidates.clear(); pending.clear(); retryAfter.clear(); lastAttempt.clear(); updates.clear();
+        tracker.clear(); visibilityRetry.clear();
+        changed.clear(); searchQueue.clear(); hitCache.clear(); reorder = true;
+        candidates.clear(); updates.clear();
         clearPreview();
         dirty.set(true); corrected.set(false);
         level = null; scanOrigin = null; lastPosition = null;
@@ -205,11 +215,14 @@ public final class BlockCoat extends Module {
     }
 
     private void enqueueUpdate(BlockPos pos, BlockState state) {
-        Pending attempt = pending.get(pos);
-        // Ignore unrelated updates and packets arriving before this interaction was sent.
-        if ((attempt != null && attempt.sent) || unconfirmed.contains(pos) || watched.containsKey(pos))
+        PlacementTracker.Attempt<Block> attempt = tracker.attempt(pos);
+        if (tracker.concerns(pos, attempt))
             updates.add(new Update(pos.immutable(), state.is(attempt == null ? activeBlock : attempt.block), state.canBeReplaced(), attempt));
     }
+
+    // May run on the network thread.
+    @EventHandler
+    private void onSent(PacketEvent.Sent event) { sentPackets.incrementAndGet(); }
 
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
@@ -235,6 +248,9 @@ public final class BlockCoat extends Module {
             lastGround = mc.player.onGround();
         }
         tick++;
+        packetBudget.record(tick, sentPackets.getAndSet(0));
+        plannedPackets = rotationsPlanned = 0; packetLimited = false;
+        if (stickyRestore >= 0 && (autoSwitch.get() != AutoSwitch.Sticky || tick - stickyUsed > STICKY_HOLD_TICKS)) releaseSticky();
         facingYaw = mc.player.getYRot();
         clearPreview();
         drainUpdates();
@@ -242,9 +258,10 @@ public final class BlockCoat extends Module {
 
         if (corrected.getAndSet(false)) {
             generation++;
+            corrections++;
             candidates.clear();
             // Keep sent attempts tracked, but discard every deferred interaction.
-            pending.entrySet().removeIf(e -> !e.getValue().sent);
+            tracker.setback();
             pauseUntil = tick + correctionCooldown.get(); jumpActive = false;
             pacer.failed(tick, correctionCooldown.get());
             dirty.set(true);
@@ -260,7 +277,7 @@ public final class BlockCoat extends Module {
             && mc.player.input.keyPresses.jump() && !flying && !mc.player.isInWater();
         if (started) {
             generation++;
-            pending.entrySet().removeIf(e -> !e.getValue().sent);
+            tracker.discardUnsent();
             jumpActive = true; jumpPlaced = false; jumpPending = null;
         }
         if (grounded || flying || !smartJump.get()) jumpActive = false;
@@ -269,7 +286,7 @@ public final class BlockCoat extends Module {
         if (!flightPlacementAllowed()) { strip.clear(); criticalStrip.clear(); status = "Flight coating off"; return; }
         if (spongeHasPriority()) {
             generation++;
-            pending.entrySet().removeIf(e -> !e.getValue().sent);
+            tracker.discardUnsent();
             status = "Waiting for Smart Sponge";
             return;
         }
@@ -278,7 +295,7 @@ public final class BlockCoat extends Module {
             takeoffCell = BlockPos.containing(position.x, mc.player.getBoundingBox().minY - 1, position.z);
             Validation under = validate(takeoffCell, true, null);
             if (attempt(takeoffCell, true, under)) { status = "Jump priority"; return; }
-            if (jumpPending != null && pending.containsKey(jumpPending)) { status = "Jump pending"; return; }
+            if (jumpPending != null && tracker.isPending(jumpPending)) { status = "Jump pending"; return; }
         }
         strip.clear(); criticalStrip.clear();
         if (scaffold.get() && !flying && (grounded || jumpActive)) {
@@ -296,16 +313,19 @@ public final class BlockCoat extends Module {
         if (fullScan || !origin.equals(scanOrigin)) scan(origin, !fullScan && scanOrigin != null);
         refreshChanges();
 
-        if (reorder || queuedPriority != priority.get() || tick % 5 == 0) {
+        if (reorder || queuedPriority != order.get() || tick % 5 == 0) {
             Comparator<BlockPos> sorter = Comparator.comparingDouble(pos -> Vec3.atCenterOf(pos).distanceToSqr(position));
-            Comparator<BlockPos> coverageOrder = preferNearby.get() || priority.get() == Priority.Nearest ? sorter : sorter.reversed();
+            Comparator<BlockPos> coverageOrder = order.get() == Priority.Nearest ? sorter : sorter.reversed();
             if (tunnel.get()) coverageOrder = Comparator.<BlockPos, Boolean>comparing(pos -> !tunnelTarget(pos)).thenComparing(coverageOrder);
             searchQueue.clear();
             searchQueue.addAll(PlacementOrder.nearFirst(candidates, coverageOrder.thenComparingLong(BlockPos::asLong)));
-            reorder = false; queuedPriority = priority.get();
+            reorder = false; queuedPriority = order.get();
         }
         int limit = perTick.get();
-        if (paced()) limit = Math.min(limit, pacer.budget(tick, rateCap(), pending.size(), window()));
+        if (paced()) limit = Math.min(limit, pacer.budget(tick, rateCap(), tracker.pendingCount(), window()));
+        // Without extra rotation packets, the tick's one rotation rides the ordinary movement packet.
+        if (rotating() && !extraRotations.get()) limit = Math.min(limit, 1);
+        if (!packetBudget.allows(tick, PacketBudget.placementCost(0, false, false), packetLimit.get())) { limit = 0; packetLimited = true; }
         int attempts = 0;
         // Footpath always gets first use of the budget, including at one interaction per tick.
         for (BlockPos target : criticalStrip) {
@@ -324,7 +344,7 @@ public final class BlockCoat extends Module {
         for (int i = 0; i < checks && attempts < limit && rays < 256; i++) {
             BlockPos target = searchQueue.removeFirst();
             searchQueue.addLast(target);
-            if (pending.containsKey(target) || visibilityRetry.getOrDefault(target,0) > tick) continue;
+            if (tracker.isPending(target) || visibilityRetry.getOrDefault(target,0) > tick) continue;
             Validation validation = validate(target, false, null);
             if (!validation.valid()) {
                 if (validation.reason == Rejection.Protected || validation.reason == Rejection.Height) protectedCount++;
@@ -337,7 +357,10 @@ public final class BlockCoat extends Module {
             if (attempts < limit && attempt(target, false, validation)) attempts++;
         }
         searching = false;
-        status = attempts + " queued / " + pending.size() + " pending / " + candidates.size() + " surfaces";
+        int pps = packetBudget.perSecond(tick);
+        status = packetLimited && attempts == 0 ? "Packet limit " + pps + "/" + packetLimit.get() + " pps"
+            : attempts + " queued / " + tracker.pendingCount() + " pending / " + candidates.size() + " surfaces / " + pps + " pps";
+        if (corrections > 0) status += " / " + corrections + " corrections";
     }
 
     private FindItemResult findCoatingBlock() {
@@ -375,52 +398,57 @@ public final class BlockCoat extends Module {
     private boolean paced() { return serverMode.get() != ServerMode.Fast; }
     private int rateCap() { return Math.min(perTick.get(), serverMode.get() == ServerMode.Conservative ? 1 : serverCap.get()); }
     private int window() { return serverMode.get() == ServerMode.Conservative ? 2 : pendingCap.get(); }
+    private boolean rotating() { return rotate.get(); }
 
-    private void scheduleRetry(BlockPos pos) {
-        int count = failures.merge(pos,1,Integer::sum);
-        int delay = RetrySchedule.delay(retryDelay.get(),count);
-        retryAfter.put(pos,tick+delay);
-        changed.add(pos); hitCache.remove(pos); visibilityRetry.remove(pos); reorder = true;
-        pacer.failed(tick,retryDelay.get());
-        if (pos.equals(jumpPending) && jumpActive) { jumpPlaced = false; jumpPending = null; }
+    private boolean clickable(BlockHitResult hit) {
+        return BlockUtils.isClickable(mc.level.getBlockState(hit.getBlockPos()).getBlock());
+    }
+
+    /** Hotbar-switch packets a placement adds; none when the block is already held or in the offhand. */
+    private int switchPackets(FindItemResult material) {
+        if (material.isOffhand() || material.slot() == mc.player.getInventory().getSelectedSlot()) return 0;
+        return switch (autoSwitch.get()) {
+            case Silent -> 2;
+            case Sticky, Normal -> 1;
+            case Disabled -> 0;
+        };
+    }
+
+    private void holdSticky(int slot) {
+        var inventory = mc.player.getInventory();
+        int selected = inventory.getSelectedSlot();
+        if (selected != slot) {
+            // A slot the player picks while the block is held becomes the one to return to.
+            if (stickyRestore < 0 || selected != stickySlot) stickyRestore = selected;
+            inventory.setSelectedSlot(slot);
+            ((GameModeInvoker) mc.gameMode).comet$ensureHasSentCarriedItem();
+        }
+        stickySlot = slot;
+        stickyUsed = tick;
+    }
+
+    /** Return to the slot Sticky switched away from, unless the player has since picked another. */
+    private void releaseSticky() {
+        if (stickyRestore >= 0 && mc.player != null && mc.gameMode != null
+            && mc.player.getInventory().getSelectedSlot() == stickySlot) {
+            mc.player.getInventory().setSelectedSlot(stickyRestore);
+            ((GameModeInvoker) mc.gameMode).comet$ensureHasSentCarriedItem();
+        }
+        stickyRestore = stickySlot = -1;
     }
 
     private void drainUpdates() {
         Update update;
         while ((update = updates.poll()) != null) {
-            unconfirmed.remove(update.pos);
             changed.add(update.pos);
             visibilityRetry.remove(update.pos);
-            Pending attempt = update.attempt;
-            boolean resolved = attempt != null && attempt.sent && pending.remove(update.pos,attempt);
-            if (update.matchesBlock) {
-                failures.remove(update.pos); retryAfter.remove(update.pos);
-                if (resolved) pacer.accepted(tick-attempt.sentTick,rateCap());
-            } else if (update.replaceable && (resolved || watched.containsKey(update.pos))) {
-                // Includes a later authoritative rollback after an earlier confirmation.
-                watched.remove(update.pos);
-                scheduleRetry(update.pos);
-            } else if (!update.replaceable) {
-                watched.remove(update.pos); failures.remove(update.pos); retryAfter.remove(update.pos);
-            }
+            tracker.update(update.pos, update.matchesBlock, update.replaceable, update.attempt, tick, retryDelay.get());
         }
     }
 
     private void expirePending() {
-        pending.entrySet().removeIf(e -> {
-            Pending attempt = e.getValue();
-            if (!attempt.sent) return tick - attempt.started > 2;
-            int timeout = paced() ? pacer.timeout(confirmTimeout.get()) : confirmTimeout.get();
-            if (tick - attempt.sentTick < timeout) return false;
-            scheduleRetry(e.getKey());
-            return true;
-        });
-        retryAfter.entrySet().removeIf(e -> {
-            if (tick < e.getValue()) return false;
-            changed.add(e.getKey()); reorder = true; return true;
-        });
-        watched.entrySet().removeIf(e -> tick > e.getValue() || !inRadius(e.getKey()));
-        failures.keySet().removeIf(pos -> !inRadius(pos));
+        int timeout = paced() ? pacer.timeout(confirmTimeout.get()) : confirmTimeout.get();
+        tracker.expire(tick, timeout, retryDelay.get(), this::inRadius);
         visibilityRetry.entrySet().removeIf(e -> tick >= e.getValue() || !inRadius(e.getKey()));
     }
 
@@ -477,9 +505,8 @@ public final class BlockCoat extends Module {
             BlockPos target = mutable.immutable();
             if (hasTerrainFace(target)) candidates.add(target);
         }
-        lastAttempt.keySet().retainAll(candidates);
         hitCache.keySet().retainAll(candidates);
-        unconfirmed.removeIf(pos -> !inRadius(pos) && !pending.containsKey(pos));
+        tracker.pruneUnconfirmed(this::inRadius);
     }
 
     private boolean replaceable(BlockPos pos) {
@@ -507,10 +534,12 @@ public final class BlockCoat extends Module {
     private BlockHitResult supportHit(BlockPos target) {
         Vec3 eye = mc.player.getEyePosition();
         List<Direction> sides = new ArrayList<>(List.of(Direction.values()));
-        sides.sort(Comparator.comparingDouble(side -> Vec3.atCenterOf(target.relative(side)).distanceToSqr(eye)));
+        // Ordinary faces first: a container face costs two extra sneak-input packets.
+        sides.sort(Comparator.comparing((Direction side) -> BlockUtils.isClickable(mc.level.getBlockState(target.relative(side)).getBlock()))
+            .thenComparingDouble(side -> Vec3.atCenterOf(target.relative(side)).distanceToSqr(eye)));
         for (Direction side : sides) {
             BlockPos support = target.relative(side);
-            if (!loaded(support) || (paced() && unconfirmed.contains(support))) continue;
+            if (!loaded(support) || (paced() && tracker.unconfirmed(support))) continue;
             BlockState state = mc.level.getBlockState(support);
             if (!terrain(support) && !state.is(activeBlock)) continue;
             if (state.canBeReplaced() || !state.getFluidState().isEmpty()
@@ -532,7 +561,7 @@ public final class BlockCoat extends Module {
     }
 
     private boolean visibleHit(BlockPos target, BlockHitResult hit) {
-        if (paced() && unconfirmed.contains(hit.getBlockPos())) return false;
+        if (paced() && tracker.unconfirmed(hit.getBlockPos())) return false;
         if (!hit.getBlockPos().relative(hit.getDirection()).equals(target)) return false;
         BlockState support = mc.level.getBlockState(hit.getBlockPos());
         if (!terrain(hit.getBlockPos()) && !support.is(activeBlock)) return false;
@@ -557,8 +586,9 @@ public final class BlockCoat extends Module {
         if (!flightPlacementAllowed()) return reject(Rejection.Protected);
         if (!CoatingRules.tunnelAllows(tunnel.get(), underfoot, tunnelTarget(target))) return reject(Rejection.Protected);
         if (!replaceable(target) || !inRadius(target)) return reject(Rejection.Occupied);
-        if (retryAfter.getOrDefault(target, 0) > tick) return reject(Rejection.Retry);
-        if (mc.level.hasNeighborSignal(target)) return reject(Rejection.Powered);
+        if (tracker.retryBlocked(target, tick)) return reject(Rejection.Retry);
+        // Only TNT reacts to power when placed: it ignites.
+        if (activeBlock == Blocks.TNT && mc.level.hasNeighborSignal(target)) return reject(Rejection.Powered);
         boolean platform = !underfoot && scaffoldTarget(target);
         if (!underfoot && !platform && !hasTerrainFace(target)) return reject(Rejection.NoTerrain);
         AABB block = new AABB(target);
@@ -577,7 +607,8 @@ public final class BlockCoat extends Module {
         if (preferred != null) hit = visibleHit(target, preferred) ? preferred : null;
         else {
             BlockHitResult cached = hitCache.get(target);
-            hit = cached != null && visibleHit(target, cached) ? cached : supportHit(target);
+            // Search again past a cached container face in case an ordinary face is now usable.
+            hit = cached != null && !clickable(cached) && visibleHit(target, cached) ? cached : supportHit(target);
             if (hit != null) hitCache.put(target, hit); else hitCache.remove(target);
         }
         return hit == null ? reject(Rejection.Reach) : new Validation(Rejection.None, hit);
@@ -591,15 +622,21 @@ public final class BlockCoat extends Module {
     }
 
     private boolean attempt(BlockPos target, boolean underfoot, Validation validation) {
-        if (spongeHasPriority() || pending.containsKey(target) || !validation.valid() || !findCoatingBlock().found()) return false;
+        if (spongeHasPriority() || tracker.isPending(target) || !validation.valid()) return false;
+        FindItemResult planned = findCoatingBlock();
+        if (!planned.found()) return false;
         // Keep one outstanding slot available for the footpath when coating alongside scaffold.
         int reservationWindow = scaffold.get() && !flying() && !underfoot && !scaffoldTarget(target)
             ? Math.max(1, window() - 1) : window();
-        if (paced() && pacer.budget(tick, rateCap(), pending.size(), reservationWindow) <= 0) return false;
+        if (paced() && pacer.budget(tick, rateCap(), tracker.pendingCount(), reservationWindow) <= 0) return false;
+        boolean extraRotation = rotating() && rotationsPlanned > 0;
+        if (extraRotation && !extraRotations.get()) return false;
         BlockHitResult hit = validation.hit;
-        lastAttempt.put(target, tick);
-        Pending reservation = new Pending(tick, activeBlock);
-        pending.put(target, reservation);
+        int cost = PacketBudget.placementCost(switchPackets(planned), extraRotation, clickable(hit));
+        if (!packetBudget.allows(tick, plannedPackets + cost, packetLimit.get())) { packetLimited = true; return false; }
+        plannedPackets += cost;
+        if (rotating()) rotationsPlanned++;
+        PlacementTracker.Attempt<Block> reservation = tracker.reserve(target, tick, activeBlock);
         if (underfoot) jumpPending = target;
         int token = generation;
         int scheduledTick = tick;
@@ -607,47 +644,45 @@ public final class BlockCoat extends Module {
             // Rotations can defer execution. Recheck everything against live player/world state.
             if (!isActive() || mc.player == null || mc.level != level || mc.gameMode == null
                 || spongeHasPriority() || token != generation || coatingBlock.get() != reservation.block || corrected.get() || tick - scheduledTick > 1
-                || pending.get(target) != reservation) {
-                pending.remove(target, reservation);
+                || !tracker.current(target, reservation)) {
+                tracker.cancel(target, reservation);
                 return;
             }
-            if (tick < pauseUntil || !validateForSend(target, underfoot, hit)) { pending.remove(target); return; }
+            if (tick < pauseUntil || !validateForSend(target, underfoot, hit)) { tracker.cancel(target, reservation); return; }
             if (!underfoot && jumpActive && !jumpPlaced) {
-                pending.remove(target);
+                tracker.cancel(target, reservation);
                 return;
             }
-            BlockHitResult liveHit = hit;
             FindItemResult material = findCoatingBlock();
-            if (!material.found()) { pending.remove(target); return; }
+            if (!material.found()) { tracker.cancel(target, reservation); return; }
             long now = mc.level.getGameTime();
             if (interactionTime != now) { interactionTime = now; interactions = 0; }
             int liveLimit = underfoot ? 1 : (perTick.get());
-            if (interactions >= liveLimit) { pending.remove(target); return; }
-            if (paced() && pacer.budget(tick, rateCap(), pending.size() - 1, window()) <= 0) { pending.remove(target); return; }
+            if (interactions >= liveLimit) { tracker.cancel(target, reservation); return; }
+            if (paced() && pacer.budget(tick, rateCap(), tracker.pendingCount() - 1, window()) <= 0) { tracker.cancel(target, reservation); return; }
             interactions++;
             pacer.sent(tick);
             boolean offhand = material.isOffhand();
-            boolean swapBack = autoSwitch.get() == AutoSwitch.Silent;
-            if (!offhand && autoSwitch.get() != AutoSwitch.Disabled) InvUtils.swap(material.slot(), swapBack);
+            AutoSwitch mode = autoSwitch.get();
+            boolean swapBack = mode == AutoSwitch.Silent;
+            if (!offhand && mode == AutoSwitch.Sticky) holdSticky(material.slot());
+            else if (!offhand && mode != AutoSwitch.Disabled) InvUtils.swap(material.slot(), swapBack);
             try {
                 if (underfoot) jumpPlaced = true;
-                reservation.sentTick = tick;
-                watched.put(target,tick+200);
-                unconfirmed.add(target);
-                reservation.sent = true;
-                interactWithSupport(liveHit, offhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND);
+                tracker.markSent(target, reservation, tick);
+                interactWithSupport(hit, offhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND);
             } finally {
-                if (!offhand && autoSwitch.get() != AutoSwitch.Disabled && swapBack) InvUtils.swapBack();
+                if (!offhand && swapBack) InvUtils.swapBack();
             }
         };
-        if (rotate.get() || paced()) Rotations.rotate(Rotations.getYaw(hit.getLocation()), Rotations.getPitch(hit.getLocation()), underfoot ? 100 : criticalStrip.contains(target) ? 80 : 20, interact);
+        if (rotating()) Rotations.rotate(Rotations.getYaw(hit.getLocation()), Rotations.getPitch(hit.getLocation()), underfoot ? 100 : criticalStrip.contains(target) ? 80 : 20, interact);
         else interact.run();
         return true;
     }
 
     /** Sneak-use containers so they act as support instead of opening their screen. */
     private void interactWithSupport(BlockHitResult hit, InteractionHand hand) {
-        if (!BlockUtils.isClickable(mc.level.getBlockState(hit.getBlockPos()).getBlock())) {
+        if (!clickable(hit)) {
             BlockUtils.interact(hit, hand, true);
             return;
         }
@@ -675,7 +710,7 @@ public final class BlockCoat extends Module {
         Color amber = new Color(255, 180, 50, 40), amberLine = new Color(255, 180, 50, 200);
         Color red = new Color(230, 70, 70, 20), redLine = new Color(230, 70, 70, 100);
         for (BlockPos pos : validPreview) event.renderer.box(pos, green, greenLine, ShapeMode.Both, 0);
-        for (BlockPos pos : pending.keySet()) event.renderer.box(pos, amber, amberLine, ShapeMode.Both, 0);
+        for (BlockPos pos : tracker.pendingPositions()) event.renderer.box(pos, amber, amberLine, ShapeMode.Both, 0);
         if (rejectedPreview.get()) for (BlockPos pos : invalidPreview) event.renderer.box(pos, red, redLine, ShapeMode.Both, 0);
     }
 }

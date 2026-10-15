@@ -10,4 +10,7 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 public interface GameModeInvoker {
     @Invoker("startPrediction")
     void comet$startPrediction(ClientLevel level, PredictiveAction action);
+
+    @Invoker("ensureHasSentCarriedItem")
+    void comet$ensureHasSentCarriedItem();
 }

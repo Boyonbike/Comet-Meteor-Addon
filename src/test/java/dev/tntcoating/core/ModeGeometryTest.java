@@ -2,23 +2,10 @@ package dev.tntcoating.core;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class ModeGeometryTest {
-    @Test void northSouthStripHasExactWidthAndNoDuplicates() {
-        var cells = ModeGeometry.strip(10, 64, 20, 0, 1, 3);
-        assertEquals(6, cells.size());
-        assertEquals(6, cells.stream().distinct().count());
-        assertTrue(cells.stream().allMatch(c -> c.y()==64 && c.x()>=9 && c.x()<=11 && c.z()>=20 && c.z()<=21));
-        assertEquals(new ModeGeometry.Cell(10,64,20), cells.getFirst());
-    }
-    @Test void westwardStripRotatesAndSupportsEvenWidths() {
-        var cells = ModeGeometry.strip(10, 64, 20, -1, .1, 4);
-        assertEquals(8, cells.stream().distinct().count());
-        assertTrue(cells.stream().allMatch(c -> c.x()==10 || c.x()==9));
-        assertEquals(4, cells.stream().map(ModeGeometry.Cell::z).distinct().count());
-    }
-    @Test void widthsStayBounded() {
-        assertEquals(2, ModeGeometry.strip(0,0,0,0,1,1).size());
-        assertEquals(18, ModeGeometry.strip(0,0,0,1,0,9).size());
-        assertThrows(IllegalArgumentException.class, () -> ModeGeometry.strip(0,0,0,1,0,0));
+    @Test void pathWidthsStayBounded() {
+        assertThrows(IllegalArgumentException.class, () -> ModeGeometry.path(0,0,0,1,0,0));
+        assertThrows(IllegalArgumentException.class, () -> ModeGeometry.path(0,0,0,1,0,10));
+        assertEquals(9, ModeGeometry.path(.5,0,.5,1,0,9).stream().map(ModeGeometry.Cell::z).distinct().count());
     }
     @Test void pathPreparesForwardCentreBeforeWidening() {
         var path = ModeGeometry.path(.5, 64, .5, 0, 1, 5);

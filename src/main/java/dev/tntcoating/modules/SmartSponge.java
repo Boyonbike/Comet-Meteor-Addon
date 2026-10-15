@@ -101,7 +101,7 @@ public final class SmartSponge extends Module {
         FindItemResult item = InvUtils.findInHotbar(Items.SPONGE);
         if (!item.found()) { status = "No dry sponge in hotbar"; return; }
         BlockPos origin = mc.player.blockPosition();
-        BlockPos best = null; BlockHitResult bestHit = null; int bestScore = 0; double bestDistance = Double.MAX_VALUE;
+        List<Spot> spots = new ArrayList<>();
         Map<BlockPos,Boolean> waterCache = new HashMap<>();
         int r = radius.get();
         for (BlockPos mutable : BlockPos.betweenClosed(origin.offset(-r,-r,-r),origin.offset(r,r,r))) {
@@ -109,23 +109,25 @@ public final class SmartSponge extends Module {
             if (!placeable(pos) || retry.containsKey(pos)) continue;
             double distance = Vec3.atCenterOf(pos).distanceToSqr(mc.player.getEyePosition());
             if (distance > Math.pow(mc.player.blockInteractionRange()+1,2)) continue;
-            boolean nearWater = absorbable(pos);
-            if (!nearWater) for (Direction d : Direction.values()) if (absorbable(pos.relative(d))) { nearWater = true; break; }
-            if (!nearWater) continue;
-            BlockHitResult hit = support(pos);
-            if (hit == null) continue;
+            if (!waterNearby(pos)) continue;
             int score = SpongePlanner.score(new SpongePlanner.Cell(pos.getX(),pos.getY(),pos.getZ()), cell -> {
                 BlockPos key = new BlockPos(cell.x(),cell.y(),cell.z());
                 return waterCache.computeIfAbsent(key,this::absorbable);
             }) + (absorbable(pos) ? 1 : 0);
-            if (score > bestScore || (score == bestScore && distance < bestDistance)) {
-                best = pos; bestHit = hit; bestScore = score; bestDistance = distance;
-            }
+            spots.add(new Spot(pos,score,distance));
         }
-        if (best == null) { status = "No reachable water target"; return; }
-        status = "Expected removal: " + bestScore;
-        place(best,bestHit);
+        // Scoring is cheap; ray-cast supports only in score order until one is reachable. Ties prefer the closer spot.
+        spots.sort(Comparator.comparingInt(Spot::score).reversed().thenComparingDouble(Spot::distance));
+        for (Spot spot : spots) {
+            BlockHitResult hit = support(spot.pos());
+            if (hit == null) continue;
+            status = "Expected removal: " + spot.score();
+            place(spot.pos(),hit);
+            return;
+        }
+        status = "No reachable water target";
     }
+    private record Spot(BlockPos pos, int score, double distance) {}
     private boolean loaded(BlockPos p) { return !world.isOutsideBuildHeight(p) && world.hasChunk(p.getX()>>4,p.getZ()>>4) && world.getWorldBorder().isWithinBounds(p); }
     private boolean absorbable(BlockPos p) {
         if (!loaded(p)) return false;
