@@ -1,5 +1,5 @@
 [versions]
-mod-version = "0.11.0"
+mod-version = "0.22.2"
 
 # Fabric (https://fabricmc.net/develop)
 jdk = "25"
@@ -17,6 +17,9 @@ meteor = "26.2-20261009.074120-35"
 # Mods
 # Xaero's Minimap, compile-only (players install it themselves). Versions: https://modrinth.com/mod/xaeros-minimap/versions
 xaero-minimap = "fabric-26.2-26.6.0"
+# XaeroPlus, compile-only. Tested API: 2.36.6 on Minecraft 26.2 (WM 1.47.0 / MM 26.6.0).
+# https://modrinth.com/mod/xaeroplus/version/o4719KlR
+xaero-plus = "2.36.6+fabric-26.2"
 # Baritone, compile-only (Meteor's build, which players install themselves). Same jar as baritone-meteor-26.2.jar; newest <value> at
 # https://maven.meteordev.org/snapshots/meteordevelopment/baritone/26.2-SNAPSHOT/maven-metadata.xml
 baritone = "26.2-20260813.152229-1"
@@ -31,6 +34,7 @@ meteor-client = { module = "meteordevelopment:meteor-client", version.ref = "met
 
 # Mods
 xaero-minimap = { module = "maven.modrinth:xaeros-minimap", version.ref = "xaero-minimap" }
+xaero-plus = { module = "maven.modrinth:xaeroplus", version.ref = "xaero-plus" }
 baritone = { module = "meteordevelopment:baritone", version.ref = "baritone" }
 
 [plugins]

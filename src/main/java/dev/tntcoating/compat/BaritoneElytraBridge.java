@@ -9,7 +9,11 @@ import baritone.api.process.ICustomGoalProcess;
 import baritone.api.process.IElytraProcess;
 import baritone.api.process.PathingCommandType;
 import baritone.api.utils.interfaces.IGoalRenderPos;
+import dev.tntcoating.core.TrailRoutePath;
 import net.minecraft.core.BlockPos;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /** Uses only Baritone's public API: the rest of Baritone is obfuscated in release builds. */
 final class BaritoneElytraBridge implements BaritoneBridge {
@@ -47,9 +51,26 @@ final class BaritoneElytraBridge implements BaritoneBridge {
     }
 
     @Override
+    public boolean flightActive() {
+        return baritone().getElytraProcess().isActive();
+    }
+
+    @Override
     public boolean readyForTakeoff() {
         IBaritone baritone = baritone();
         return !baritone.getElytraProcess().getPath().isEmpty() && !baritone.getPathingBehavior().isPathing();
+    }
+
+    @Override
+    public List<TrailRoutePath.Point> flightPath() {
+        var path = baritone().getElytraProcess().getPath();
+        int count = Math.min(path.size(), TrailRoutePath.MAX_POINTS);
+        var points = new ArrayList<TrailRoutePath.Point>(count);
+        for (int i = 0; i < count; i++) {
+            var point = path.get(i);
+            points.add(new TrailRoutePath.Point(point.getX() + 0.5, point.getZ() + 0.5));
+        }
+        return points;
     }
 
     @Override

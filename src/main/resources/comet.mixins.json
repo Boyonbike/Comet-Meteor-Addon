@@ -2,6 +2,6 @@
   "required": true,
   "package": "dev.tntcoating.mixin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["GameModeInvoker", "StashHunterControllerMixin", "StashHunterStuckMixin"],
+  "client": ["GameModeInvoker", "StashHunterControllerMixin", "StashHunterStuckMixin", "MoveEntityPacketAccessor", "FastUseMixin", "ElytraFlyMixin"],
   "injectors": { "defaultRequire": 1 }
 }

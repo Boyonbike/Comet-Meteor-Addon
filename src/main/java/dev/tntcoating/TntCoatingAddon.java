@@ -1,11 +1,17 @@
 package dev.tntcoating;
 
+import dev.tntcoating.modules.AreaSpiralSearch;
+import dev.tntcoating.modules.AdaptiveElytraFly;
 import dev.tntcoating.modules.BaritoneElytra;
 import dev.tntcoating.modules.BlockCoat;
 import dev.tntcoating.modules.ElytraLog;
 import dev.tntcoating.modules.ElytraReplace;
+import dev.tntcoating.modules.HomePacketLog;
+import dev.tntcoating.modules.FastStorageESP;
+import dev.tntcoating.modules.SafeFastUse;
 import dev.tntcoating.modules.SmartSponge;
 import dev.tntcoating.modules.StashHunterFly;
+import dev.tntcoating.modules.TrailHunter;
 import dev.tntcoating.modules.WaypointDelete;
 import dev.tntcoating.modules.XaeroWaypoints;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -31,6 +37,12 @@ public final class TntCoatingAddon extends MeteorAddon {
         Modules.get().add(new ElytraReplace());
         Modules.get().add(new ElytraLog());
         Modules.get().add(new StashHunterFly());
+        Modules.get().add(new TrailHunter());
+        Modules.get().add(new AreaSpiralSearch());
+        Modules.get().add(new AdaptiveElytraFly());
+        Modules.get().add(new HomePacketLog());
+        Modules.get().add(new SafeFastUse());
+        Modules.get().add(new FastStorageESP());
     }
 
     @Override

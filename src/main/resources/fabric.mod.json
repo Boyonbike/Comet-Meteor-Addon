@@ -6,7 +6,7 @@
   "authors": [
     "Boyonabike"
   ],
-  "description": "Comet by Boyonabike: TNT surface coating, priority jump placement, scaffold strips, tunnel backfill, Meteor waypoints on Xaero's maps, look-to-delete waypoints, Baritone elytra trips, elytra replacement, low-elytra logout and ElytraFly for Stash-Hunter.",
+  "description": "Comet by Boyonabike: adaptive Vanilla elytra movement with terrain pacing and correction recovery, cached shader storage ESP, fast item use without opening newly placed shulkers, TNT surface coating, priority jump placement, scaffold strips, tunnel backfill, Meteor waypoints on Xaero's maps, look-to-delete waypoints, Baritone elytra trips, elytra replacement, low-elytra logout, ElytraFly for Stash-Hunter, spiral area searches, base hunting along XaeroPlus old-chunk trails and player teleport packet logging.",
   "environment": "client",
   "license": "CC0-1.0",
   "entrypoints": {
@@ -26,6 +26,7 @@
   "suggests": {
     "xaerominimap": "*",
     "xaeroworldmap": "*",
+    "xaeroplus": "*",
     "baritone-meteor": "*",
     "stash-hunter": "*"
   },
