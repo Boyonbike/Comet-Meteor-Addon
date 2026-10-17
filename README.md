@@ -1,28 +1,93 @@
-# Comet by Boyonabike — 0.22.2
+# Comet by Boyonabike — 0.23.6
 
-Meteor Client addon for Minecraft **26.2**. Open Meteor's **Comet** category and enable the modules you want: **adaptive-elytra-fly**, **fast-storage-esp**, **safe-fast-use**, **block-coat**, **smart-sponge**, **xaero-waypoints**, **waypoint-delete**, **baritone-elytra**, **elytra-replace**, **elytra-log**, **stash-hunter-elytrafly**, **area-spiral-search**, **trail-hunter**, **home-packet-log**. Requires Meteor 26.2, Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap, **baritone-elytra** needs Baritone, and **stash-hunter-elytrafly** needs Stash-Hunter. **trail-hunter** needs XaeroPlus (and Baritone in the Nether); it works without Stash-Hunter. The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.22.2.jar`.
+Meteor Client addon for Minecraft **26.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
+
+- **Flight:** **adaptive-elytra-fly**, **baritone-elytra**, **stash-hunter-elytrafly**, **elytra-replace**, **elytra-log**.
+- **Rendering, storage and waypoints:** **fast-storage-esp**, **trajectories**, **xaero-waypoints**, **waypoint-delete**.
+- **Building:** **scaffold**, **block-coat**, **smart-sponge**, **safe-fast-use**.
+- **Combat and inventory:** **auto-totem**, **inventory-tweaks**.
+- **Diagnostics:** **home-packet-log**.
+
+Requires Meteor 26.2, Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap, **baritone-elytra** needs Baritone, and **stash-hunter-elytrafly** needs Stash-Hunter. Area Spiral Search and Trail Hunter have been removed. The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.23.6.jar`.
+
+**Scaffold**, **Trajectories**, **Auto Totem** and **Inventory Tweaks** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
+
+| Original module | Comet upgrades in its dropdown |
+| --- | --- |
+| Elytra Fly | Adaptive Elytra Fly, Baritone Elytra, Stash-Hunter ElytraFly, Elytra Replace, Elytra Log |
+| Storage ESP | Fast Storage ESP |
+| Fast Use | Safe Fast Use |
+| Waypoints | Xaero Waypoints, Waypoint Delete |
+| Stash-Hunter (when installed) | Stash-Hunter ElytraFly |
+
+Expand **Comet**, then left-click an upgrade to toggle it or right-click it to open its full settings. These links use the same module instances as the Comet category, so changes apply from either location.
+
+Right-click a Comet module to open its settings, then click a section header or arrow to expand its dropdown. Setting sections start collapsed; saved section states are respected when loading a configuration. Adaptive Elytra Fly also has a **Flight Diagnostics** dropdown, and Fast Storage ESP puts **Clear Opened Containers** under **Actions**. The **Comet** sections added to Meteor's Scaffold and Trajectories also start collapsed.
 
 Version history is in [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.6.1? See [Upgrading](#upgrading-from-061).
 
+## Scaffold optimization
+
+Use Meteor's existing **Movement → Scaffold**. Comet selects the nearest fallback support in one pass, preserving Meteor's ordering when supports are equally close, and stops the tower ceiling check at the first collision. Radius/air-place ordering and the original placement, rotation and tower settings remain available.
+
+The module gains a **Comet** setting group:
+
+- **sticky-switch** defaults off. Enable it with **auto-switch** to keep the block selected between placements, reducing slot switch packets. The block remains selected when Scaffold stops or is disabled; choose another slot manually when finished.
+- **confirmation-retries** defaults on. Repeated attempts at an unconfirmed/rejected position wait 2, 4, then at most 8 ticks. Positions near the predicted player feet retry after 1, then at most 2 ticks. New bridge cells never wait for another cell. Applied server block updates release successful attempts; client prediction alone does not count as confirmation. Disable this setting to retain Meteor's attempt timing.
+
+Retry history is bounded and clears on module/world changes. Live server testing is still needed for placement acceptance, rejected-block recovery, tower behaviour and actual frame/packet improvements.
+
+## Trajectories optimization
+
+Use Meteor's existing **Render → Trajectories**. Comet retains Meteor's projectile simulator, item filters, multishot and rendering settings. Unchanged predictions can be reused within the same client tick; changed aim, origin, item components, charge, movement or collision state requires a new prediction. Cached paths restart their drawing origin each frame, and fired projectiles retain an interpolated start.
+
+The module gains a **Comet** setting group:
+
+- **optimize-trajectories** defaults on. Turn it off to return to Meteor's original rendering/simulation behaviour.
+- **remote-trajectory-range** defaults to **128** blocks, adjustable from **8–512**. Applies to other players and fired projectiles; your own held item is always included.
+- **trajectory-steps-per-frame** defaults to **8,000**, adjustable from **128–64,000**. This bounds actual simulator steps across all paths, including when Meteor's **simulation-steps** is set to zero. Your held prediction gets priority; remaining work is shared between remote entities with a rotating starting order. Multishot shares its allowance between its three paths.
+
+When the budget is tight, paths can be shorter or temporarily omitted. A stale collision result is hidden if there is no budget to refresh it. The budget limits simulation steps, not milliseconds or drawing cost; enabling position boxes and displaying many paths still increases rendering work. Actual FPS and visual behaviour need an in-game check.
+
+## Inventory Tweaks transfers
+
+Use Meteor's existing **Misc → Inventory Tweaks** and its Steal/Dump controls. Comet schedules transfer clicks on the client thread instead of sleeping on a background worker. Initial, normal and random delays retain their millisecond settings, with actions occurring on the next eligible frame or client tick. A stalled frame does not cause overdue clicks to burst all at once.
+
+Each transfer belongs to one exact screen, menu, player and world. Closing/switching the container, leaving the world, disabling the module, starting a manual sort or picking up an item on the cursor cancels pending work. The source stack, filter and slot pickup permission are checked again immediately before a click, including delayed rotation callbacks. Repeated inventory-content packets coalesce into the current job. Zero-delay transfers share a maximum of eight actions per client tick across frames and requests.
+
+Steal-drop works with or without **drop-backwards**; the original non-backwards path did not issue the drop. Live Minecraft testing remains needed for your server's click acceptance, repeated container changes and sort/transfer interactions.
+
+## Auto Totem optimization
+
+Comet automatically optimizes Meteor's existing **auto-totem** in the **Combat** category. Enable and configure that module normally; its Smart/Strict modes, health threshold, explosion/fall checks, elytra option, item count, Offhand lock and delay after a pop remain in Meteor.
+
+Strict mode skips damage prediction. Smart mode also skips it when the configured elytra condition already applies or health plus absorption is already at/below the threshold. Otherwise it runs Meteor's current damage prediction on every eligible tick; threat checks are never cached or throttled.
+
+Equipping from an ordinary hotbar/main-inventory slot uses one normal offhand SWAP click instead of two pickup clicks (three when returning a displaced offhand item). The swap preserves the cursor and returns the old offhand item to the source slot. Source slots are resolved from the open menu's actual player inventory, so chests and shulkers do not use the player's own inventory-menu slot numbers. Creative mode and unsupported/restricted slot layouts retain Meteor's original move handling. No equip action is sent when a totem is already in the offhand.
+
+Regression checks cover decision equivalence and menu-slot resolution, and a Fabric prelaunch check verifies the mixin against Meteor 26.2-35. Live server testing is still needed for swap acceptance and repeated pops; this does not guarantee survival or a measured FPS improvement.
+
 ## Adaptive Elytra Fly
 
-Enable **adaptive-elytra-fly** in **Comet**, with Meteor's **Elytra Fly** set to **Vanilla**. If Vanilla is selected, enabling Comet's module in a world also enables Elytra Fly. Its **horizontal-speed**, **vertical-speed**, **fall-multiplier**, takeoff, autopilot, firework and inventory settings remain in Meteor. Horizontal speed is blocks per client tick: `3` requests about 60 blocks/second at the normal tick rate. Comet supplies its own acceleration and braking instead of Meteor's scalar acceleration settings.
+Enable **adaptive-elytra-fly** in **Comet**, with Meteor's **Elytra Fly** set to **Vanilla**. If Vanilla is selected, enabling Comet's module in a world also enables Elytra Fly. Set cruising and sprint maximum speeds in Comet's **General** dropdown. Meteor's **horizontal-speed** must be above zero to enable horizontal movement; its numeric value no longer sets the adaptive cruise speed. Meteor's **vertical-speed** still sets normal climb/descent speed, and its **fall-multiplier**, takeoff, autopilot, firework and inventory settings remain available. Comet supplies its own acceleration and braking instead of Meteor's scalar acceleration settings.
 
-Comet limits changes to the whole movement vector, including turns, and checks the actual blended trajectory before moving. It uses swept player boxes rather than a centre ray, floors negative chunk coordinates correctly, and checks intermediate chunks and the player's width. During adaptive control, missing chunks are always guarded, even if Meteor's **no-unloaded-chunks** is off. Descending contact with floor shapes below the feet is resolved by Minecraft so it can still land; walls and ceilings stay guarded. If a correction or unload leaves the current body already overlapping missing terrain or a block, **Terrain overlap** yields to Meteor until it is clear, allowing retreat instead of trapping every direction.
+Comet limits changes to the whole movement vector, including turns, and checks the actual blended trajectory before moving. It uses swept player boxes rather than a centre ray, floors negative chunk coordinates correctly, and checks intermediate chunks and the player's width. During adaptive control, missing chunks are always guarded, even if Meteor's **no-unloaded-chunks** is off. Descending contact with floor shapes below the feet is resolved by Minecraft so it can still land. At higher speeds, walls and ceilings stay guarded; **safe-maneuvering** lets you move against them slowly, including from harmless block contact. If a correction or unload leaves an unsafe starting overlap or missing terrain, **Terrain overlap** yields to Meteor until it is clear, allowing retreat instead of trapping every direction.
 
 - **acceleration** (default **0.15**) and **braking** (default **0.3**) are changes in blocks/tick per tick. More braking permits a shorter stopping distance; higher acceleration makes steering sharper.
-- **sprint-boost** defaults on. Hold your bound **Sprint** key while gliding and moving horizontally to skip the horizontal speed ramp up to the current adaptive ceiling. Meteor's configured horizontal speed, correction backoff/pauses and terrain stopping limits still apply. Steering and vertical movement remain smoothed; reversing brakes before boosting in the new direction. Release Sprint to return to normal acceleration behavior; it does not force a slower cruising speed. This uses the physical Sprint key, including a rebound mouse button, and only works while Minecraft is focused with no screen open. Automatic Sprint and toggle-sprint state do not activate it.
+- **cruise-max-speed** (default **35%**) and **sprint-max-speed** (default **100%**) each range from **0–100%** of the adaptive engine's current attainable maximum. The scale comes from the engine's output after terrain, braking and correction limits, so **100%** selects everything it currently allows and lower percentages select a fraction of that speed. With default settings and clear level terrain, the maximum is about **118 blocks/second**, making default cruise about **41 blocks/second**. The diagnostics show the current maximum and both selected speeds in blocks/second.
+- **sprint-boost** defaults on. Hold your bound **Sprint** key while gliding to ramp toward **sprint-max-speed** using the configured **acceleration**. Sprint also boosts deliberate Jump/Sneak climb and descent, including when moving only vertically. Steering, vertical smoothing, reversal braking and terrain/correction limits still apply. Releasing movement brakes to a stop; releasing Sprint returns to **cruise-max-speed** and Meteor's normal vertical speed. A zero Meteor horizontal speed still disables horizontal movement. This uses the physical Sprint key, including a rebound mouse button, and only works while Minecraft is focused with no screen open. Automatic Sprint and toggle-sprint state do not activate it.
 - **lookahead** (default **64**, range **8–64** blocks) and **terrain-margin** (default **0.35**) set the known-clear stopping corridor. The speed ceiling reserves the next movement plus stopping distance: `v + v² / (2 × braking) <= clear distance - margin`. Even in open terrain, the finite horizon imposes a ceiling: about 118 blocks/second with the defaults. Increase braking only after checking server acceptance and steering.
 - **avoid-blocks** defaults on. Turning it off skips block collision reads unless Meteor's **no-crash** is on; chunk checks still run. Comet replaces Meteor's fixed-distance No Crash ray while it controls flight.
+- **safe-maneuvering** defaults on. At a full movement-vector speed below Minecraft's wall-damage threshold of **0.3 blocks/tick** (about **6 blocks/second**), bypass the block guard and Meteor's No Crash so Minecraft can resolve contact and let you turn or slide through tight spaces. This also applies after the guard has slowed you down: if the next acceleration step would be blocked, a crawl-speed fallback permits movement along or away from the wall. Extra movements in the same tick use the same low-speed bypass. Unloaded-chunk protection stays active. Turn this off to keep block guarding at low speed.
 - **correction-backoff** (default **0.75**) multiplies a temporary speed ceiling after each received player-position correction, down to 10% of the configured request. **correction-pause** defaults to **5** ticks. After **recovery-delay** (**60** clean ticks), **recovery-rate** restores **0.0025** of the ceiling per tick. Corrections are accepted normally; Comet does not cancel them or add movement packets. Teleports received during controlled flight also count.
 
-The module list shows current activity and observed horizontal progress over about one second. The settings panel shows the temporary ceiling, corrections, ticks actually limited by chunks or blocks, query counts and frame times. Frame average is smoothed; peak and frames over 50 ms are counted since activation/world change or **Reset Flight Diagnostics**. Resetting diagnostics does not remove correction backoff. These readings help distinguish server corrections, terrain pacing and rendering stalls; the controller does not change graphics settings or Minecraft's chunk renderer.
+The module list shows current activity and observed horizontal progress over about one second. The settings panel shows the adaptive maximum, selected cruise/sprint speeds, temporary correction ceiling, corrections, ticks actually limited by chunks or blocks, query counts and frame times. Frame average is smoothed; peak and frames over 50 ms are counted since activation/world change or **Reset Flight Diagnostics**. Resetting diagnostics does not remove correction backoff. These readings help distinguish server corrections, terrain pacing and rendering stalls; the controller does not change graphics settings or Minecraft's chunk renderer.
 
-Terrain work is bounded: a current-body overlap check and one lookahead scan per movement tick, at most 40 swept segments including refinement, with non-loading chunk checks before block reads. Extra SELF movements in the same tick use a short guard without advancing acceleration again. No whole-world chunk scans or background chunk generation are performed.
+Terrain work is bounded: a current-body overlap check and one lookahead scan per movement tick, at most 40 swept segments including refinement, with non-loading chunk checks before block reads. A blocked move can add a short chunk-only check for the crawl fallback. Extra SELF movements in the same tick use a short guard without advancing acceleration again. No whole-world chunk scans or background chunk generation are performed.
 
-Area Spiral Search, Trail Hunter and Stash-Hunter's Comet integration continue to steer through their normal Meteor keys/settings, so adaptive control applies to their Vanilla flights too. Comet's scripted landings and Meteor's Shift auto-hover yield to Meteor's original handling. Packet, Pitch40, Bounce, Freecam, non-gliding movement and stopped fluid flight keep their original handling. Disabling adaptive control leaves Meteor's Elytra Fly enabled and immediately returns its movement to Meteor. Baritone's normal firework flight is unaffected.
+Stash-Hunter's Comet integration continues to steer through normal Meteor keys/settings, so adaptive control applies to its Vanilla flights too, using Comet's **cruise-max-speed** for horizontal speed. Comet's scripted landings and Meteor's Shift auto-hover yield to Meteor's original handling; Shift auto-hover can take priority over boosted descent. Packet, Pitch40, Bounce, Freecam, non-gliding movement and stopped fluid flight keep their original handling. Disabling adaptive control leaves Meteor's Elytra Fly enabled and immediately returns its movement to Meteor. Baritone's normal firework flight is unaffected.
 
-Start with Timer at **1×**, Vanilla horizontal speed **1.5–2.5** and low vertical speed, then compare retained progress and the diagnostics as you increase speed. These are starting values, not a verified 6b6t speed cap. Automated checks cover motion, stopping corridors, correction recovery and touchdown; live Minecraft/6b6t validation is still required for server acceptance, actual frame performance and interaction with other movement addons.
+Start with Timer at **1×**, a low **cruise-max-speed** percentage and low Meteor vertical speed, then compare retained progress and the diagnostics as you increase speed. Keep Meteor's horizontal speed above zero. These are starting settings, not a verified 6b6t speed cap. Live Minecraft/6b6t validation is still required for server acceptance, actual frame performance and interaction with other movement addons.
 
 ## Fast Storage ESP
 
@@ -173,129 +238,6 @@ A separate module, **elytra-log**. While you're flying, once the elytra you're w
 - You rejoin where you logged out, in mid-air. Open the elytra straight away and glide down.
 - For Baritone elytra flights, keep **durability** above Baritone's `elytraMinimumDurability` (default 5), or Baritone lands before you're logged out.
 
-## Area Spiral Search
-
-**area-spiral-search** flies a smooth outward spiral using Meteor's **ElytraFly**, starting at your exact current X/Z position. It needs only Meteor and works in the Overworld and End. Put on a usable elytra, choose Vanilla, Packet or Pitch40 in ElytraFly, face the direction you want to start, and enable the module. Comet enables ElytraFly if needed.
-
-- **custom-center** (default off): use the block centres at **center-x** and **center-z** instead. The flight reaches that centre before starting its spiral.
-- **spiral-spacing** (default 256, minimum 128 blocks): distance between successive turns. **search-radius** (default 5,000, minimum 64 blocks): distance from the centre at which steering stops. **clockwise** defaults on, as viewed on a north-up map. The first outward leg follows your facing at activation. Centre, spacing, radius and direction are fixed for that activation.
-- **flight-height** (default 200): target Y in Vanilla and Packet, raised when needed to stay 24 blocks above loaded terrain ahead. **turn-speed** defaults to 10 degrees per tick. **take-off** (default on) jumps and opens the elytra in these modes. Pitch40 receives yaw only and needs an existing glide; enabling ElytraFly in Pitch40 also needs enough height for its configured bounds. Bounce and Nether flight are refused.
-- **paused**: turn on to release spiral steering and take-off while preserving this route's centre, direction and progress. Turn off to resume; **pause-key** optionally binds the same toggle to a key or mouse button (unbound by default, works with no screen open). The module list shows **Paused**. ElytraFly stays on and flight/gliding continues: control or land manually as needed. Pausing does not hover or land. The route timeout is suspended, and manual movement while paused does not count as search progress. Resuming first returns to the saved route point, then continues the spiral, and refreshes take-off attempts. A new activation always starts unpaused.
-
-Choose spacing for your render distance and keep speed low enough to turn and load chunks. This module supplies a route; it does not detect bases or guarantee every chunk loads or is covered. To record storage along the flight, run Meteor's StashFinder or another scanner separately.
-
-Stop Trail Hunter, Stash-Hunter flights and Baritone trips before starting. Area Spiral Search yields if one takes over later; a Baritone takeover also disables ElytraFly. It temporarily disables ElytraFly's **autoPilot** and **autoTakeOff**, restoring their previous values when it releases them. Other ElytraFly settings stay as you chose them.
-
-Completion or switching the module off releases steering and leaves ElytraFly on with its previous automatic controls. Take over or land manually as needed; the module does not land. It also stops on death, an unusable elytra, ElytraFly being disabled or its mode/automatic controls changing, leaving or changing worlds, or 30 seconds without eight blocks of progress along the route or towards the centre or saved resume point while unpaused. Flight conflicts and the other stop conditions still apply while paused. This also catches circling when flight is too fast to make a tight turn: lower ElytraFly speed or increase spacing or turn speed. Toggling it on again starts a fresh route; reconnecting does not resume it. The module list shows the current spiral radius and target radius.
-
-## Trail Hunter
-
-**trail-hunter** (called trail-follow before 0.17.0) is an unattended base-hunting flight. It searches for unflown XaeroPlus old-chunk trails, follows each one outward to where it meets new terrain (often a base), logs that spot, and goes on to find the next trail. It does not need Stash-Hunter. To record the storage it flies over, run Meteor's StashFinder or Stash-Hunter's scanner alongside it. Install **XaeroPlus 2.36.6 for 26.2** with its matching **World Map 1.47.0**, **Minimap 26.6.0** and Fabric API. Other XaeroPlus versions are refused with a chat message. Comet bundles none of these mods.
-
-Put on an elytra, face roughly the way you want to circle, and enable the module. In the Overworld, select ElytraFly Vanilla, Packet or Pitch40 first; Comet turns ElytraFly on if needed. Pitch40 needs you already gliding above its upper height bound. In the Nether, install Baritone with a native elytra pathfinder for your system and keep fireworks in the hotbar. **baritone-elytra** can restock fireworks and help take-off, but Trail Hunter doesn't need it. Also consider **elytra-replace** and **elytra-log** for long flights.
-
-### How it hunts
-
-With **keep-searching** on (the default):
-
-- **A map, not arrival timing.** It keeps a local map of each chunk's XaeroPlus classification: trail, explicit new terrain, or unknown. New chunks feed the map as they arrive, and the cache within 384 blocks (512 in the Nether) is read once a second. Unknown chunks never count as either trail or new terrain.
-- **Search.** Between trails, it steers towards the strongest visible band of unflown old chunks, up to 135° either side of its search heading. Old chunks the bot has already seen don't attract it. That means anything within about 112 blocks of a recorded flight: an earlier session's, or this session's once it has flown 160 blocks past them. With nothing worth approaching, it follows **search-pattern**.
-- **Take a trail at any angle.** Once inside a band (four of the nine surrounding chunks are trail), it fits the band's centreline. It then turns along the band's axis, whatever angle it crossed at, and takes the direction with more unflown trail ahead. With **prefer-outbound** on, ties go to the direction away from 0,0. A band whose only unflown direction points within 60° of spawn is skipped, because trails lead out from spawn to bases.
-- **Follow the centre.** Each tick it fits the band's two edges from cross-sections behind and ahead. When only one edge is in view (a band wider than view distance), it stays a learned half-width inside it. It aims at the centreline 96 blocks ahead, with at most 15° of correction. The axis turns at most about 0.75° per block, so gentle curves are followed and a hairpin is not. Trail ahead is measured lengthwise: each 16-block step counts once, however many chunks are in it. So a dense patch beside the trail cannot pull the flight off a long straight continuation.
-- **Gaps and ends.** Unknown terrain ahead is a gap: it holds the bearing for up to 384 blocks. A trail ends only when explicit new terrain closes the band ahead: three 16-block rows of at least three non-trail lanes each, and no trail, within 144 blocks. A single fresh chunk or an unknown hole is not an end.
-- **Leads.** A trail followed for at least 192 blocks that ends like this is a **trail end**, often a base. Chat reports it, and it's appended to `<minecraft>/meteor-client/comet/trail-leads/<world>.csv` with time, kind, x, z, heading and trail length. With **mark-trail-ends** (default on), it also adds a Meteor waypoint "Trail end N", which **xaero-waypoints** shows on Xaero's maps. A second strong branch where a trail splits is logged as a **fork**; **mark-forks** (default off) adds a waypoint for it too. A lead within 256 blocks of an earlier one of the same kind, from any session, is not reported again.
-- **Leave and search again.** After a trail ends, it flies 96 blocks out through new terrain, preferring a small turn and the outbound side, then searches again.
-
-**search-pattern** decides where to fly when no trail is in view:
-
-| Value | Between trails |
-| --- | --- |
-| `SPIRAL` (default) | Circles 0,0 at your starting distance, in whichever direction is nearer the way you face, and widens by **spiral-spacing** (default 768 blocks) each turn. Trails radiate from spawn, so circling crosses them instead of running alongside them. After following a trail out to its end, the search heads back to its circle at 45° and crosses more trails on the way. Within 1,000 blocks of 0,0 it flies straight. |
-| `STRAIGHT` | Holds your starting heading. |
-
-**avoid-highways** (default on) ignores old chunks within 192 blocks of the axis and diagonal highways, more than 1,000 blocks from spawn. A trail that joins a highway is crossed as a gap and picked up on the other side, rather than followed along the highway for thousands of blocks.
-
-### Never repeating a flight
-
-Route memory records every chunk actually flown, and the direction it was flown in. A heading is rejected when a remembered route runs along or beside it, in either direction:
-- within 8 chunks to either side and within about 50° of its direction, for at least 64 blocks along it;
-- or directly underneath it (within 2 chunks) for 32 blocks.
-
-The check covers 256 blocks ahead in the Overworld and 512 in the Nether. Crossing an old route at a steep angle is allowed, so a long session cannot fence itself in. Bands next to a recorded flight are not taken again.
-
-When every heading repeats some history, the flight takes the least repetitive one and holds it for 192 blocks. If that happens four times within 3,000 blocks, the area has been flown out. It then flies 1,500 blocks outward along the least-flown heading and starts a new search circle there. It lands only when route memory is full or saving it fails.
-
-Route files from 0.13 and 0.14 have no directions. Their chunks keep blocking every direction, except crossings steep enough for the geometry alone to show it.
-
-### Detection
-
-**trail-chunks** selects the detection signal:
-
-| Value | Signal |
-| --- | --- |
-| `OLD_112` | XaeroPlus OldChunks: its heuristic for chunks generated in 1.12.2 or earlier. |
-| `NON_FRESH` | A positive non-fresh result from Palette NewChunks. An unknown result never counts. |
-| `EITHER` (default) | Either positive result, using whichever detectors are enabled. |
-
-Enable the selected detector in XaeroPlus; with `EITHER`, at least one must be enabled. Explicit new terrain, which ends trails and gives bands their edges, comes from two places. One is a fresh Palette NewChunks result. The other is OldChunks' "modern" result, used when trails are 1.12 chunks only (`OLD_112`, or `EITHER` with Palette NewChunks off). OldChunks files every chunk it scans as either old or modern, so with `OLD_112` trail ends are recognised even in well-travelled modern areas where nothing is fresh.
-
-These are generation-history heuristics, not proof of player activity. Broad non-fresh detection can include older grid scans and your own flights. XaeroPlus normally preserves a cached fresh result on a revisit; enabling rescan or clearing caches can change this. If broad detection is noisy on 6b6t, select `OLD_112`.
-
-### Flight and safety
-
-- **Overworld:** Pitch40 receives yaw only and uses its own height bounds. Vanilla and Packet also receive forward, climb and descent input to hold **flight-height** (default 200). They climb higher when needed to stay 24 blocks above the highest loaded terrain in the next 128 blocks. **turn-speed** defaults to 10 degrees per tick. **take-off** uses the same steering and take-off helper as stash-hunter-elytrafly.
-- **Nether:** Baritone gets a point 500 blocks ahead at **nether-height** (default 80), normally at most once every 3 seconds. A new route needs a heading change of at least 10 degrees, or the existing endpoint to be within 200 blocks so a straight trail can continue. Baritone chooses its actual path through terrain. Every half-second, Comet also checks the next 512 blocks of that calculated path against route memory, skipping the part already flown. An unsafe detour triggers an immediate alternative, and nearby headings at that spot are rejected until the player has moved 128 blocks. ElytraFly stays off during and after this flight.
-- **if-stuck** (default Disconnect): without 64 blocks of progress for 30 seconds, it retries take-off once. After 90 seconds it either warns, or disconnects with AutoReconnect turned off so an unattended player isn't left standing.
-- **Chunk delivery:** trail ends can only be seen once the terrain ahead has loaded. If the chunk 48 blocks ahead is still missing in more than a third of checks over 30 seconds, chat says once to lower ElytraFly's speed. In simulation, flying at 2.5 times the chunk delivery rate lost almost every trail-end lead.
-- **Status:** the module list shows the current activity (seeking, following with the trail length so far, crossing a gap, leaving a trail or a flown-out area) and how many trail ends this run has found.
-
-### Single-trail mode
-
-With **keep-searching** off, the flight follows one trail using arrival timing instead of the map. It locks after **lock-chunks** distinct trail chunks arrive within **lock-window** (defaults 10 in 5 seconds), fitting a forward line through them. It circles to recover after **lost-after** (default 5 seconds), and acts on **trail-end** after **give-up-after** (default 30 seconds) of total silence:
-
-- **Land, Overworld:** level the pitch, temporarily use slow Vanilla flight, approach a loaded dry 3×3 landing area within 64 blocks while holding altitude, then descend. Unsafe surfaces, fluids, blocked descent columns and blocked approaches are rejected. If there is no usable area, it holds position and retries. On touching the ground it turns ElytraFly off, restores its saved settings and reports the landing coordinates. This is a controlled descent, not a terrain pathfinder. Turning the module off during landing also disables ElytraFly before restoring its settings.
-- **Land, Nether:** stop extending the route and let Baritone choose and reach its landing spot. If every checked exit is blocked by history, the goal first moves to the current position, so the unsafe distant path is not followed during landing. Baritone's flight is not cancelled just because it changed its destination to that spot. Coordinates are reported after touchdown.
-- **Heading:** keep flying on **fallback-heading** until the module is turned off. Minecraft yaw: 0 south, 90 west, -90 east, 180 north.
-- **Disconnect:** turn off AutoReconnect, stop this module, and disconnect with the trail-end coordinates.
-
-Continuous hunting also lands this way when route memory is full or cannot be saved.
-
-### Other modules, worlds and files
-
-Trail Hunter refuses to start during a Stash-Hunter flight or an existing Baritone trip. It releases control if Stash-Hunter or another Baritone trip takes over. Stash-Hunter's scanner can run without a `.sh start` flight: in the inspected 26.2 source, its scan interval runs independently of its flight controller. Leave `.sh start` and `.sh trail` stopped while Trail Hunter flies. Comet does not enable the scanner or change its settings.
-
-Turning Trail Hunter off manually releases its inputs and cancels its own Nether route. The Nether landing phase, including a flight that has already changed to Baritone's landing destination, is left to finish. After a Nether flight, enable ElytraFly again yourself when ready. Leaving or changing worlds disables the module and keeps the saved route memory. Changing detection or **keep-searching** starts a fresh search without forgetting flown routes.
-
-Route history is saved under `<minecraft>/meteor-client/comet/trail-routes/` as checksummed binary files. The lead log sits beside it in `trail-leads/`. Both are named with a hash of the server address (or singleplayer world folder) plus the dimension, so different dimensions and worlds have separate histories. Reusing the same server address or world folder keeps history across reconnects and client restarts. Connecting through a different server alias gives a different history. Only flights made while this module is active are recorded.
-
-Background saves happen every 30 seconds and when the module stops, so an abrupt client crash can lose the most recent unsaved interval. Files are replaced atomically. Unreadable or corrupt existing history stops activation rather than silently starting empty. History never evicts old entries; at one million recorded chunks, the module lands. There is no automatic history reset.
-
-This is local navigation using known classifications and flown corridors. It cannot see a trail before XaeroPlus classifies it, promise that an unseen trail exists, or guarantee how the server carries out a physical turn. The bridge reads classifications on the next client tick, after XaeroPlus's synchronous chunk listeners finish. Cache-startup retries keep the original chunk receipt time. Source checks: [XaeroPlus 2.36.6 release](https://github.com/rfresh2/XaeroPlus/releases/tag/2.36.6), [chunk event dispatch](https://github.com/rfresh2/XaeroPlus/blob/5bb9236657d7165f4b8c17f92beb88243e3e7276/common/src/main/java/xaeroplus/mixin/client/mc/MixinClientPlayNetworkHandler.java), [OldChunks](https://github.com/rfresh2/XaeroPlus/blob/5bb9236657d7165f4b8c17f92beb88243e3e7276/common/src/main/java/xaeroplus/module/impl/OldChunks.java), [PaletteNewChunks](https://github.com/rfresh2/XaeroPlus/blob/5bb9236657d7165f4b8c17f92beb88243e3e7276/common/src/main/java/xaeroplus/module/impl/PaletteNewChunks.java), and [Stash-Hunter scanner](https://github.com/Papxx/Stash-Hunter26.2-by-_og3/blob/main/src/main/java/com/stashhunter/stashhunter/modules/StashHunterModule.java).
-
-### Simulation
-
-The navigation is developed against a flight simulator in the test sources, which drives the same code the module uses. The simulator models:
-- view-distance chunk loading capped like Paper's send rate;
-- XaeroPlus classifying each chunk once and keeping the result;
-- cache sampling once a second;
-- a player that turns at the pilot's rate.
-
-The simulated worlds have wide radial trails from spawn with bends, branches and a base at every trail end, plus cross-country trails, modern traffic, old-chunk noise and holes, and optionally highways. Over 48 seeded worlds and 30 simulated minutes each:
-- `SPIRAL` hunting reached about 450 bases, spent about 63% of the flight over old chunks, and never needed to land.
-- `STRAIGHT` reached about 125 bases.
-- The 0.14.0 navigation, run in the same worlds, reached 34 bases with 10% of the flight over old chunks, and 14 of the 48 flights would have landed early.
-- In worlds with highways, **avoid-highways** raised the count from about 325 to 515.
-
-Run `TrailSimTune`, `TrailSimReport` or `TrailSimRender` (which draws a flight to a PNG) from the test classes to evaluate a change. The simulator is a model of radial trails, not of 6b6t's real layout.
-
-### In-game checks still required
-
-1. On 6b6t Overworld with `OLD_112`, fly a known trail and confirm it centres on the band, follows its bends and reports a trail end where it meets modern terrain. Compare against your existing old-chunk highlights.
-2. Cross a trail at a steep angle and confirm it turns along it, outbound. Cross a highway and confirm it is crossed, not followed.
-3. Run unattended for an hour: check the lead log and waypoints, that chat stays quiet between leads, and that **if-stuck** behaves (for example by landing it in water).
-4. Test Land from Pitch40, Vanilla and Packet in single-trail mode, including no dry landing area, blocked approaches and cancelled landing. Verify saved ElytraFly settings are restored and that it is off after touchdown.
-5. In the Nether, verify route updates stay throttled, straight trails extend, detours into remembered routes are rejected, and Baritone finishes landing without route resets. Check take-off and firework supply.
-
 ## Stash-Hunter ElytraFly
 
 A separate module, **stash-hunter-elytrafly**, for the Stash-Hunter addon. It is built against Stash-Hunter 0.26.2, the 26.2 port on its `main` branch. With it on, Stash-Hunter still decides where to go: grid strips, new-chunk trails and edge following. Meteor's **ElytraFly** does the flying, instead of Baritone's firework flight. Set ElytraFly's mode to Vanilla, Packet or Pitch40 and start Stash-Hunter as usual.
@@ -354,9 +296,9 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.22.2.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 35, `26.2-20261009.074120-35`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.2-20260813.152229-1`, the same jar as `baritone-meteor-26.2.jar`) from Meteor's Maven, as compile-only dependencies. XaeroPlus (`2.36.6+fabric-26.2`) is also compile-only from Modrinth; none is bundled. The Stash-Hunter hooks are mixins that need nothing at build time and are skipped when Stash-Hunter isn't installed.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.23.6.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 35, `26.2-20261009.074120-35`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.2-20260813.152229-1`, the same jar as `baritone-meteor-26.2.jar`) from Meteor's Maven, as compile-only dependencies. XaeroPlus (`2.36.6+fabric-26.2`) is also compile-only from Modrinth; none is bundled. The Stash-Hunter hooks are mixins that need nothing at build time and are skipped when Stash-Hunter isn't installed.
 
-429 automated tests pass. They cover:
+514 automated tests cover:
 
 - retained Storage ESP batches, 10,000-entry unchanged stashes, chunk unload/reload identity, camera movement at world-border coordinates and frustum bounds
 - TNT redstone buffers around inactive components, vertical and diagonal bounds, unloaded terrain, build-height edges, changing power and non-TNT placement
@@ -368,7 +310,7 @@ Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `bui
 - waypoint mirroring: dimensions, opposite-dimension scaling, hidden waypoints, colour matching and change detection
 - Baritone elytra hand-off: when a trip is flown or walked, take-off timing and retries, and what happens after a flight ends
 - elytra replacement: when the worn elytra is due, which spare is swapped in, and when there is none left and Elytra Log logs out
-- adaptive ElytraFly: Sprint boost with preserved steering, reversal, vertical and terrain/correction limits; full-vector acceleration and release braking, correction pauses/backoff/recovery, immediate stock speed limits, bounded swept-body terrain checks, negative coordinates, blended turns, loaded-edge stopping and floor touchdown
+- adaptive ElytraFly: adaptive cruise/sprint percentages, Sprint acceleration and vertical boost, low-speed wall manoeuvring and recovery after guarding, preserved steering, reversals, correction limits and unloaded-chunk protection; bounded swept-body terrain checks, negative coordinates, blended turns and floor touchdown
 - ElytraFly steering: compass-correct facing, turning the short way round, and when to climb or descend
 - area spiral search: centre approach, clockwise/counter-clockwise geometry, turn spacing, physical progress without skipping rings, high-speed waypoint crossings, pause/resume with manual detours and bounded-turn flights to the radius limit
 - single-trail following: straight and curved trails, forks, sparse noise, duplicate loads, delayed classifications, negative coordinates, gaps, recovery, exhaustion, reset, bounded history, and robust line direction
@@ -380,6 +322,6 @@ Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `bui
 - the lead log and highway geometry
 - whole-flight simulations: trails crossed at every angle followed to their base, wide-band centring, bends, realistic worlds hunted without landing, and noise never followed
 
-A Fabric prelaunch check confirms the adaptive flight mixin applies to Meteor 26.2-35. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), mid-flight elytra swaps, Elytra Log's logout, Stash-Hunter ElytraFly (hooks, steering, height keeping and take-off), Area Spiral Search (turning, centre approach, completion and handing control back), and Trail Hunter (live XaeroPlus detection, server steering, recovery, landing and Nether route updates).
+A Fabric prelaunch check confirms the adaptive flight mixin applies to Meteor 26.2-35. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), mid-flight elytra swaps, Elytra Log's logout, Stash-Hunter ElytraFly (hooks, steering, height keeping and take-off).
 
 Source follows the official Meteor addon template and API, under the included CC0 license.

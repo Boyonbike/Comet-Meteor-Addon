@@ -131,7 +131,7 @@ public final class AdaptiveFlightController {
         return step(requested, safeDistance, false);
     }
 
-    /** Sprint skips the horizontal speed ramp while preserving steering, vertical smoothing and correction limits. */
+    /** Sprint changes the activity status; its requested velocity uses the same acceleration and braking. */
     public Motion step(Motion requested, double safeDistance, boolean sprintBoost) {
         Objects.requireNonNull(requested, "requested");
         if (Double.isNaN(safeDistance) || safeDistance < 0) {
@@ -145,7 +145,7 @@ public final class AdaptiveFlightController {
         }
 
         Motion target = requested.scaled(speedFactor);
-        if (sprintBoost) output = boostHorizontal(output, target);
+        boosting = sprintBoost && target.length() > 0;
         boolean braking = target.length() < output.length() || oppositeDirection(output, target);
         output = approach(output, target, braking ? settings.braking() : settings.acceleration());
         double length = output.length();
@@ -174,22 +174,6 @@ public final class AdaptiveFlightController {
     public int correctionCount() { return correctionCount; }
     public int ticksSinceCorrection() { return ticksSinceCorrection; }
     public boolean isBoosting() { return boosting; }
-
-    private Motion boostHorizontal(Motion current, Motion target) {
-        double currentHorizontal = current.horizontalLength(), targetHorizontal = target.horizontalLength();
-        if (targetHorizontal == 0 || targetHorizontal < currentHorizontal) return current;
-        if (currentHorizontal > 0) {
-            double direction = (current.x() / currentHorizontal) * (target.x() / targetHorizontal)
-                + (current.z() / currentHorizontal) * (target.z() / targetHorizontal);
-            // Re-expanding the old direction during a reversal would prevent braking through zero.
-            if (direction <= 0) return current;
-        }
-        if (!Double.isFinite(Math.hypot(targetHorizontal, current.y()))) return current;
-        boosting = true;
-        if (currentHorizontal == 0) return new Motion(target.x(), current.y(), target.z());
-        return new Motion((current.x() / currentHorizontal) * targetHorizontal, current.y(),
-            (current.z() / currentHorizontal) * targetHorizontal);
-    }
 
     /** Includes the current tick while it is paused. */
     public int pauseTicksRemaining() {

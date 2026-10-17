@@ -53,8 +53,14 @@ public final class AdaptiveElytraFly extends Module {
         .description("Velocity reduction per tick when slowing down. Higher values need less clear terrain ahead.")
         .defaultValue(0.3).range(0.01, 2).sliderRange(0.01, 1).build());
     private final Setting<Boolean> sprintBoost = general.add(new BoolSetting.Builder().name("sprint-boost")
-        .description("Hold your Sprint key while flying to reach the current adaptive horizontal speed ceiling. Keeps steering, terrain and correction limits.")
+        .description("Hold your Sprint key to boost horizontal movement and deliberate climb/descent. Keeps terrain and correction limits.")
         .defaultValue(true).build());
+    private final Setting<Double> cruiseMaximum = general.add(new DoubleSetting.Builder().name("cruise-max-speed")
+        .description("Cruise maximum as a percentage of the adaptive engine's attainable speed. 100% uses its full output; see Flight Diagnostics for blocks/second.")
+        .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
+    private final Setting<Double> sprintMaximum = general.add(new DoubleSetting.Builder().name("sprint-max-speed")
+        .description("Sprint maximum as a percentage of the adaptive engine's attainable speed, including vertical input. 100% uses its full output.")
+        .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(sprintBoost::get).build());
     private final Setting<Integer> lookahead = terrain.add(new IntSetting.Builder().name("lookahead")
         .description("Maximum corridor distance to check, in blocks. Work is bounded at 64 blocks per scan.")
         .defaultValue(64).range(8, 64).sliderRange(8, 64).build());
@@ -63,6 +69,9 @@ public final class AdaptiveElytraFly extends Module {
         .defaultValue(0.35).range(0.05, 2).sliderRange(0.05, 1).build());
     private final Setting<Boolean> avoidBlocks = terrain.add(new BoolSetting.Builder().name("avoid-blocks")
         .description("Check swept player boxes for blocks. Meteor's No Crash also enables this protection.")
+        .defaultValue(true).build());
+    private final Setting<Boolean> safeManeuvering = terrain.add(new BoolSetting.Builder().name("safe-maneuvering")
+        .description("Release block avoidance at harmless contact speeds, including after braking for a wall. Keeps unloaded-chunk protection.")
         .defaultValue(true).build());
     private final Setting<Double> correctionBackoff = recovery.add(new DoubleSetting.Builder().name("correction-backoff")
         .description("Multiply the temporary speed ceiling by this after a server position correction.")
@@ -84,6 +93,7 @@ public final class AdaptiveElytraFly extends Module {
         @Override public boolean loaded(int x, int z) { return mc.level.getChunkSource().hasChunk(x, z); }
         @Override public boolean clear(AABB swept) {
             if (!checkBlocks) return true;
+            collisionChecks++;
             for (var shape : mc.level.getBlockCollisions(mc.player, swept)) {
                 // Leave downward ground contact to Minecraft's collision solver, which sets onGround normally.
                 if (!FlightCorridor.floorContactAllowed(mc.player.getBoundingBox(), toVec(controller.output()),
@@ -99,8 +109,10 @@ public final class AdaptiveElytraFly extends Module {
     private long chunkLimitedTicks, obstacleLimitedTicks;
     private int chunkChecks, collisionChecks;
     private String state = "Waiting for flight", hud = state;
-    private WLabel statusLabel, countsLabel, frameLabel, checksLabel;
+    private WLabel statusLabel, speedLabel, countsLabel, frameLabel, checksLabel;
     private double frameAverageMs, framePeakMs, measuredSpeed;
+    private double adaptiveMaximum;
+    private boolean maneuvering, harmlessPhysicsAtTickStart;
     private long slowFrames, sampleTime;
     private int diagnosticCorrectionBase;
     private Vec3 samplePosition;
@@ -136,6 +148,9 @@ public final class AdaptiveElytraFly extends Module {
         }
         controller.configure(controllerSettings());
         controller.tick();
+        // Vanilla snapshots pre-travel horizontal speed before posting PlayerMoveEvent.
+        // Never release protection from a newly reset controller while physical flight is still fast.
+        harmlessPhysicsAtTickStart = mc.player != null && harmless(mc.player.getDeltaMovement());
         chunkChecks = collisionChecks = 0;
         ElytraFly fly = Modules.get().get(ElytraFly.class);
         if (!eligible(fly)) suspend(reason(fly));
@@ -153,44 +168,56 @@ public final class AdaptiveElytraFly extends Module {
             return false;
         }
         checkBlocks = avoidBlocks.get() || fly.noCrash.get();
+        consumeCorrections();
+        // Keep harmless block contact under our controller: yielding to stock here
+        // would invoke Meteor's unconditional No Crash and trap tight-space movement.
+        boolean releaseSafeCollisions = safeManeuvering.get() && harmlessPhysicsAtTickStart
+            && harmless(event.movement);
+        boolean harmlessStart = releaseSafeCollisions && AdaptiveFlightStep.harmless(controller.output());
         // Corrections/unloads can strand the body in unknown terrain. Let stock physics withdraw from an existing
         // overlap; a blocked path from a safe starting box still uses the adaptive guard normally.
-        FlightCorridor.Result start = FlightCorridor.inspectStart(mc.player.getBoundingBox(), probe);
+        FlightCorridor.Result start = FlightCorridor.inspectStart(mc.player.getBoundingBox(),
+            harmlessStart ? chunksOnlyProbe() : probe);
         chunkChecks += start.chunkChecks();
-        if (checkBlocks) collisionChecks += start.collisionChecks();
         if (start.reason() != FlightCorridor.Reason.CLEAR) {
             suspend("Terrain overlap");
             updateStatus();
             return false;
         }
         controlling = true;
-        consumeCorrections();
         if (movementTick != mc.player.tickCount) {
             movementTick = mc.player.tickCount;
             mode.autoTakeoff();
             mode.handleAutopilot();
             Motion requested = requested(fly, event.movement.y);
+            boolean sprinting = sprintBoost.get() && mc.gui.screen() == null && mc.isWindowActive()
+                && Input.isPressed(mc.options.keySprint);
+            int verticalInput = finite(fly.verticalSpeed.get(), 0, 64) == 0 ? 0
+                : mc.options.keyJump.isDown() ? 1 : mc.options.keyShift.isDown() ? -1 : 0;
             // Probe the actual blended trajectory once, rather than separately scanning old and desired headings.
             AdaptiveFlightStep.Result step = AdaptiveFlightStep.move(controller, requested,
                 finite(fly.horizontalSpeed.get(), 0, 64),
                 Math.max(Math.abs(requested.y()), finite(fly.verticalSpeed.get(), 0, 64) * 0.5),
                 mc.player.getBoundingBox(), probe, lookahead.get(), margin.get(),
-                sprintBoost.get() && mc.gui.screen() == null && mc.isWindowActive()
-                    && Input.isPressed(mc.options.keySprint));
+                new AdaptiveFlightStep.Controls(sprinting,
+                    (sprinting ? sprintMaximum.get() : cruiseMaximum.get()) / 100,
+                    verticalInput, releaseSafeCollisions));
+            adaptiveMaximum = step.adaptiveMaximum();
+            maneuvering = step.safeManeuvering();
             FlightCorridor.Result ahead = step.corridor();
             if (ahead != null) {
                 chunkChecks += ahead.chunkChecks();
-                if (checkBlocks) collisionChecks += ahead.collisionChecks();
             }
             if (controller.pauseTicksRemaining() > 0) state = "Correction pause";
             else if (step.terrainLimited() && ahead != null && ahead.reason() == FlightCorridor.Reason.CHUNKS) {
                 state = "Chunk limited";
                 chunkLimitedTicks++;
-            } else if (step.terrainLimited() && ahead != null && ahead.reason() == FlightCorridor.Reason.OBSTACLE) {
+            } else if (ahead != null && ahead.reason() == FlightCorridor.Reason.INVALID) state = "Invalid terrain";
+            else if (maneuvering) state = "Low-speed control";
+            else if (step.terrainLimited() && ahead != null && ahead.reason() == FlightCorridor.Reason.OBSTACLE) {
                 state = "Obstacle limited";
                 obstacleLimitedTicks++;
-            } else if (ahead != null && ahead.reason() == FlightCorridor.Reason.INVALID) state = "Invalid terrain";
-            else if (controller.speedFactor() < 0.999) state = "Recovering";
+            } else if (controller.speedFactor() < 0.999) state = "Recovering";
             else if (step.lookaheadLimited()) state = "Lookahead limited";
             else if (controller.isBoosting()) state = "Sprint boost";
             else state = "Flying";
@@ -198,7 +225,10 @@ public final class AdaptiveElytraFly extends Module {
         } else if (controller.output().length() > EPSILON) {
             // A second SELF move in one tick must not reuse clearance from the old position or advance acceleration twice.
             Motion output = controller.output();
-            FlightCorridor.Result actual = inspect(toVec(output), output.length() + margin.get());
+            FlightCorridor.Result actual = FlightCorridor.inspect(mc.player.getBoundingBox(), toVec(output),
+                output.length() + margin.get(), releaseSafeCollisions && maneuvering
+                    && AdaptiveFlightStep.harmless(output) ? chunksOnlyProbe() : probe);
+            chunkChecks += actual.chunkChecks();
             double allowed = Math.max(0, actual.clearDistance() - margin.get());
             if (allowed < output.length()) controller.accept(scale(output, allowed / output.length()));
         }
@@ -236,11 +266,11 @@ public final class AdaptiveElytraFly extends Module {
         return new Motion(x, finite(y, -64, 64), z);
     }
 
-    private FlightCorridor.Result inspect(Vec3 direction, double distance) {
-        FlightCorridor.Result result = FlightCorridor.inspect(mc.player.getBoundingBox(), direction, distance, probe);
-        chunkChecks += result.chunkChecks();
-        if (checkBlocks) collisionChecks += result.collisionChecks();
-        return result;
+    private FlightCorridor.Probe chunksOnlyProbe() {
+        return new FlightCorridor.Probe() {
+            @Override public boolean loaded(int x, int z) { return probe.loaded(x, z); }
+            @Override public boolean clear(AABB swept) { return true; }
+        };
     }
 
     private void consumeCorrections() {
@@ -258,6 +288,8 @@ public final class AdaptiveElytraFly extends Module {
         controller.accept(Motion.ZERO);
         movementTick = Integer.MIN_VALUE;
         state = why;
+        maneuvering = false;
+        adaptiveMaximum = 0;
     }
 
     private void reset() {
@@ -270,6 +302,9 @@ public final class AdaptiveElytraFly extends Module {
         chunkLimitedTicks = obstacleLimitedTicks = slowFrames = 0;
         chunkChecks = collisionChecks = 0;
         frameAverageMs = framePeakMs = measuredSpeed = 0;
+        adaptiveMaximum = 0;
+        maneuvering = false;
+        harmlessPhysicsAtTickStart = false;
         samplePosition = null;
         sampleTime = 0;
         diagnosticCorrectionBase = 0;
@@ -307,6 +342,14 @@ public final class AdaptiveElytraFly extends Module {
         hud = String.format(Locale.ROOT, "%s %.0f b/s", state, measuredSpeed);
         if (statusLabel != null) statusLabel.set(String.format(Locale.ROOT,
             "%s | ceiling %.0f%% | measured %.1f b/s", state, controller.speedFactor() * 100, measuredSpeed));
+        if (speedLabel != null) {
+            double maximum = controlling ? adaptiveMaximum : AdaptiveFlightStep.maximumSpeed(
+                braking.get(), lookahead.get(), margin.get()) * controller.speedFactor();
+            speedLabel.set(String.format(Locale.ROOT,
+                "Adaptive max %.1f b/s | cruise %.1f b/s (%.1f%%) | Sprint %.1f b/s (%.1f%%)",
+                maximum * 20, maximum * cruiseMaximum.get() / 5, cruiseMaximum.get(),
+                maximum * sprintMaximum.get() / 5, sprintMaximum.get()));
+        }
         if (countsLabel != null) countsLabel.set("Corrections " + (controller.correctionCount() - diagnosticCorrectionBase)
             + " | chunk-limited ticks " + chunkLimitedTicks + " | obstacle-limited ticks " + obstacleLimitedTicks);
         if (checksLabel != null) checksLabel.set("This tick: " + chunkChecks + " chunk checks, " + collisionChecks + " block checks");
@@ -317,8 +360,11 @@ public final class AdaptiveElytraFly extends Module {
     @Override public String getInfoString() { return hud; }
 
     @Override public WWidget getWidget(GuiTheme theme) {
-        var table = theme.table();
+        var list = theme.verticalList();
+        var section = list.add(theme.section("Flight Diagnostics", false)).expandX().widget();
+        var table = section.add(theme.table()).expandX().widget();
         statusLabel = table.add(theme.label("")).widget(); table.row();
+        speedLabel = table.add(theme.label("")).widget(); table.row();
         countsLabel = table.add(theme.label("")).widget(); table.row();
         checksLabel = table.add(theme.label("")).widget(); table.row();
         frameLabel = table.add(theme.label("")).widget(); table.row();
@@ -331,10 +377,13 @@ public final class AdaptiveElytraFly extends Module {
             updateStatus();
         };
         updateStatus();
-        return table;
+        return list;
     }
 
     private static Vec3 toVec(Motion motion) { return new Vec3(motion.x(), motion.y(), motion.z()); }
+    private static boolean harmless(Vec3 motion) {
+        return motion.length() <= AdaptiveFlightStep.SAFE_MANEUVER_SPEED;
+    }
     private static Motion scale(Motion motion, double factor) {
         return new Motion(motion.x() * factor, motion.y() * factor, motion.z() * factor);
     }

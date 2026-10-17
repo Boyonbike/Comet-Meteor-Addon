@@ -228,9 +228,11 @@ public final class FastStorageESP extends Module {
     }
 
     @Override public WWidget getWidget(GuiTheme theme) {
-        var button = theme.button("Clear Opened Containers");
+        var list = theme.verticalList();
+        var section = list.add(theme.section("Actions", false)).expandX().widget();
+        var button = section.add(theme.button("Clear Opened Containers")).expandX().widget();
         button.action = () -> { opened.clear(); refreshRequested = true; };
-        return button;
+        return list;
     }
 
     @EventHandler private void onRender(Render3DEvent event) {

@@ -72,8 +72,8 @@ public final class BlockCoat extends Module {
     public enum Priority { Nearest, Farthest }
     public enum ServerMode { Adaptive, Conservative, Fast }
 
-    private final SettingGroup tntSaving = settings.createGroup("TNT Saving", true);
     private final SettingGroup general = settings.getDefaultGroup();
+    private final SettingGroup tntSaving = settings.createGroup("TNT Saving", false);
     private final Setting<Block> coatingBlock = general.add(new BlockSetting.Builder()
         .name("coating-block").description("Block used for coating, scaffold and jump placement.")
         .defaultValue(Blocks.TNT)

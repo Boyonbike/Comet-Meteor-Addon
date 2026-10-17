@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.23.6
+
+- **Adaptive speed controls:** add **cruise-max-speed** (35%) and **sprint-max-speed** (100%), each adjustable from 0–100% of the adaptive engine's current output after terrain, braking and correction limits. Show the adaptive maximum and selected cruise/sprint speeds in blocks/second. Meteor's horizontal speed remains a zero/nonzero movement switch; normal vertical speed remains in Meteor.
+- **Sprint vertical boost:** use the sprint ceiling for deliberate Jump/Sneak ascent and descent, including purely vertical movement. Retain acceleration, steering, reversal braking, terrain protection and correction backoff. Releasing Sprint restores cruise speed and Meteor's normal vertical input; Shift auto-hover can still take priority over descent.
+- **Tight-space control:** add **safe-maneuvering**, enabled by default, to bypass block guarding and Meteor No Crash below Minecraft's wall-damage threshold of 0.3 blocks/tick (about 6 blocks/second). Permit crawl-speed movement after a faster step was blocked, including when the next acceleration request would otherwise block again. Apply the same bypass to extra SELF movements; retain unloaded-chunk protection throughout.
+- **Validation:** release build and all 514 tests pass, including adaptive percentage scaling, intentional vertical Sprint, harmless wall release, guard reactivation and unloaded-chunk protection. A headless Fabric check verifies the packaged Elytra hook, real module registration, setting defaults/ranges and adaptive controls; its fixture skips an unused render-buffer allocation. Live Minecraft/server checks are still required for wall manoeuvring, physical keys, vertical sprint control and server acceptance.
+
+## 0.23.5
+
+- Add a **Comet** dropdown inside Elytra Fly, Storage ESP, Fast Use, Waypoints and Stash-Hunter settings, linking to their related Comet upgrades. Left-click toggles the upgrade; right-click opens its canonical settings screen. Reuse the registered instances so settings, binds and state stay shared with the Comet category.
+- Retain the shared Comet/original category entries for Scaffold, Trajectories, Auto Totem and Inventory Tweaks. Keep standalone Comet tools in Comet.
+- Initialize custom section headers before adding their contents, including Flight Diagnostics and Storage ESP Actions.
+- **Validation:** build and all 500 tests pass. A headless Fabric check verifies the settings-screen hook, all five parent-module link sets, shared registered widget targets, native header expand/collapse, custom dropdown header order, and the original four shared menu entries. Pixel appearance still needs an in-game check.
+
+## 0.23.4
+
+- Add **Scaffold**, **Trajectories**, **Auto Totem** and **Inventory Tweaks** to the Comet menu as well as their original Meteor categories. Reuse each original module instance so settings, keybinds and enabled state are shared, with a single module registration and event subscription.
+- Place the extra entries alongside related Comet modules: Trajectories with rendering/storage, Scaffold with building, and Auto Totem/Inventory Tweaks before diagnostics.
+- **Validation:** build and all 500 tests pass. A headless Fabric check against the release JAR exercises the registration callback with module fixtures: original entries remain registered, both menus share identical module/settings instances, all 16 registrations are unique, and repeated sorting preserves the Comet order. Visual interaction still needs an in-game check.
+
+## 0.23.3
+
+- Start every Comet module's setting groups collapsed so settings open as clickable dropdown sections. Retain saved setting values and saved group expansion states. Show Block Coat's General section first.
+- Put Adaptive Elytra Fly's diagnostics and reset button in a **Flight Diagnostics** dropdown and Fast Storage ESP's clear-history button in an **Actions** dropdown.
+- Start Comet's added Scaffold and Trajectories sections collapsed too.
+- **Validation:** build and all 500 tests pass. Check the release JAR version, retained menu-order hook and absence of retired modules. Dropdown appearance and interaction still need an in-game visual check.
+
+## 0.23.2
+
+- Remove **area-spiral-search** and **trail-hunter** from Comet.
+- Group the Comet menu by purpose: flight and flight safety, storage and waypoints, building, then diagnostics. Retain that order after Meteor's automatic alphabetical sort; other categories keep their normal ordering.
+- **Validation:** build and all 500 tests pass. A headless Fabric check against the release JAR verifies the sorting hook with shuffled menu fixtures, repeated sorting, unchanged alphabetical sorting in another category, and the absence of both removed module classes. The menu has not been visually checked in-game.
+
+## 0.23.1
+
+- **Sprint boost:** hold Sprint to ramp up with the configured acceleration toward the adaptive engine's maximum horizontal speed, beyond Meteor's normal cruising speed. Remove the instant acceleration bypass. Request the engine ceiling of 64 blocks per tick, then retain swept terrain stopping limits, steering, vertical smoothing and reversal braking. Apply correction backoff to the attainable sprint ceiling so the maximum-speed request cannot mask it. Releasing Sprint restores Meteor's normal horizontal ceiling.
+- **Validation:** build and all 500 tests pass. Sprint regressions cover gradual acceleration past cruising speed to the adaptive maximum, steering, reversals, release braking, vertical limits, correction backoff/recovery and bounded terrain stopping. Fabric prelaunch verifies the packaged Elytra Fly hook against Meteor 26.2-35. Live Minecraft/server acceptance remains untested.
+
+## 0.23.0
+
+- **Scaffold:** optimize Meteor's existing module with one-pass nearest-support selection and an early-exit tower ceiling check. Add **Comet → sticky-switch** (off by default) to retain the block slot between placements. Add **confirmation-retries** (on by default) to pace repeated unconfirmed/rejected positions independently, with quick underfoot retries and no delay for new cells. Confirm through applied server block updates, with bounded history and world/module resets.
+- **Trajectories:** retain Meteor's simulator and renderer while caching exact unchanged predictions within a tick. Add **Comet → optimize-trajectories** (on), **remote-trajectory-range** (128 blocks) and **trajectory-steps-per-frame** (8,000). Prioritize the local player, rotate remote work, split multishot allowances and hide stale paths that cannot be refreshed. Refresh fired starts each frame and invalidate on applied world/entity changes, chunk changes and border movement. Tight budgets may shorten or omit predictions; disabling optimization restores stock handling.
+- **Inventory Tweaks:** schedule Steal/Dump actions on the client thread, retaining initial/normal/random delays without sleeping or catch-up bursts. Bind exact player/world/screen/menu identities; recheck source stacks, filters and pickup permissions before clicks and rotation callbacks. Cancel on container changes, disconnect, module changes, manual sorting or a held cursor stack. Coalesce duplicate requests and cap transfers at eight actions per client tick. Fix Steal Drop issuing no drop when Drop Backwards is off.
+- **Validation:** build and all 496 tests pass, including 30 new regressions for support selection, retry state, transfer scheduling, prediction inputs, cache invalidation and simulation budgets. Fabric prelaunch verifies the packaged mixins against Meteor 26.2-35, including the private trajectory Path and applied-packet hooks. Live server acceptance, rendering and FPS measurements remain required.
+
+## 0.22.3
+
+- **auto-totem:** optimize Meteor's existing Combat module automatically. Short-circuit damage prediction in Strict mode, during configured elytra flight, and when health plus absorption is already at/below the threshold. Retain fresh prediction for all other Smart decisions, along with the existing delay and pop handler.
+- **Packets:** equip with one normal offhand SWAP click from ordinary hotbar/main-inventory slots, preserving the cursor and returning the displaced item. Resolve source slots from the current menu; retain Meteor's original move handling for creative and unsupported/restricted layouts.
+- **Validation:** build and all 466 tests pass, including six new regressions for decision equivalence, fresh threats and menu-slot resolution. Fabric prelaunch confirms the Auto Totem mixin applies against Meteor 26.2-35. Live Minecraft/server acceptance and FPS measurements remain required.
+
 ## 0.22.2
 
 - **block-coat:** add **pause-items-reset-on-use**, enabled by default. Using a configured pause item on a block, entity or in air restarts its timeout, including after expiry. Continuous item use refreshes the timer. Only the hand being used counts; Block Coat's own automated placements do not reset it. Disable the toggle to retain the original hold-based countdown.
