@@ -8,6 +8,8 @@ import java.util.Objects;
  */
 public final class AdaptiveFlightController {
     public static final double MIN_SPEED_FACTOR = 0.1;
+    /** Effective heading assistance never exceeds a right angle per tick. */
+    public static final double MAX_TURN_RATE = 90;
 
     public enum Status { READY, RECOVERING, PAUSED, TERRAIN_LIMITED }
 
@@ -35,7 +37,15 @@ public final class AdaptiveFlightController {
     }
 
     public record Settings(double acceleration, double braking, double correctionMultiplier,
-                           int correctionPauseTicks, int recoveryDelayTicks, double recoveryPerTick) {
+                           int correctionPauseTicks, int recoveryDelayTicks, double recoveryPerTick,
+                           double turnRate) {
+        /** A zero turn rate retains the original momentum-based steering. Rates are degrees per tick. */
+        public Settings(double acceleration, double braking, double correctionMultiplier,
+                        int correctionPauseTicks, int recoveryDelayTicks, double recoveryPerTick) {
+            this(acceleration, braking, correctionMultiplier, correctionPauseTicks,
+                recoveryDelayTicks, recoveryPerTick, 0);
+        }
+
         public Settings {
             if (!Double.isFinite(acceleration) || acceleration <= 0) {
                 throw new IllegalArgumentException("Acceleration must be finite and positive.");
@@ -52,6 +62,9 @@ public final class AdaptiveFlightController {
             }
             if (!Double.isFinite(recoveryPerTick) || recoveryPerTick < 0 || recoveryPerTick > 1) {
                 throw new IllegalArgumentException("Recovery per tick must be in [0, 1].");
+            }
+            if (!Double.isFinite(turnRate) || turnRate < 0 || turnRate > 90) {
+                throw new IllegalArgumentException("Turn rate must be in [0, 90] degrees per tick.");
             }
         }
     }
@@ -133,9 +146,20 @@ public final class AdaptiveFlightController {
 
     /** Sprint changes the activity status; its requested velocity uses the same acceleration and braking. */
     public Motion step(Motion requested, double safeDistance, boolean sprintBoost) {
+        return step(requested, safeDistance, sprintBoost, Double.POSITIVE_INFINITY);
+    }
+
+    /**
+     * {@code turnReference} is the adaptive engine's attainable speed. Heading assistance rises with
+     * actual speed to twice the configured rate at that speed; positive infinity keeps the configured rate.
+     */
+    public Motion step(Motion requested, double safeDistance, boolean sprintBoost, double turnReference) {
         Objects.requireNonNull(requested, "requested");
         if (Double.isNaN(safeDistance) || safeDistance < 0) {
             throw new IllegalArgumentException("Safe distance must be nonnegative or positive infinity.");
+        }
+        if (Double.isNaN(turnReference) || turnReference < 0) {
+            throw new IllegalArgumentException("Turn reference must be nonnegative or positive infinity.");
         }
         terrainLimited = false;
         boosting = false;
@@ -147,7 +171,8 @@ public final class AdaptiveFlightController {
         Motion target = requested.scaled(speedFactor);
         boosting = sprintBoost && target.length() > 0;
         boolean braking = target.length() < output.length() || oppositeDirection(output, target);
-        output = approach(output, target, braking ? settings.braking() : settings.acceleration());
+        output = steer(output, target, braking ? settings.braking() : settings.acceleration(),
+            settings.turnRate(), settings.acceleration(), turnReference);
         double length = output.length();
         if (length > safeDistance) {
             output = output.scaled(safeDistance / length);
@@ -193,6 +218,47 @@ public final class AdaptiveFlightController {
         return (current.x() / currentScale) * (target.x() / targetScale)
             + (current.y() / currentScale) * (target.y() / targetScale)
             + (current.z() / currentScale) * (target.z() / targetScale) < 0;
+    }
+
+    private static Motion steer(Motion current, Motion target, double maxDelta, double turnRate,
+                                double steeringAcceleration, double turnReference) {
+        double horizontal = current.horizontalLength();
+        double targetHorizontal = target.horizontalLength();
+        Motion ordinary = approach(current, target, maxDelta);
+        if (turnRate == 0 || horizontal == 0 || targetHorizontal == 0) return ordinary;
+
+        // Compare actual momentum with ordinary steering authority. Crawling
+        // keeps the original precise vector control; faster flight gradually
+        // gains heading control instead of taking dozens of ticks to shed drift.
+        double start = Math.max(.3, 2 * steeringAcceleration);
+        if (horizontal <= start) return ordinary;
+        double full = Math.max(2 * start, 6 * steeringAcceleration);
+        double blend = Math.min(1, (horizontal - start) / (full - start));
+        blend = blend * blend * (3 - 2 * blend);
+
+        double heading = Math.atan2(current.z(), current.x());
+        double targetHeading = Math.atan2(target.z(), target.x());
+        double difference = Math.IEEEremainder(targetHeading - heading, 2 * Math.PI);
+        // A deliberate reversal must still shed momentum before accelerating
+        // backwards. Ordinary corners can redirect speed without spending the
+        // acceleration budget on several blocks of sideways velocity.
+        if (Math.abs(difference) >= Math.PI * .75) return ordinary;
+        // A constant rate would let sideways drift grow with speed, so faster
+        // flight turns harder: twice the configured rate at the engine maximum.
+        double rate = Math.min(MAX_TURN_RATE, turnRate * (1 + Math.min(1, horizontal / turnReference)));
+        double angle = heading + Math.copySign(
+            Math.min(Math.abs(difference), Math.toRadians(rate)), difference);
+        double x = Math.cos(angle);
+        double z = Math.sin(angle);
+        Motion steered = new Motion(x * horizontal, current.y(), z * horizontal);
+        // Keep the speed/vertical target on the steered heading. Approaching the
+        // original vector here would add another turn and lose speed in corners.
+        Motion assisted = approach(steered,
+            new Motion(x * targetHorizontal, target.y(), z * targetHorizontal), maxDelta);
+        if (blend == 1) return assisted;
+        return new Motion(ordinary.x() * (1 - blend) + assisted.x() * blend,
+            ordinary.y() * (1 - blend) + assisted.y() * blend,
+            ordinary.z() * (1 - blend) + assisted.z() * blend);
     }
 
     private static Motion approach(Motion current, Motion target, double maxDelta) {

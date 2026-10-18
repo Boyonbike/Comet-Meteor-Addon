@@ -1,5 +1,5 @@
 [versions]
-mod-version = "0.23.6"
+mod-version = "0.23.9"
 
 # Fabric (https://fabricmc.net/develop)
 jdk = "25"

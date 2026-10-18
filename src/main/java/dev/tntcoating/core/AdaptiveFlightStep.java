@@ -14,14 +14,33 @@ public final class AdaptiveFlightStep {
 
     private AdaptiveFlightStep() {}
 
-    /** A stationary or correction-paused step has no corridor and performs no terrain probes. */
+    /**
+     * A stationary or correction-paused step has no corridor and performs no terrain probes, except
+     * that a server glide guard may still step back from a wall. {@code glideDamage} is wall damage
+     * the server's own glide tick will deal even after that guard.
+     */
     public record Result(Motion motion, FlightCorridor.Result corridor,
                          boolean lookaheadLimited, boolean terrainLimited,
-                         double adaptiveMaximum, boolean safeManeuvering) {}
+                         double adaptiveMaximum, boolean safeManeuvering,
+                         boolean glideLimited, double glideDamage) {}
 
-    /** Percentages are fractions of the attainable engine output, not its raw 64-block request. */
+    /**
+     * Percentages are fractions of the attainable engine output, not its raw 64-block request.
+     * A non-null {@code glide} keeps walls outside the server's hidden glide reach.
+     */
     public record Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
-                           boolean releaseSafeCollisions) {
+                           boolean releaseSafeCollisions, ServerGlide.Context glide,
+                           AdaptiveFlightMemory.Limits limits) {
+        public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
+                        boolean releaseSafeCollisions) {
+            this(sprintBoost, maximumFraction, verticalInput, releaseSafeCollisions, null, null);
+        }
+
+        public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
+                        boolean releaseSafeCollisions, ServerGlide.Context glide) {
+            this(sprintBoost, maximumFraction, verticalInput, releaseSafeCollisions, glide, null);
+        }
+
         public Controls {
             if (!Double.isFinite(maximumFraction) || maximumFraction < 0 || maximumFraction > 1) {
                 throw new IllegalArgumentException("Maximum fraction must be in [0, 1].");
@@ -78,23 +97,30 @@ public final class AdaptiveFlightStep {
         nonnegativeFinite(margin, "Margin");
         double fraction = controls == null ? 1 : controls.maximumFraction();
         double horizonMaximum = maximumSpeed(controller.settings().braking(), lookahead, margin);
+        AdaptiveFlightMemory.Limits learned = controls == null ? null : controls.limits();
+        boolean verticalEnabled = verticalCeiling > 0;
         Motion previous = controller.output();
         if (controls != null) {
             double maximum = horizonMaximum * fraction;
+            double horizontalMaximum = learned == null ? maximum : Math.min(horizonMaximum, learned.horizontal()) * fraction;
             double horizontal = requested.horizontalLength();
             if (horizontalCeiling > 0) {
-                horizontalCeiling = maximum;
-                if (horizontal > 0) requested = new Motion(requested.x() / horizontal * maximum,
-                    requested.y(), requested.z() / horizontal * maximum);
+                horizontalCeiling = horizontalMaximum;
+                if (horizontal > 0) requested = new Motion(requested.x() / horizontal * horizontalMaximum,
+                    requested.y(), requested.z() / horizontal * horizontalMaximum);
             } else requested = new Motion(0, requested.y(), 0);
             if (sprintBoost && controls.verticalInput() != 0 && verticalCeiling > 0) {
-                requested = new Motion(requested.x(), controls.verticalInput() * maximum, requested.z());
-                verticalCeiling = maximum;
+                double directionalMaximum = learned == null ? maximum
+                    : Math.min(horizonMaximum, controls.verticalInput() > 0 ? learned.ascent() : learned.descent()) * fraction;
+                requested = new Motion(requested.x(), controls.verticalInput() * directionalMaximum, requested.z());
+                verticalCeiling = directionalMaximum;
             }
             // A zero maximum stops every axis, including an existing vertical glide.
             verticalCeiling = Math.min(verticalCeiling, maximum);
             requested = new Motion(requested.x(), Math.max(-verticalCeiling,
                 Math.min(verticalCeiling, requested.y())), requested.z());
+            if (learned != null) requested = new Motion(requested.x(), Math.max(-learned.descent(),
+                Math.min(learned.ascent(), requested.y())), requested.z());
         } else if (sprintBoost && horizontalCeiling > 0) {
             double horizontal = requested.horizontalLength();
             if (horizontal > 0) {
@@ -105,37 +131,67 @@ public final class AdaptiveFlightStep {
         }
 
         // Use the configured ceiling rather than the request's length so releasing
-        // movement keys keeps the controller's normal braking behavior.
-        Motion blended = controller.step(requested, Math.hypot(horizontalCeiling, verticalCeiling), sprintBoost);
+        // movement keys keeps the controller's normal braking behavior. Turns scale
+        // against the attainable maximum that the speed percentages also use.
+        // A released vertical key changes the target, not the hard safety ceiling. Keeping
+        // existing Y momentum here allows ordinary braking instead of snapping it to stock speed.
+        double steppingVertical = learned == null ? verticalCeiling
+            : Math.max(verticalCeiling, Math.abs(previous.y()));
+        Motion blended = controller.step(requested, Math.hypot(horizontalCeiling, steppingVertical), sprintBoost,
+            horizonMaximum * controller.speedFactor());
         double horizontal = blended.horizontalLength();
         double horizontalFactor = horizontal > horizontalCeiling ? horizontalCeiling / horizontal : 1;
+        double y = Math.max(-verticalCeiling, Math.min(verticalCeiling, blended.y()));
+        if (learned != null) {
+            boolean slowing = Math.abs(blended.y()) < Math.abs(previous.y()) || blended.y() * previous.y() < 0;
+            double delta = slowing ? Math.min(controller.settings().braking(), 2 * learned.verticalAcceleration())
+                : Math.min(controller.settings().acceleration(), learned.verticalAcceleration());
+            y = previous.y() + Math.max(-delta, Math.min(delta, blended.y() - previous.y()));
+            double up = Math.min(horizonMaximum, learned.ascent()) * controller.speedFactor();
+            double down = Math.min(horizonMaximum, learned.descent()) * controller.speedFactor();
+            y = !verticalEnabled || fraction == 0 ? 0 : Math.max(-down, Math.min(up, y));
+        }
         Motion limited = new Motion(blended.x() * horizontalFactor,
-            Math.max(-verticalCeiling, Math.min(verticalCeiling, blended.y())),
+            y,
             blended.z() * horizontalFactor);
+        if (learned != null) controller.accept(limited);
         double speed = limited.length();
+        FlightCorridor.Probe chunksOnly = probe == null ? null : new FlightCorridor.Probe() {
+            @Override public boolean loaded(int x, int z) { return probe.loaded(x, z); }
+            @Override public boolean clear(AABB swept) { return true; }
+        };
+        ServerGlide.Context glide = controls == null || controller.pauseTicksRemaining() > 0 ? null : controls.glide();
         if (speed == 0) {
-            controller.accept(Motion.ZERO);
-            return new Result(Motion.ZERO, null, false, false,
-                controller.pauseTicksRemaining() > 0 ? 0 : horizonMaximum * controller.speedFactor(), false);
+            // Hovering still lets the server's glide grow into a nearby wall.
+            ServerGlide.Clearance glideClearance = glide == null || probe == null ? null
+                : ServerGlide.clear(glide, box, Motion.ZERO, chunksOnly);
+            Motion retreat = glideClearance == null ? Motion.ZERO : glideClearance.motion();
+            controller.accept(retreat);
+            return new Result(retreat, null, false, false,
+                controller.pauseTicksRemaining() > 0 ? 0 : horizonMaximum * controller.speedFactor(), false,
+                glideClearance != null && glideClearance.limited(), glideClearance == null ? 0 : glideClearance.damage());
         }
 
         // Inspect the actual blended trajectory once. Separate old/requested rays
         // can miss an obstacle between them and multiply the per-tick probe budget.
         boolean mayRelease = controls != null && controls.releaseSafeCollisions() && harmless(previous);
         boolean safeManeuvering = mayRelease && harmless(limited);
-        FlightCorridor.Probe chunksOnly = probe == null ? null : new FlightCorridor.Probe() {
-            @Override public boolean loaded(int x, int z) { return probe.loaded(x, z); }
-            @Override public boolean clear(AABB swept) { return true; }
-        };
         FlightCorridor.Result corridor = FlightCorridor.inspect(box,
             new Vec3(limited.x(), limited.y(), limited.z()), lookahead, safeManeuvering ? chunksOnly : probe);
-        double clearance = Math.max(0, corridor.clearDistance() - margin);
+        // Brake early enough for a wall or chunk edge ahead that the server's own glide cannot reach it
+        // either, so the guard below rarely has to cut a smooth stop short. The open horizon is unaffected.
+        Motion reach = glide == null || corridor.reason() == FlightCorridor.Reason.CLEAR
+            ? Motion.ZERO : ServerGlide.reach(glide);
+        double glideMargin = Math.max(0, (reach.x() * limited.x() + reach.z() * limited.z()) / speed);
+        double clearance = Math.max(0, corridor.clearDistance() - margin - glideMargin);
         double allowed = Math.min(clearance, brakingSpeed(controller.settings().braking(), clearance));
         // A maximum-speed request can exceed the finite terrain horizon even after
         // backoff. Reduce the attainable ceiling too, so sprint cannot mask corrections.
         if (sprintBoost || controls != null) allowed *= controller.speedFactor();
         double adaptiveMaximum = allowed;
-        allowed *= fraction;
+        allowed = learned == null || fraction == 0 ? allowed * fraction
+            : Math.min(allowed, Math.max(allowed * fraction,
+                Math.max(0, previous.length() - controller.settings().braking())));
         boolean clipped = speed > allowed;
         Motion actual = clipped ? scale(limited, allowed / speed) : limited;
         // Once the guard has slowed flight to harmless contact, allow a crawl even if
@@ -156,9 +212,14 @@ public final class AdaptiveFlightStep {
                 corridor.collisionChecks());
             safeManeuvering = true;
         }
+        // Last, because harmless client contact can still leave the server's own glide too fast for a wall.
+        ServerGlide.Clearance glideClearance = glide == null || corridor.reason() == FlightCorridor.Reason.INVALID
+            ? null : ServerGlide.clear(glide, box, actual, chunksOnly);
+        if (glideClearance != null) actual = glideClearance.motion();
         controller.accept(actual);
         return new Result(actual, corridor, clipped && corridor.reason() == FlightCorridor.Reason.CLEAR,
-            clipped, adaptiveMaximum, safeManeuvering);
+            clipped, adaptiveMaximum, safeManeuvering,
+            glideClearance != null && glideClearance.limited(), glideClearance == null ? 0 : glideClearance.damage());
     }
 
     private static double brakingSpeed(double braking, double clearance) {

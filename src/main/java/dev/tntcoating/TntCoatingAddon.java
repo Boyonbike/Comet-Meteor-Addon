@@ -8,6 +8,8 @@ import dev.tntcoating.modules.ElytraReplace;
 import dev.tntcoating.modules.HomePacketLog;
 import dev.tntcoating.modules.FastStorageESP;
 import dev.tntcoating.modules.SafeFastUse;
+import dev.tntcoating.modules.ShulkerIcons;
+import dev.tntcoating.gui.ShulkerIconRulesSetting;
 import dev.tntcoating.modules.SmartSponge;
 import dev.tntcoating.modules.StashHunterFly;
 import dev.tntcoating.modules.WaypointDelete;
@@ -21,6 +23,7 @@ import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.combat.AutoTotem;
 import meteordevelopment.meteorclient.systems.modules.misc.InventoryTweaks;
 import meteordevelopment.meteorclient.systems.modules.movement.Scaffold;
+import meteordevelopment.meteorclient.systems.modules.movement.speed.Speed;
 import meteordevelopment.meteorclient.systems.modules.render.Trajectories;
 import net.minecraft.world.item.Items;
 
@@ -36,6 +39,7 @@ public final class TntCoatingAddon extends MeteorAddon {
 
     @Override
     public void onInitialize() {
+        ShulkerIconRulesSetting.registerWidget();
         Modules modules = Modules.get();
         orderedModules = List.of(
             // Flight and flight safety.
@@ -44,8 +48,11 @@ public final class TntCoatingAddon extends MeteorAddon {
             new StashHunterFly(),
             new ElytraReplace(),
             new ElytraLog(),
+            // The original movement module, upgraded in place.
+            modules.get(Speed.class),
             // Rendering, storage discovery and waypoints.
             new FastStorageESP(),
+            new ShulkerIcons(),
             modules.get(Trajectories.class),
             new XaeroWaypoints(),
             new WaypointDelete(),
