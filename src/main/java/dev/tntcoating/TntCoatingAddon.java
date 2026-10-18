@@ -1,8 +1,10 @@
 package dev.tntcoating;
 
+import dev.tntcoating.core.InventorySlotLoan;
 import dev.tntcoating.modules.AdaptiveElytraFly;
 import dev.tntcoating.modules.BaritoneElytra;
 import dev.tntcoating.modules.BlockCoat;
+import dev.tntcoating.modules.ChatTools;
 import dev.tntcoating.modules.ElytraLog;
 import dev.tntcoating.modules.ElytraReplace;
 import dev.tntcoating.modules.HomePacketLog;
@@ -16,14 +18,17 @@ import dev.tntcoating.modules.WaypointDelete;
 import dev.tntcoating.modules.XaeroWaypoints;
 import java.util.Comparator;
 import java.util.List;
+import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.combat.AutoTotem;
+import meteordevelopment.meteorclient.systems.modules.combat.AutoWeapon;
 import meteordevelopment.meteorclient.systems.modules.misc.InventoryTweaks;
 import meteordevelopment.meteorclient.systems.modules.movement.Scaffold;
 import meteordevelopment.meteorclient.systems.modules.movement.speed.Speed;
+import meteordevelopment.meteorclient.systems.modules.player.AutoTool;
 import meteordevelopment.meteorclient.systems.modules.render.Trajectories;
 import net.minecraft.world.item.Items;
 
@@ -40,6 +45,7 @@ public final class TntCoatingAddon extends MeteorAddon {
     @Override
     public void onInitialize() {
         ShulkerIconRulesSetting.registerWidget();
+        MeteorClient.EVENT_BUS.subscribe(InventorySlotLoan.INSTANCE);
         Modules modules = Modules.get();
         orderedModules = List.of(
             // Flight and flight safety.
@@ -56,12 +62,15 @@ public final class TntCoatingAddon extends MeteorAddon {
             modules.get(Trajectories.class),
             new XaeroWaypoints(),
             new WaypointDelete(),
+            new ChatTools(),
             // Building and block use.
             modules.get(Scaffold.class),
             new BlockCoat(),
             new SmartSponge(),
             new SafeFastUse(),
             // Combat and inventory.
+            modules.get(AutoTool.class),
+            modules.get(AutoWeapon.class),
             modules.get(AutoTotem.class),
             modules.get(InventoryTweaks.class),
             // Diagnostics.

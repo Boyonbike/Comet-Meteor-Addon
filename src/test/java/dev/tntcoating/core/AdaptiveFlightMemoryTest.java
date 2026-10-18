@@ -92,12 +92,12 @@ class AdaptiveFlightMemoryTest {
         assertEquals(new ProfileLimits(old, old), AdaptiveFlightMemory.load(file).getProfile("legacy-server"));
     }
 
-    @Test void warmStartCannotExceedAnIndependentRejectionCeiling() {
-        var ceilings = new Limits(4, .3, .8, .03);
-        for (Limits tooHigh : new Limits[] {
+    @Test void warmStartMayExceedIndependentCorrectionGuidance() {
+        var guidance = new Limits(4, .3, .8, .03);
+        for (Limits demonstrated : new Limits[] {
             new Limits(4.1, .28, .7, .025), new Limits(4, .31, .7, .025),
             new Limits(4, .28, .81, .025), new Limits(4, .28, .7, .031)
-        }) assertThrows(IllegalArgumentException.class, () -> new ProfileLimits(tooHigh, ceilings));
+        }) assertDoesNotThrow(() -> new ProfileLimits(demonstrated, guidance));
         assertThrows(NullPointerException.class, () -> new ProfileLimits(null, Limits.UNKNOWN));
         assertThrows(NullPointerException.class, () -> new ProfileLimits(Limits.UNKNOWN, null));
     }
@@ -233,7 +233,8 @@ class AdaptiveFlightMemoryTest {
         Files.write(file, encoded(2, 1, "server", 1, .05, 1, 2.1));
         assertEquals(0, AdaptiveFlightMemory.load(file).size());
         Files.write(file, encoded(2, 1, "server", 1, .05, .5, .05));
-        assertEquals(0, AdaptiveFlightMemory.load(file).size(), "hints above their hard ceiling are invalid");
+        assertEquals(1, AdaptiveFlightMemory.load(file).size(),
+            "demonstrated speeds may exceed remembered correction guidance");
     }
 
     @Test void duplicateBlankAndUnnormalizedStoredIdentitiesAreRejected() throws IOException {

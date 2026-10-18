@@ -4,9 +4,8 @@ import dev.tntcoating.modules.AdaptiveSpeed;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.gui.GuiTheme;
-import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.movement.speed.Speed;
@@ -49,10 +48,10 @@ public abstract class SpeedMixin extends Module {
 
     @EventHandler private void comet$disconnect(GameLeftEvent event) { comet$adaptiveSpeed.reset(); }
 
+    @EventHandler private void comet$renderHud(Render2DEvent event) { comet$adaptiveSpeed.renderHud(event); }
+
     @Inject(method = "getInfoString", at = @At("HEAD"), cancellable = true)
     private void comet$info(CallbackInfoReturnable<String> cir) {
         if (comet$adaptiveSpeed.selected()) cir.setReturnValue(comet$adaptiveSpeed.info());
     }
-
-    @Override public WWidget getWidget(GuiTheme theme) { return comet$adaptiveSpeed.widget(theme); }
 }

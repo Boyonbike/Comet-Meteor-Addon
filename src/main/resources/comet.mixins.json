@@ -2,6 +2,6 @@
   "required": true,
   "package": "dev.tntcoating.mixin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["GameModeInvoker", "CometModuleOrderMixin", "CometModuleSettingsMixin", "StashHunterControllerMixin", "StashHunterStuckMixin", "MoveEntityPacketAccessor", "FireworkRocketAccessor", "FastUseMixin", "ElytraFlyMixin", "SpeedMixin", "AutoTotemMixin", "ScaffoldMixin", "ScaffoldBlockUpdatesMixin", "InventoryTweaksMixin", "TrajectoriesMixin", "TrajectoriesPathMixin", "TrajectoriesWorldUpdatesMixin", "ShulkerIconsMixin", "ShulkerIconRenderStateMixin", "ShulkerIconAtlasMixin", "ShulkerIconOversizedMixin"],
+  "client": ["GameModeInvoker", "EntityArgumentAccessor", "ChatScreenMixin", "CometModuleOrderMixin", "CometModuleSettingsMixin", "StashHunterControllerMixin", "StashHunterStuckMixin", "MoveEntityPacketAccessor", "FireworkRocketAccessor", "FastUseMixin", "ElytraFlyMixin", "SpeedMixin", "AutoToolMixin", "AutoWeaponMixin", "AutoTotemMixin", "ScaffoldMixin", "ScaffoldBlockUpdatesMixin", "InventoryTweaksMixin", "TrajectoriesMixin", "TrajectoriesPathMixin", "TrajectoriesWorldUpdatesMixin", "ShulkerIconsMixin", "ShulkerIconRenderStateMixin", "ShulkerIconAtlasMixin", "ShulkerIconOversizedMixin"],
   "injectors": { "defaultRequire": 1 }
 }

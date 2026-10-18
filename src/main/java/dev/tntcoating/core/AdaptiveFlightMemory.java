@@ -21,8 +21,8 @@ import java.util.zip.CheckedInputStream;
 import java.util.zip.CheckedOutputStream;
 
 /**
- * Conservative flight limits remembered independently for each caller-supplied server identity.
- * Unknown axes retain their sentinel ceilings, so learning one axis never limits another.
+ * Adaptive flight speeds and correction guidance remembered independently per server identity.
+ * Unknown axes retain sentinel guidance, so learning one axis never limits another.
  * Profiles expire 180 days after their last learned update and least recently used profiles are bounded.
  */
 public final class AdaptiveFlightMemory {
@@ -58,8 +58,8 @@ public final class AdaptiveFlightMemory {
     }
 
     /**
-     * Cleanly demonstrated speeds start the next session without becoming permanent rejection ceilings.
-     * A ceiling only constrains exploration when feedback actually rejected higher motion.
+     * Cleanly demonstrated speeds start the next session. The legacy-named {@code ceilings} values
+     * remember correction thresholds as soft guidance; demonstrated speeds may safely exceed them.
      */
     public record ProfileLimits(Limits limits, Limits ceilings) {
         public static final ProfileLimits UNKNOWN = new ProfileLimits(Limits.UNKNOWN, Limits.UNKNOWN);
@@ -67,10 +67,6 @@ public final class AdaptiveFlightMemory {
         public ProfileLimits {
             Objects.requireNonNull(limits, "limits");
             Objects.requireNonNull(ceilings, "ceilings");
-            if (limits.horizontal() > ceilings.horizontal() || limits.ascent() > ceilings.ascent()
-                || limits.descent() > ceilings.descent()
-                || limits.verticalAcceleration() > ceilings.verticalAcceleration())
-                throw new IllegalArgumentException("Remembered starting limits cannot exceed rejection ceilings.");
         }
     }
 
@@ -96,7 +92,7 @@ public final class AdaptiveFlightMemory {
     /** Store strong limits; callers with distinct clean hints should use {@link #putProfile}. */
     public void put(String server, Limits limits) { putProfile(server, new ProfileLimits(limits, limits)); }
 
-    /** Replace only this server's warm start and rejection ceilings. */
+    /** Replace only this server's warm start and correction guidance. */
     public synchronized void putProfile(String server, ProfileLimits limits) {
         String key = identity(server);
         Objects.requireNonNull(limits, "limits");

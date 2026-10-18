@@ -23,7 +23,7 @@ public abstract class ShulkerIconsMixin {
         return state;
     }
 
-    // Shared by real and fake GUI items, covering container slots, creative inventory and carried stacks.
+    // Shared by real and fake GUI items, covering the hotbar, container slots, creative inventory and carried stacks.
     @Inject(method = "item(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/level/Level;Lnet/minecraft/world/item/ItemStack;III)V", at = @At("TAIL"))
     private void comet$shulkerIcon(LivingEntity entity, Level level, ItemStack stack, int x, int y, int seed, CallbackInfo info) {
         Modules modules = Modules.get();

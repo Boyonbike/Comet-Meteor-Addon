@@ -150,7 +150,7 @@ class AdaptiveFlightLearningTest {
         assertEquals(64, learning.ceilings().ascent(), EPSILON);
     }
 
-    @Test void aRememberedRejectedCeilingStillBoundsLearningAfterReconnect() {
+    @Test void rememberedCorrectionGuidanceAllowsCautiousLearningAfterReconnect() {
         AdaptiveFlightLearning previousSession = new AdaptiveFlightLearning();
         previousSession.observe(new Motion(0, .4, 0), 1, true, true, 1);
         assertTrue(previousSession.corrected(BACKOFF));
@@ -158,14 +158,23 @@ class AdaptiveFlightLearningTest {
         AdaptiveFlightLearning reconnected = new AdaptiveFlightLearning();
 
         reconnected.restore(previousSession.remembered(), previousSession.ceilings());
+        for (int tick = 0; tick < 79; tick++) {
+            reconnected.tick(1, .1);
+            reconnected.observe(new Motion(0, reconnected.limits().ascent(), 0), 1, true, true, 1);
+        }
+        assertEquals(rejected, reconnected.limits().ascent(), EPSILON,
+            "retesting a corrected boundary requires twice the normal clean streak");
+
         for (int tick = 0; tick < 500; tick++) {
             reconnected.tick(1, .1);
             reconnected.observe(new Motion(0, reconnected.limits().ascent(), 0), 1, true, true, 1);
         }
-
-        assertTrue(reconnected.limits().ascent() <= rejected + EPSILON);
-        assertTrue(reconnected.remembered().ascent() <= rejected + EPSILON);
-        assertTrue(reconnected.ceilings().ascent() <= rejected + EPSILON);
+        assertTrue(reconnected.limits().ascent() > rejected,
+            "clean flight may cautiously probe beyond remembered guidance");
+        assertTrue(reconnected.remembered().ascent() > rejected,
+            "settled successful probes become the next warm start");
+        assertEquals(rejected, reconnected.ceilings().ascent(), EPSILON,
+            "the correction threshold remains guidance for cautious future steps");
     }
 
     @Test void switchingProfilesDiscardsThePreviousServersCorrectionHistory() {
@@ -183,7 +192,7 @@ class AdaptiveFlightLearningTest {
         assertEquals(Limits.UNKNOWN, learning.ceilings());
     }
 
-    @Test void rejectedVerticalLimitsDoNotRecoverThroughIdleTimeOrRepeatedCleanBoundaryFlight() {
+    @Test void correctionGuidanceDoesNotRecoverWhileIdleButCleanFlightCanRetestIt() {
         AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
         learning.observe(new Motion(0, .4, 0), 1, true, true, 1);
         learning.corrected(BACKOFF);
@@ -191,14 +200,79 @@ class AdaptiveFlightLearningTest {
 
         for (int tick = 0; tick < 500; tick++) learning.tick(1, .1);
         assertTrue(learning.limits().ascent() <= rejectedLimit + EPSILON);
+        double firstProbe = 0;
+        double laterProbe = 0;
         for (int tick = 0; tick < 500; tick++) {
+            double previous = learning.limits().ascent();
+            learning.tick(1, .1);
+            learning.observe(new Motion(0, learning.limits().ascent(), 0), 1, true, true, 1);
+            double step = learning.limits().ascent() - previous;
+            if (step > EPSILON && firstProbe == 0) firstProbe = step;
+            else if (step > EPSILON) laterProbe = Math.max(laterProbe, step);
+        }
+
+        assertTrue(learning.limits().ascent() > rejectedLimit);
+        assertTrue(firstProbe <= .01 + EPSILON,
+            "the probe crossing remembered correction guidance must use a small step");
+        assertTrue(laterProbe > .01,
+            "after clearing the guidance boundary, ordinary learning speed must resume");
+        assertTrue(learning.remembered().ascent() > rejectedLimit);
+    }
+
+    @Test void randomLowSpeedCorrectionDoesNotReplaceSettledFasterEvidence() {
+        AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
+        for (int tick = 0; tick < 25; tick++) {
+            learning.tick(40, .01);
+            learning.observe(new Motion(0, .6, 0), 1, true, true, 1);
+        }
+        for (int tick = 0; tick < 25; tick++) {
+            learning.tick(40, .01);
+            learning.observe(new Motion(0, .1, 0), 1, true, true, 1);
+        }
+        Limits before = learning.limits();
+
+        assertFalse(learning.corrected(BACKOFF),
+            "a low-speed outlier below settled clean evidence is not a learned speed boundary");
+        assertEquals(before, learning.limits());
+        assertEquals(Limits.UNKNOWN, learning.ceilings());
+    }
+
+    @Test void horizontalCorrectionGuidanceAlsoRecoversFromCleanLevelSprint() {
+        AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
+        learning.observe(new Motion(2, 0, 0), 0, true, true, 1, 1);
+        assertTrue(learning.corrected(BACKOFF));
+        double guidance = learning.limits().horizontal();
+
+        for (int tick = 0; tick < 79; tick++) {
+            learning.tick(1, .1);
+            learning.observe(new Motion(learning.limits().horizontal(), 0, 0), 0, true, true, 1, 1);
+        }
+        assertEquals(guidance, learning.limits().horizontal(), EPSILON);
+
+        for (int tick = 0; tick < 200; tick++) {
+            learning.tick(1, .1);
+            learning.observe(new Motion(learning.limits().horizontal(), 0, 0), 0, true, true, 1, 1);
+        }
+        assertTrue(learning.limits().horizontal() > guidance);
+        assertTrue(learning.remembered().horizontal() > guidance);
+        assertEquals(guidance, learning.ceilings().horizontal(), EPSILON);
+    }
+
+    @Test void aLaterCorrectionReplacesObsoleteLowerGuidance() {
+        AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
+        learning.observe(new Motion(0, .4, 0), 1, true, true, 1);
+        assertTrue(learning.corrected(BACKOFF));
+        double oldGuidance = learning.ceilings().ascent();
+
+        for (int tick = 0; tick < 1_200; tick++) {
             learning.tick(1, .1);
             learning.observe(new Motion(0, learning.limits().ascent(), 0), 1, true, true, 1);
         }
-
-        assertTrue(learning.limits().ascent() <= rejectedLimit + EPSILON,
-            "clean flight at the rejected boundary must not retry the rejected speed indefinitely");
-        assertTrue(learning.remembered().ascent() <= rejectedLimit + EPSILON);
+        assertTrue(learning.limits().ascent() * BACKOFF > oldGuidance);
+        assertTrue(learning.corrected(BACKOFF));
+        assertTrue(learning.ceilings().ascent() > oldGuidance,
+            "successful flight beyond old guidance makes a later correction the relevant threshold");
+        assertEquals(learning.ceilings().ascent(), learning.limits().ascent(), EPSILON);
     }
 
     @Test void idleTerrainLimitedCruiseAndBelowBoundaryFlightCannotAuthorizeFasterVerticalSprint() {

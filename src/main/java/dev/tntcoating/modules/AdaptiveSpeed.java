@@ -2,16 +2,15 @@ package dev.tntcoating.modules;
 
 import dev.tntcoating.core.AdaptiveFlightController;
 import dev.tntcoating.core.AdaptiveFlightController.Motion;
-import dev.tntcoating.core.AdaptiveFlightStep;
 import dev.tntcoating.core.AdaptiveSpeedStep;
 import dev.tntcoating.core.AdaptiveSpeedTerrain;
 import dev.tntcoating.core.FlightCorridor;
+import dev.tntcoating.render.AdaptiveEngineHud;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
-import meteordevelopment.meteorclient.gui.GuiTheme;
-import meteordevelopment.meteorclient.gui.widgets.WLabel;
-import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.mixininterface.IVec3;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Modules;
@@ -20,7 +19,6 @@ import meteordevelopment.meteorclient.systems.modules.movement.speed.Speed;
 import meteordevelopment.meteorclient.systems.modules.movement.speed.SpeedModes;
 import meteordevelopment.meteorclient.systems.modules.render.Freecam;
 import meteordevelopment.meteorclient.systems.modules.world.Timer;
-import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.misc.input.Input;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -33,32 +31,32 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 /** The built-in Speed instance owns these settings and this controller; no second event subscriber. */
 public final class AdaptiveSpeed {
+    private static final double ENGINE_MAXIMUM = 2; // 40 blocks/second.
+    private static final int LOOKAHEAD = 64;
+    private static final double TERRAIN_MARGIN = .15;
+    private static final double CORRECTION_BACKOFF = .75;
+    private static final int CORRECTION_PAUSE = 5;
+    private static final int RECOVERY_DELAY = 60;
+    private static final double RECOVERY_RATE = .0025;
+
     private final Speed owner;
-    private final Setting<Boolean> enabled, sprintBoost, avoidBlocks, safeManeuvering;
-    private final Setting<Double> maximumSpeed, acceleration, braking, turnRate, cruiseMaximum, sprintMaximum,
-        sneakMaximum, margin, correctionBackoff, recoveryRate;
-    private final Setting<Integer> lookahead, correctionPause, recoveryDelay;
-    private final Setting<Keybind> brakeKey;
+    private final Setting<Double> acceleration, braking, dynamicSpeed;
+    private final Setting<Boolean> engineHud;
     private final AdaptiveFlightController controller;
     // Network events only touch this mailbox and the volatile control flag.
     private final AtomicInteger corrections = new AtomicInteger();
     private volatile boolean controlling;
-    private boolean selected, timerHeld, maneuvering;
-    private double lastTimer = Timer.OFF, adaptiveMaximum, measuredSpeed;
+    private boolean selected, timerHeld, maneuvering, sprintRequested;
+    private double lastTimer = Timer.OFF, measuredSpeed, adaptiveMaximum, targetFraction;
     private ClientLevel world;
     private LocalPlayer player;
     private Vec3 lastPosition;
     private int movementTick = Integer.MIN_VALUE;
-    private int chunkChecks, collisionChecks, diagnosticCorrectionBase;
-    private long chunkLimitedTicks, obstacleLimitedTicks;
     private String state = "Ready", hud = "Adaptive";
-    private WLabel statusLabel, speedLabel, checksLabel, countsLabel;
 
     private final FlightCorridor.Probe probe = new FlightCorridor.Probe() {
         @Override public boolean loaded(int x, int z) { return mc.level.getChunkSource().hasChunk(x, z); }
         @Override public boolean clear(AABB box) {
-            if (!avoidBlocks.get()) return true;
-            collisionChecks++;
             return !mc.level.getBlockCollisions(mc.player, box).iterator().hasNext();
         }
     };
@@ -69,84 +67,35 @@ public final class AdaptiveSpeed {
 
     public AdaptiveSpeed(Speed owner) {
         this.owner = owner;
-        SettingGroup engine = owner.settings.createGroup("Comet Adaptive Speed", false);
-        SettingGroup controls = owner.settings.createGroup("Comet Speed Controls", false);
-        SettingGroup terrain = owner.settings.createGroup("Comet Speed Terrain", false);
-        SettingGroup recovery = owner.settings.createGroup("Comet Speed Recovery", false);
-        enabled = engine.add(new BoolSetting.Builder().name("adaptive-speed")
-            .description("Use the adaptive engine in Vanilla mode. Adaptive Max Speed replaces Vanilla Speed; Strafe keeps Meteor's movement.")
-            .defaultValue(true).onChanged(value -> reset()).build());
-        maximumSpeed = engine.add(new DoubleSetting.Builder().name("adaptive-max-speed")
-            .description("Absolute horizontal ceiling in blocks/second at 20 ticks/second, before cruise/Sprint percentages. Terrain and corrections can lower it.")
-            .defaultValue(40).range(0, 200).sliderRange(0, 80).visible(this::enabled).build());
+        SettingGroup engine = owner.settings.createGroup("Comet Dynamic Sprint", false);
         acceleration = engine.add(new DoubleSetting.Builder().name("acceleration")
-            .description("Horizontal velocity gained per tick, in blocks per tick squared.")
-            .defaultValue(.08).range(.01, 2).sliderRange(.01, .5).visible(this::enabled).build());
+            .description("Engine maximum gained each tick, as a percentage. Small values give fine Sprint control.")
+            .defaultValue(.5).range(.01, 10).sliderRange(.05, 2).decimalPlaces(2).build());
         braking = engine.add(new DoubleSetting.Builder().name("braking")
-            .description("Horizontal slowing per tick on release, brake or reversal. Also determines stopping clearance.")
-            .defaultValue(.2).range(.01, 2).sliderRange(.01, 1).visible(this::enabled).build());
-        turnRate = engine.add(new DoubleSetting.Builder().name("adaptive-turn-rate")
-            .description("Heading assistance in degrees per tick, increasing with speed. Zero keeps momentum steering.")
-            .defaultValue(20).range(0, 45).sliderRange(0, 45).visible(this::enabled).build());
-        sprintBoost = controls.add(new BoolSetting.Builder().name("sprint-boost")
-            .description("Hold the physical Sprint key to use the Sprint ceiling, including sideways and backward movement.")
-            .defaultValue(true).visible(this::enabled).build());
-        cruiseMaximum = controls.add(new DoubleSetting.Builder().name("cruise-max-speed")
-            .description("Cruise percentage of the current adaptive maximum after terrain and correction limits.")
-            .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(this::enabled).build());
-        sprintMaximum = controls.add(new DoubleSetting.Builder().name("sprint-max-speed")
-            .description("Sprint percentage of the current adaptive maximum. Releasing Sprint brakes toward cruise speed.")
-            .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1)
-            .visible(() -> enabled() && sprintBoost.get()).build());
-        sneakMaximum = controls.add(new DoubleSetting.Builder().name("sneak-max-speed")
-            .description("Additional percentage while sneaking, if Meteor's When Sneaking allows Speed. Retains vanilla ledge protection.")
-            .defaultValue(25).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(this::enabled).build());
-        brakeKey = controls.add(new KeybindSetting.Builder().name("brake-key")
-            .description("Hold to brake horizontal motion even with movement keys held. Jumping and gravity stay vanilla.")
-            .defaultValue(Keybind.none()).visible(this::enabled).build());
-        lookahead = terrain.add(new IntSetting.Builder().name("lookahead")
-            .description("Maximum forward corridor scan in blocks. Bounded work; never loads chunks.")
-            .defaultValue(32).range(4, 64).sliderRange(4, 64).visible(this::enabled).build());
-        margin = terrain.add(new DoubleSetting.Builder().name("terrain-margin")
-            .description("Clearance to keep before walls and missing chunks, in blocks.")
-            .defaultValue(.15).range(.01, 2).sliderRange(.01, 1).visible(this::enabled).build());
-        avoidBlocks = terrain.add(new BoolSetting.Builder().name("avoid-blocks")
-            .description("Brake for solid obstacles along the swept player body. Chunk protection remains active when disabled.")
-            .defaultValue(true).visible(this::enabled).build());
-        safeManeuvering = terrain.add(new BoolSetting.Builder().name("safe-maneuvering")
-            .description("Allow vanilla collision and step-up at crawl speed (up to 6 blocks/second). Keep missing-chunk protection.")
-            .defaultValue(true).visible(this::enabled).build());
-        correctionBackoff = recovery.add(new DoubleSetting.Builder().name("correction-backoff")
-            .description("Multiply the temporary ceiling by this after a server position correction. Also reduce Speed's Timer boost.")
-            .defaultValue(.75).range(.1, .95).sliderRange(.1, .95).visible(this::enabled).build());
-        correctionPause = recovery.add(new IntSetting.Builder().name("correction-pause")
-            .description("Pause horizontal control for this many complete ticks after a correction, without cancelling server packets.")
-            .defaultValue(5).range(0, 40).sliderRange(0, 20).visible(this::enabled).build());
-        recoveryDelay = recovery.add(new IntSetting.Builder().name("recovery-delay")
-            .description("Clean ticks before the temporary ceiling starts recovering.")
-            .defaultValue(60).range(1, 1200).sliderRange(20, 200).visible(this::enabled).build());
-        recoveryRate = recovery.add(new DoubleSetting.Builder().name("recovery-rate")
-            .description("Fraction of the configured ceiling restored each clean tick after the delay.")
-            .defaultValue(.0025).range(.0001, .1).sliderRange(.0001, .01).decimalPlaces(4).visible(this::enabled).build());
+            .description("Engine maximum lost each tick while slowing or reversing, as a percentage.")
+            .defaultValue(2).range(.01, 20).sliderRange(.05, 5).decimalPlaces(2).build());
+        dynamicSpeed = engine.add(new DoubleSetting.Builder().name("dynamic-speed")
+            .description("Sprint target as a percentage of the engine maximum. Normal movement uses Vanilla Speed.")
+            .defaultValue(25).range(0, 100).sliderRange(0, 40).decimalPlaces(2).build());
+        engineHud = engine.add(new BoolSetting.Builder().name("engine-hud")
+            .description("Display a live Dynamic Sprint engine overview in the top-left corner.")
+            .defaultValue(false).build());
         controller = new AdaptiveFlightController(tuning());
     }
 
-    public boolean enabled() { return enabled != null && enabled.get(); }
-    public boolean selected() { return enabled() && owner.speedMode.get() == SpeedModes.Vanilla; }
+    public boolean selected() { return owner.speedMode.get() == SpeedModes.Vanilla; }
 
     public void reset() {
         // onChanged can run during settings deserialization; the controller may not exist yet.
         releaseTimer();
         if (controller != null) controller.reset();
         corrections.set(0);
-        controlling = selected = maneuvering = false;
+        controlling = selected = maneuvering = sprintRequested = false;
         world = null;
         player = null;
         lastPosition = null;
         movementTick = Integer.MIN_VALUE;
-        chunkChecks = collisionChecks = diagnosticCorrectionBase = 0;
-        chunkLimitedTicks = obstacleLimitedTicks = 0;
-        adaptiveMaximum = measuredSpeed = 0;
+        measuredSpeed = adaptiveMaximum = targetFraction = 0;
         state = "Ready";
     }
 
@@ -167,7 +116,6 @@ public final class AdaptiveSpeed {
         if (!selected) return false;
         controller.configure(tuning());
         controller.tick();
-        chunkChecks = collisionChecks = 0;
         if (!consumeCorrections()) reconcile();
         String pause = pauseReason();
         if (pause != null) suspend(pause);
@@ -199,13 +147,11 @@ public final class AdaptiveSpeed {
         // Resolve headroom before extending the horizontal sweep, matching vanilla's Y-before-XZ collision order.
         // A ceiling already above us must not turn a clipped jump into a horizontal wall.
         AABB body = mc.player.getBoundingBox();
-        double rise = avoidBlocks.get() ? Math.max(0, Math.min(4, event.movement.y)) : 0;
+        double rise = Math.max(0, Math.min(4, event.movement.y));
         FlightCorridor.Result start = FlightCorridor.inspectStart(body, chunksOnly);
-        chunkChecks += start.chunkChecks();
         AABB sweepBody = AdaptiveSpeedTerrain.sweepBody(body, rise,
             rise > 0 && start.reason() == FlightCorridor.Reason.CLEAR
                 ? mc.level.getBlockCollisions(mc.player, body.expandTowards(0, rise, 0)) : java.util.List.of());
-        if (rise > 0 && start.reason() == FlightCorridor.Reason.CLEAR) collisionChecks++;
         if (!controlling) {
             Vec3 natural = mc.player.getDeltaMovement();
             double length = Math.hypot(natural.x, natural.z);
@@ -219,35 +165,32 @@ public final class AdaptiveSpeed {
             movementTick = mc.player.tickCount;
             Vec3 input = PlayerUtils.getHorizontalVelocity(20);
             Motion direction = new Motion(input.x, 0, input.z);
-            boolean sprint = sprintBoost.get() && Input.isPressed(mc.options.keySprint);
-            boolean brake = brakeKey.get().isSet() && brakeKey.get().isPressed();
-            double fraction = finite(sprint ? sprintMaximum.get() : cruiseMaximum.get(), 0, 100) / 100;
-            if (mc.player.isShiftKeyDown()) fraction *= finite(sneakMaximum.get(), 0, 100) / 100;
+            boolean sprint = Input.isPressed(mc.options.keySprint) || mc.player.isSprinting();
+            double normalFraction = finite(owner.vanillaSpeed.get(), 0, ENGINE_MAXIMUM * 20)
+                / (ENGINE_MAXIMUM * 20);
+            double fraction = sprint ? finite(dynamicSpeed.get(), 0, 100) / 100 : normalFraction;
             AdaptiveSpeedStep.Result step = AdaptiveSpeedStep.move(controller, direction,
-                finite(maximumSpeed.get(), 0, 200) / 20, fraction, sprint, brake,
-                sweepBody, probe, chunksOnly, lookahead.get(), finite(margin.get(), .01, 2), safeManeuvering.get());
+                ENGINE_MAXIMUM, fraction, sprint, false,
+                sweepBody, probe, chunksOnly, LOOKAHEAD, TERRAIN_MARGIN, true);
+            sprintRequested = sprint;
+            targetFraction = fraction;
             adaptiveMaximum = step.adaptiveMaximum();
             maneuvering = step.safeManeuvering();
             FlightCorridor.Result corridor = step.corridor();
-            if (corridor != null) chunkChecks += corridor.chunkChecks();
             if (controller.pauseTicksRemaining() > 0) state = "Correction pause";
             else if (step.terrainLimited() && corridor != null && corridor.reason() == FlightCorridor.Reason.CHUNKS) {
                 state = "Chunk limited";
-                chunkLimitedTicks++;
             } else if (step.terrainLimited() && corridor != null && corridor.reason() == FlightCorridor.Reason.OBSTACLE) {
                 state = maneuvering ? "Low-speed control" : "Obstacle limited";
-                obstacleLimitedTicks++;
-            } else if (brake) state = "Braking";
-            else if (controller.speedFactor() < .999) state = "Recovering";
+            } else if (controller.speedFactor() < .999) state = "Recovering";
             else if (direction.horizontalLength() == 0) state = controller.output().horizontalLength() > 1e-7 ? "Braking" : "Idle";
-            else state = sprint ? "Sprint boost" : "Cruising";
+            else state = sprint ? "Dynamic sprint" : "Vanilla speed";
         } else if (controller.output().horizontalLength() > 0) {
             // Extra SELF moves get fresh clearance from their new position, without another acceleration step.
             Motion output = controller.output();
             FlightCorridor.Result corridor = FlightCorridor.inspect(sweepBody, new Vec3(output.x(), 0, output.z()),
-                output.horizontalLength() + margin.get(), maneuvering && output.horizontalLength() <= .3 ? chunksOnly : probe);
-            chunkChecks += corridor.chunkChecks();
-            double allowed = Math.max(0, corridor.clearDistance() - margin.get());
+                output.horizontalLength() + TERRAIN_MARGIN, maneuvering && output.horizontalLength() <= .3 ? chunksOnly : probe);
+            double allowed = Math.max(0, corridor.clearDistance() - TERRAIN_MARGIN);
             if (allowed < output.horizontalLength()) {
                 double scale = allowed / output.horizontalLength();
                 controller.accept(new Motion(output.x() * scale, 0, output.z() * scale));
@@ -309,7 +252,8 @@ public final class AdaptiveSpeed {
         movementTick = Integer.MIN_VALUE;
         lastPosition = null;
         maneuvering = false;
-        measuredSpeed = 0;
+        sprintRequested = false;
+        measuredSpeed = adaptiveMaximum = targetFraction = 0;
         state = reason;
         releaseTimer();
     }
@@ -343,46 +287,29 @@ public final class AdaptiveSpeed {
     }
 
     private AdaptiveFlightController.Settings tuning() {
-        return new AdaptiveFlightController.Settings(finite(acceleration.get(), .01, 2), finite(braking.get(), .01, 2),
-            finite(correctionBackoff.get(), .1, .95), correctionPause.get(), recoveryDelay.get(),
-            finite(recoveryRate.get(), .0001, .1), finite(turnRate.get(), 0, 45));
+        return new AdaptiveFlightController.Settings(
+            ENGINE_MAXIMUM * finite(acceleration.get(), .01, 10) / 100,
+            ENGINE_MAXIMUM * finite(braking.get(), .01, 20) / 100,
+            CORRECTION_BACKOFF, CORRECTION_PAUSE, RECOVERY_DELAY, RECOVERY_RATE, 0);
     }
 
     public String info() { return hud; }
 
-    private void updateStatus() {
-        hud = String.format(Locale.ROOT, "Adaptive %.1f b/s", measuredSpeed);
-        if (statusLabel != null) statusLabel.set(String.format(Locale.ROOT,
-            "%s | measured %.1f b/s | ceiling %.0f%%", state, measuredSpeed, controller.speedFactor() * 100));
-        if (speedLabel != null) {
-            double maximum = controlling ? adaptiveMaximum : Math.min(finite(maximumSpeed.get(), 0, 200) / 20,
-                AdaptiveFlightStep.maximumSpeed(controller.settings().braking(), lookahead.get(), margin.get()))
-                * controller.speedFactor();
-            speedLabel.set(String.format(Locale.ROOT,
-                "Adaptive max %.1f b/s | cruise %.1f b/s | Sprint %.1f b/s",
-                maximum * 20, maximum * cruiseMaximum.get() / 5, maximum * sprintMaximum.get() / 5));
-        }
-        if (checksLabel != null) checksLabel.set("This tick: " + chunkChecks + " chunk checks, " + collisionChecks + " block checks");
-        if (countsLabel != null) countsLabel.set("Corrections " + (controller.correctionCount() - diagnosticCorrectionBase)
-            + " | chunk-limited ticks " + chunkLimitedTicks + " | obstacle-limited ticks " + obstacleLimitedTicks);
+    public void renderHud(Render2DEvent event) {
+        if (!engineHud.get() || !selected() || !owner.isActive()) return;
+        AdaptiveEngineHud.renderLeft(event, "Dynamic Sprint", List.of(
+            String.format(Locale.ROOT, "State: %s", state),
+            String.format(Locale.ROOT, "Speed: %.1f b/s | output %.1f b/s",
+                measuredSpeed, controller.output().horizontalLength() * 20),
+            String.format(Locale.ROOT, "Target: %s %.1f%% | max %.1f b/s",
+                sprintRequested ? "Sprint" : "Vanilla", targetFraction * 100, adaptiveMaximum * 20),
+            String.format(Locale.ROOT, "Recovery: %.0f%% | corrections %d",
+                controller.speedFactor() * 100, controller.correctionCount())
+        ));
     }
 
-    public WWidget widget(GuiTheme theme) {
-        var list = theme.verticalList();
-        var section = list.add(theme.section("Speed Diagnostics", false)).expandX().widget();
-        section.add(theme.label("Vanilla mode + Adaptive Speed uses Adaptive Max Speed; Strafe uses Meteor's settings."));
-        var table = section.add(theme.table()).expandX().widget();
-        statusLabel = table.add(theme.label("")).widget(); table.row();
-        speedLabel = table.add(theme.label("")).widget(); table.row();
-        countsLabel = table.add(theme.label("")).widget(); table.row();
-        checksLabel = table.add(theme.label("")).widget(); table.row();
-        table.add(theme.button("Reset Speed Diagnostics")).widget().action = () -> {
-            chunkLimitedTicks = obstacleLimitedTicks = 0;
-            diagnosticCorrectionBase = controller.correctionCount();
-            updateStatus();
-        };
-        updateStatus();
-        return list;
+    private void updateStatus() {
+        hud = String.format(Locale.ROOT, "%s %.1f b/s", state, measuredSpeed);
     }
 
     private static double finite(double value, double minimum, double maximum) {

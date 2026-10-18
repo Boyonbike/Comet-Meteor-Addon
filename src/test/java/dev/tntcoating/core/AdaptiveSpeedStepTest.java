@@ -109,6 +109,21 @@ class AdaptiveSpeedStepTest {
         assertTrue(capped.motion().horizontalLength() <= .2);
     }
 
+    @Test void cruisePercentageDoesNotScaleThePhysicalStoppingLimit() {
+        Probe probe = new Probe();
+        probe.obstacles.add(new AABB(10, 64, -5, 11, 69, 5));
+
+        var cruise = move(controller(100, .2), new Motion(1, 0, 0), 2, .35, probe, false);
+        var sprint = move(controller(100, .2), new Motion(1, 0, 0), 2, 1, probe, false);
+
+        assertEquals(OBSTACLE, cruise.corridor().reason());
+        assertTrue(cruise.adaptiveMaximum() > .7,
+            "the wall is outside the selected cruise speed's stopping distance");
+        assertEquals(.7, cruise.motion().x(), EPSILON);
+        assertEquals(sprint.adaptiveMaximum(), sprint.motion().x(), EPSILON,
+            "the same wall must still limit the full adaptive speed");
+    }
+
     @Test void cornerScanFollowsTheActualBlendedTrajectory() {
         AdaptiveFlightController controller = controller(.5, .5);
         controller.accept(new Motion(2, 0, 0));

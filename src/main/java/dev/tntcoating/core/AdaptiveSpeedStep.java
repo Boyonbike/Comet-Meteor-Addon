@@ -71,8 +71,10 @@ public final class AdaptiveSpeedStep {
         double clearance = Math.max(0, corridor.clearDistance() - margin);
         adaptiveMaximum = Math.min(maximumSpeed, safeSpeed(controller.settings().braking(), clearance))
             * controller.speedFactor();
-        double allowed = Math.min(adaptiveMaximum, Math.max(adaptiveMaximum * fraction,
-            Math.max(0, previous.horizontalLength() - controller.settings().braking())));
+        // The controller has already applied the selected cruise/Sprint percentage to its
+        // target. Keep the terrain-safe speed absolute: scaling it by the percentage would
+        // make a 35% cruise start braking at the full adaptive maximum's stopping distance.
+        double allowed = adaptiveMaximum;
         boolean clipped = speed > allowed;
         Motion actual = clipped ? scale(blended, allowed / speed) : blended;
 

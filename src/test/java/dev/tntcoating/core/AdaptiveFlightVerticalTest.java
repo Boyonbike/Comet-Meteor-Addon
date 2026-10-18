@@ -95,6 +95,55 @@ class AdaptiveFlightVerticalTest {
         }
     }
 
+    @Test void horizontalAndVerticalCruisePercentagesAreIndependent() {
+        Limits limits = new Limits(2, .8, 1.2, .05);
+        AdaptiveFlightController controller = controller();
+        Motion motion = Motion.ZERO;
+        for (int tick = 0; tick < 150; tick++) {
+            controller.tick();
+            motion = move(controller, new Motion(2, .1, 0), 2, .1,
+                new Controls(false, .25, .5, 1, false, null, limits)).motion();
+        }
+
+        assertEquals(.5, motion.horizontalLength(), EPSILON);
+        assertEquals(.4, motion.y(), EPSILON);
+    }
+
+    @Test void verticalSprintUsesItsOwnPercentageWithoutChangingHorizontalCruise() {
+        Limits limits = new Limits(2, .8, 1.2, .05);
+        AdaptiveFlightController controller = controller();
+        Motion motion = Motion.ZERO;
+        for (int tick = 0; tick < 150; tick++) {
+            controller.tick();
+            motion = move(controller, new Motion(2, .1, 0), 2, .1,
+                new Controls(true, .35, 1, 1, false, null, limits)).motion();
+        }
+
+        assertEquals(.7, motion.horizontalLength(), EPSILON);
+        assertEquals(.8, motion.y(), EPSILON);
+    }
+
+    @Test void releasingSprintBrakesSmoothlyToTheVerticalCruisePercentage() {
+        Limits limits = new Limits(2, .8, .8, .05);
+        AdaptiveFlightController controller = controller();
+        for (int tick = 0; tick < 100; tick++) {
+            move(controller, new Motion(0, .1, 0), 0, .1,
+                new Controls(true, 1, 1, 1, false, null, limits));
+        }
+        assertEquals(.8, controller.output().y(), EPSILON);
+
+        double previous = .8;
+        for (int tick = 0; tick < 20; tick++) {
+            Motion motion = move(controller, new Motion(0, .1, 0), 0, .1,
+                new Controls(false, 1, .35, 1, false, null, limits)).motion();
+            assertTrue(motion.y() <= previous + EPSILON);
+            assertTrue(previous - motion.y() <= .1 + EPSILON);
+            assertTrue(motion.y() >= .8 * .35 - EPSILON);
+            previous = motion.y();
+        }
+        assertEquals(.8 * .35, previous, EPSILON);
+    }
+
     @Test void verticalLearningLimitsPreserveTheSweptObstacleGuard() {
         AdaptiveFlightController controller = controller();
         Limits limits = new Limits(3, .8, .8, .05);

@@ -25,25 +25,38 @@ public final class AdaptiveFlightStep {
                          boolean glideLimited, double glideDamage) {}
 
     /**
-     * Percentages are fractions of the attainable engine output, not its raw 64-block request.
+     * Horizontal and vertical percentages are independent fractions of their attainable outputs,
+     * not the raw 64-block request.
      * A non-null {@code glide} keeps walls outside the server's hidden glide reach.
      */
-    public record Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
+    public record Controls(boolean sprintBoost, double maximumFraction, double verticalFraction, int verticalInput,
                            boolean releaseSafeCollisions, ServerGlide.Context glide,
                            AdaptiveFlightMemory.Limits limits) {
         public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
                         boolean releaseSafeCollisions) {
-            this(sprintBoost, maximumFraction, verticalInput, releaseSafeCollisions, null, null);
+            this(sprintBoost, maximumFraction, maximumFraction, verticalInput,
+                releaseSafeCollisions, null, null);
         }
 
         public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
                         boolean releaseSafeCollisions, ServerGlide.Context glide) {
-            this(sprintBoost, maximumFraction, verticalInput, releaseSafeCollisions, glide, null);
+            this(sprintBoost, maximumFraction, maximumFraction, verticalInput,
+                releaseSafeCollisions, glide, null);
+        }
+
+        public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
+                        boolean releaseSafeCollisions, ServerGlide.Context glide,
+                        AdaptiveFlightMemory.Limits limits) {
+            this(sprintBoost, maximumFraction, maximumFraction, verticalInput,
+                releaseSafeCollisions, glide, limits);
         }
 
         public Controls {
             if (!Double.isFinite(maximumFraction) || maximumFraction < 0 || maximumFraction > 1) {
-                throw new IllegalArgumentException("Maximum fraction must be in [0, 1].");
+                throw new IllegalArgumentException("Horizontal maximum fraction must be in [0, 1].");
+            }
+            if (!Double.isFinite(verticalFraction) || verticalFraction < 0 || verticalFraction > 1) {
+                throw new IllegalArgumentException("Vertical maximum fraction must be in [0, 1].");
             }
             if (verticalInput < -1 || verticalInput > 1) {
                 throw new IllegalArgumentException("Vertical input must be -1, 0 or 1.");
@@ -96,6 +109,7 @@ public final class AdaptiveFlightStep {
         nonnegativeFinite(lookahead, "Lookahead");
         nonnegativeFinite(margin, "Margin");
         double fraction = controls == null ? 1 : controls.maximumFraction();
+        double verticalFraction = controls == null ? 1 : controls.verticalFraction();
         double horizonMaximum = maximumSpeed(controller.settings().braking(), lookahead, margin);
         AdaptiveFlightMemory.Limits learned = controls == null ? null : controls.limits();
         boolean verticalEnabled = verticalCeiling > 0;
@@ -109,14 +123,16 @@ public final class AdaptiveFlightStep {
                 if (horizontal > 0) requested = new Motion(requested.x() / horizontal * horizontalMaximum,
                     requested.y(), requested.z() / horizontal * horizontalMaximum);
             } else requested = new Motion(0, requested.y(), 0);
-            if (sprintBoost && controls.verticalInput() != 0 && verticalCeiling > 0) {
-                double directionalMaximum = learned == null ? maximum
-                    : Math.min(horizonMaximum, controls.verticalInput() > 0 ? learned.ascent() : learned.descent()) * fraction;
+            double verticalMaximum = horizonMaximum * verticalFraction;
+            if (controls.verticalInput() != 0 && verticalCeiling > 0 && (learned != null || sprintBoost)) {
+                double directionalMaximum = learned == null ? verticalMaximum
+                    : Math.min(horizonMaximum, controls.verticalInput() > 0 ? learned.ascent() : learned.descent())
+                        * verticalFraction;
                 requested = new Motion(requested.x(), controls.verticalInput() * directionalMaximum, requested.z());
                 verticalCeiling = directionalMaximum;
             }
             // A zero maximum stops every axis, including an existing vertical glide.
-            verticalCeiling = Math.min(verticalCeiling, maximum);
+            verticalCeiling = Math.min(verticalCeiling, verticalMaximum);
             requested = new Motion(requested.x(), Math.max(-verticalCeiling,
                 Math.min(verticalCeiling, requested.y())), requested.z());
             if (learned != null) requested = new Motion(requested.x(), Math.max(-learned.descent(),
@@ -149,7 +165,7 @@ public final class AdaptiveFlightStep {
             y = previous.y() + Math.max(-delta, Math.min(delta, blended.y() - previous.y()));
             double up = Math.min(horizonMaximum, learned.ascent()) * controller.speedFactor();
             double down = Math.min(horizonMaximum, learned.descent()) * controller.speedFactor();
-            y = !verticalEnabled || fraction == 0 ? 0 : Math.max(-down, Math.min(up, y));
+            y = !verticalEnabled || verticalFraction == 0 ? 0 : Math.max(-down, Math.min(up, y));
         }
         Motion limited = new Motion(blended.x() * horizontalFactor,
             y,
@@ -189,9 +205,9 @@ public final class AdaptiveFlightStep {
         // backoff. Reduce the attainable ceiling too, so sprint cannot mask corrections.
         if (sprintBoost || controls != null) allowed *= controller.speedFactor();
         double adaptiveMaximum = allowed;
-        allowed = learned == null || fraction == 0 ? allowed * fraction
-            : Math.min(allowed, Math.max(allowed * fraction,
-                Math.max(0, previous.length() - controller.settings().braking())));
+        // The requested vector and controller output already observe maximumFraction.
+        // Applying it again to this physical cap makes fractional cruise speeds begin
+        // braking at the adaptive maximum's stopping distance instead of their own.
         boolean clipped = speed > allowed;
         Motion actual = clipped ? scale(limited, allowed / speed) : limited;
         // Once the guard has slowed flight to harmless contact, allow a crawl even if

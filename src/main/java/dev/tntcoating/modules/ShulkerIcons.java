@@ -47,7 +47,7 @@ public final class ShulkerIcons extends Module {
     @Override public void onDeactivate() { cache.clear(); }
 
     public void drawOverlay(GuiGraphicsExtractor graphics, ItemStack shulker, int x, int y) {
-        if (!isActive() || drawingOverlay || mc.gui.screen() == null || shulker.isEmpty()
+        if (!isActive() || drawingOverlay || shulker.isEmpty()
             || !(shulker.getItem() instanceof BlockItem block) || !(block.getBlock() instanceof ShulkerBoxBlock)) return;
         ItemContainerContents contents = shulker.get(DataComponents.CONTAINER);
         if (contents == null) return;

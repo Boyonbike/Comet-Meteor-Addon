@@ -44,7 +44,7 @@ class AdaptiveFlightControlsTest {
         }
     }
 
-    @Test void percentageAlsoScalesTheMaximumBeforeANearbyWall() {
+    @Test void percentageDoesNotScaleThePhysicalMaximumBeforeANearbyWall() {
         Probe probe = new Probe();
         probe.obstacles.add(new AABB(8, 64, -5, 9, 69, 5));
         AdaptiveFlightStep.Result full = AdaptiveFlightStep.move(controller(100, .3),
@@ -56,7 +56,8 @@ class AdaptiveFlightControlsTest {
 
         assertEquals(OBSTACLE, full.corridor().reason());
         assertEquals(full.adaptiveMaximum(), half.adaptiveMaximum(), EPSILON);
-        assertEquals(full.motion().x() * .5, half.motion().x(), EPSILON);
+        assertEquals(full.motion(), half.motion(),
+            "both selected targets exceed the wall's physical stopping limit");
         assertTrue(full.adaptiveMaximum() < maximum(.3, 64, .25));
         assertTrue(BODY.maxX + full.motion().x() < 8 - .25 + EPSILON);
     }

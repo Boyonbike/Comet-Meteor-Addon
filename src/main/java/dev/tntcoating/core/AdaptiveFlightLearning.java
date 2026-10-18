@@ -8,75 +8,99 @@ import java.util.Objects;
 /** Directional flight learning from movement actually used, with a delay for server feedback. */
 public final class AdaptiveFlightLearning {
     public static final int FEEDBACK_TICKS = 20;
-    private record Sample(long tick, Motion motion, int input, boolean proof, double fraction) {}
+    private static final double EPSILON = 1e-9;
+    private record Sample(long tick, Motion motion, int input, boolean clean,
+                          boolean verticalProof, boolean horizontalProof) {}
 
     private final ArrayDeque<Sample> history = new ArrayDeque<>();
-    private Limits rejected = Limits.UNKNOWN;
+    /** Speeds previously associated with a correction. Guidance slows exploration but is not a hard ceiling. */
+    private Limits guidance = Limits.UNKNOWN;
     private double initialVertical = .75, configuredAcceleration = .05;
     private double horizontal = 64, ascent = .75, descent = .75, verticalAcceleration = .05;
-    private double provenAscent, provenDescent;
+    private double provenHorizontal, provenAscent, provenDescent;
+    private double observedHorizontal, observedAscent, observedDescent;
     private long tick, lastObservedTick = Long.MIN_VALUE;
-    private int ascentStreak, descentStreak, recoveryDelay = 60;
+    private int horizontalStreak, ascentStreak, descentStreak, recoveryDelay = 60;
     private double recoveryRate = .0025;
 
     public void configure(double initialVerticalSpeed, double acceleration) {
         if (!Double.isFinite(initialVerticalSpeed) || initialVerticalSpeed <= 0 || initialVerticalSpeed > 64
             || !Double.isFinite(acceleration) || acceleration <= 0 || acceleration > 2)
             throw new IllegalArgumentException("Vertical learning settings must be finite and positive.");
-        if (ascent == initialVertical && rejected.ascent() == 64) ascent = initialVerticalSpeed;
-        if (descent == initialVertical && rejected.descent() == 64) descent = initialVerticalSpeed;
-        if (verticalAcceleration == configuredAcceleration && rejected.verticalAcceleration() == 2)
+        if (ascent == initialVertical && guidance.ascent() == 64) ascent = initialVerticalSpeed;
+        if (descent == initialVertical && guidance.descent() == 64) descent = initialVerticalSpeed;
+        if (verticalAcceleration == configuredAcceleration && guidance.verticalAcceleration() == 2)
             verticalAcceleration = acceleration;
         initialVertical = initialVerticalSpeed;
         configuredAcceleration = acceleration;
-        verticalAcceleration = Math.min(verticalAcceleration, Math.min(acceleration, rejected.verticalAcceleration()));
+        verticalAcceleration = Math.min(verticalAcceleration, acceleration);
     }
 
-    /** Restoring a profile starts at its proven ceilings, rather than testing previously rejected speeds again. */
+    /** Restoring a profile starts at its last settled speeds. */
     public void restore(Limits limits) {
         restore(limits, limits);
     }
 
-    /** Clean reconnect hints start exploration; rejected ceilings remain a separate hard boundary. */
-    public void restore(Limits limits, Limits ceilings) {
+    /** Remembered correction guidance makes exploration more cautious without permanently capping it. */
+    public void restore(Limits limits, Limits correctionGuidance) {
         Objects.requireNonNull(limits, "limits");
-        rejected = Objects.requireNonNull(ceilings, "ceilings");
-        horizontal = Math.min(limits.horizontal(), ceilings.horizontal());
-        ascent = Math.min(limits.ascent() == 64 ? initialVertical : limits.ascent(), ceilings.ascent());
-        descent = Math.min(limits.descent() == 64 ? initialVertical : limits.descent(), ceilings.descent());
-        verticalAcceleration = Math.min(configuredAcceleration,
-            Math.min(limits.verticalAcceleration(), ceilings.verticalAcceleration()));
+        guidance = Objects.requireNonNull(correctionGuidance, "correctionGuidance");
+        horizontal = limits.horizontal();
+        ascent = limits.ascent() == 64 ? initialVertical : limits.ascent();
+        descent = limits.descent() == 64 ? initialVertical : limits.descent();
+        verticalAcceleration = Math.min(configuredAcceleration, limits.verticalAcceleration());
+        provenHorizontal = limits.horizontal() == 64 ? 0 : horizontal;
         provenAscent = limits.ascent() == 64 ? 0 : ascent;
         provenDescent = limits.descent() == 64 ? 0 : descent;
+        observedHorizontal = provenHorizontal;
+        observedAscent = provenAscent;
+        observedDescent = provenDescent;
         resetHistory();
     }
 
     public Limits limits() {
-        return new Limits(Math.min(horizontal, rejected.horizontal()), Math.min(ascent, rejected.ascent()),
-            Math.min(descent, rejected.descent()), verticalAcceleration);
+        return new Limits(horizontal, ascent, descent, verticalAcceleration);
     }
 
-    public Limits ceilings() { return rejected; }
+    /** Kept under the old accessor name for memory-format/API compatibility. Values are soft guidance. */
+    public Limits ceilings() { return guidance; }
 
     /** Only delayed clean evidence or a correction is saved, never a just-started speed probe. */
     public Limits remembered() {
-        boolean verticalKnown = rejected.ascent() < 64 || rejected.descent() < 64
+        boolean verticalKnown = guidance.ascent() < 64 || guidance.descent() < 64
             || provenAscent > 0 || provenDescent > 0;
-        return new Limits(Math.min(horizontal, rejected.horizontal()), Math.min(rejected.ascent(), provenAscent > 0 ? provenAscent : 64),
-            Math.min(rejected.descent(), provenDescent > 0 ? provenDescent : 64),
-            verticalKnown ? verticalAcceleration : rejected.verticalAcceleration());
+        double rememberedHorizontal = provenHorizontal > 0 ? provenHorizontal
+            : guidance.horizontal() < 64 ? guidance.horizontal() : 64;
+        double rememberedAscent = provenAscent > 0 ? provenAscent
+            : guidance.ascent() < 64 ? guidance.ascent() : 64;
+        double rememberedDescent = provenDescent > 0 ? provenDescent
+            : guidance.descent() < 64 ? guidance.descent() : 64;
+        return new Limits(rememberedHorizontal, rememberedAscent, rememberedDescent,
+            verticalKnown ? verticalAcceleration : guidance.verticalAcceleration());
     }
 
     public void tick(int delay, double rate) {
         if (delay < 0 || !Double.isFinite(rate) || rate < 0 || rate > 1)
             throw new IllegalArgumentException("Invalid learning recovery settings.");
-        if (lastObservedTick != tick) ascentStreak = descentStreak = 0;
+        if (lastObservedTick != tick) horizontalStreak = ascentStreak = descentStreak = 0;
         tick++;
         recoveryDelay = Math.max(40, delay);
         recoveryRate = rate;
         while (!history.isEmpty() && tick - history.getFirst().tick() > FEEDBACK_TICKS) {
             Sample sample = history.removeFirst();
-            if (sample.proof()) {
+            if (sample.clean()) {
+                if (sample.input() == 0) observedHorizontal = Math.max(observedHorizontal,
+                    sample.motion().horizontalLength());
+                else if (sample.input() > 0 && sample.motion().y() > 0)
+                    observedAscent = Math.max(observedAscent, sample.motion().y());
+                else if (sample.input() < 0 && sample.motion().y() < 0)
+                    observedDescent = Math.max(observedDescent, -sample.motion().y());
+            }
+            if (sample.horizontalProof()) {
+                provenHorizontal = Math.max(provenHorizontal,
+                    Math.min(horizontal, sample.motion().horizontalLength()));
+            }
+            if (sample.verticalProof()) {
                 double speed = Math.abs(sample.motion().y());
                 if (sample.input() > 0) provenAscent = Math.max(provenAscent, Math.min(ascent, speed));
                 else if (sample.input() < 0) provenDescent = Math.max(provenDescent, Math.min(descent, speed));
@@ -86,8 +110,15 @@ public final class AdaptiveFlightLearning {
 
     /** Call once per controlled tick, with the final terrain/glide-clipped output. */
     public void observe(Motion actual, int verticalInput, boolean sprintBoost, boolean clean, double fraction) {
+        observe(actual, verticalInput, sprintBoost, clean, fraction, fraction);
+    }
+
+    /** Horizontal and vertical percentages are independent evidence for cautious speed probes. */
+    public void observe(Motion actual, int verticalInput, boolean sprintBoost, boolean clean,
+                        double horizontalFraction, double verticalFraction) {
         Objects.requireNonNull(actual, "actual");
-        if (verticalInput < -1 || verticalInput > 1 || !Double.isFinite(fraction) || fraction < 0 || fraction > 1)
+        if (verticalInput < -1 || verticalInput > 1
+            || !validFraction(horizontalFraction) || !validFraction(verticalFraction))
             throw new IllegalArgumentException("Invalid flight learning input.");
         if (lastObservedTick == tick) return;
         lastObservedTick = tick;
@@ -95,18 +126,27 @@ public final class AdaptiveFlightLearning {
         double ceiling = verticalInput > 0 ? ascent : descent;
         // A clean 25% request does not prove the untested 100% speed. Partial
         // settings remain useful setback evidence, but cannot authorize a faster probe.
-        boolean proof = clean && sprintBoost && matching && fraction >= .999
-            && Math.abs(actual.y()) >= .85 * ceiling * fraction;
-        history.addLast(new Sample(tick, actual, verticalInput, proof, fraction));
-        if (proof && verticalInput > 0) { ascentStreak++; descentStreak = 0; }
-        else if (proof && verticalInput < 0) { descentStreak++; ascentStreak = 0; }
+        boolean verticalProof = clean && sprintBoost && matching && verticalFraction >= .999
+            && Math.abs(actual.y()) >= .85 * ceiling * verticalFraction;
+        boolean horizontalProof = clean && sprintBoost && verticalInput == 0 && horizontalFraction >= .999
+            && actual.horizontalLength() >= .85 * horizontal * horizontalFraction;
+        history.addLast(new Sample(tick, actual, verticalInput, clean, verticalProof, horizontalProof));
+        horizontalStreak = horizontalProof ? horizontalStreak + 1 : 0;
+        if (verticalProof && verticalInput > 0) { ascentStreak++; descentStreak = 0; }
+        else if (verticalProof && verticalInput < 0) { descentStreak++; ascentStreak = 0; }
         else ascentStreak = descentStreak = 0;
-        if (recoveryRate > 0 && ascentStreak >= recoveryDelay) {
-            ascent = Math.min(rejected.ascent(), ascent + Math.min(.05, recoveryRate * 20));
+        if (recoveryRate > 0 && horizontalStreak >= probeDelay(horizontal, guidance.horizontal())) {
+            horizontal = Math.min(64, horizontal + probeStep(horizontal, guidance.horizontal()));
+            horizontalStreak = 0;
+        }
+        if (recoveryRate > 0 && ascentStreak >= probeDelay(ascent, guidance.ascent())) {
+            ascent = Math.min(64, ascent + probeStep(ascent, guidance.ascent()));
+            recoverVerticalAcceleration();
             ascentStreak = 0;
         }
-        if (recoveryRate > 0 && descentStreak >= recoveryDelay) {
-            descent = Math.min(rejected.descent(), descent + Math.min(.05, recoveryRate * 20));
+        if (recoveryRate > 0 && descentStreak >= probeDelay(descent, guidance.descent())) {
+            descent = Math.min(64, descent + probeStep(descent, guidance.descent()));
+            recoverVerticalAcceleration();
             descentStreak = 0;
         }
     }
@@ -122,12 +162,22 @@ public final class AdaptiveFlightLearning {
             if (sample.input() < 0 && sample.motion().y() < -.01) down = Math.max(down, -sample.motion().y());
         }
         if (horizontal <= .01 && up == 0 && down == 0) { resetHistory(); return false; }
-        double h = rejected.horizontal(), a = rejected.ascent(), d = rejected.descent();
-        if (up > 0) a = Math.min(a, Math.max(.01, up * multiplier));
-        if (down > 0) d = Math.min(d, Math.max(.01, down * multiplier));
-        if (up == 0 && down == 0) h = Math.min(h, Math.max(.01, horizontal * multiplier));
+        // A correction far below movement that already survived the feedback window is
+        // probably unrelated jitter, a teleport plugin, or another transient condition.
+        // Keep the immediate controller backoff, but do not teach it as a speed boundary.
+        double observed = up > 0 ? observedAscent : down > 0 ? observedDescent : observedHorizontal;
+        double correctedSpeed = up > 0 ? up : down > 0 ? down : horizontal;
+        if (observed > .01 && correctedSpeed < observed * .6) {
+            resetHistory();
+            return false;
+        }
+        double h = guidance.horizontal(), a = guidance.ascent(), d = guidance.descent();
+        if (up > 0) a = Math.max(.01, up * multiplier);
+        if (down > 0) d = Math.max(.01, down * multiplier);
+        if (up == 0 && down == 0) h = Math.max(.01, horizontal * multiplier);
         else verticalAcceleration = Math.min(verticalAcceleration, Math.max(.005, verticalAcceleration * multiplier));
-        rejected = new Limits(h, a, d, up > 0 || down > 0 ? verticalAcceleration : rejected.verticalAcceleration());
+        guidance = new Limits(h, a, d,
+            up > 0 || down > 0 ? verticalAcceleration : guidance.verticalAcceleration());
         this.horizontal = Math.min(this.horizontal, h);
         ascent = Math.min(ascent, a);
         descent = Math.min(descent, d);
@@ -140,9 +190,35 @@ public final class AdaptiveFlightLearning {
 
     public void resetHistory() {
         history.clear();
-        ascentStreak = descentStreak = 0;
+        horizontalStreak = ascentStreak = descentStreak = 0;
         lastObservedTick = Long.MIN_VALUE;
     }
 
     public void forget() { restore(Limits.UNKNOWN); }
+
+    private int probeDelay(double current, double rememberedGuidance) {
+        if (!nearGuidance(current, rememberedGuidance)) return recoveryDelay;
+        return recoveryDelay > Integer.MAX_VALUE / 2 ? Integer.MAX_VALUE : recoveryDelay * 2;
+    }
+
+    private double probeStep(double current, double rememberedGuidance) {
+        double ordinary = Math.min(.05, recoveryRate * 20);
+        return nearGuidance(current, rememberedGuidance) ? Math.min(.01, recoveryRate * 4) : ordinary;
+    }
+
+    private boolean nearGuidance(double current, double rememberedGuidance) {
+        if (rememberedGuidance >= 64) return false;
+        double ordinaryStep = Math.min(.05, recoveryRate * 20);
+        return current + ordinaryStep + EPSILON >= rememberedGuidance
+            && current <= rememberedGuidance + .005 + EPSILON;
+    }
+
+    private void recoverVerticalAcceleration() {
+        verticalAcceleration = Math.min(configuredAcceleration,
+            verticalAcceleration + Math.min(.005, recoveryRate * 2));
+    }
+
+    private static boolean validFraction(double value) {
+        return Double.isFinite(value) && value >= 0 && value <= 1;
+    }
 }

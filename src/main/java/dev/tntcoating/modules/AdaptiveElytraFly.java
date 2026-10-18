@@ -10,6 +10,7 @@ import dev.tntcoating.core.ElytraPilot;
 import dev.tntcoating.core.FlightCorridor;
 import dev.tntcoating.core.ServerGlide;
 import dev.tntcoating.mixin.FireworkRocketAccessor;
+import dev.tntcoating.render.AdaptiveEngineHud;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -21,6 +22,7 @@ import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
@@ -82,11 +84,20 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Boolean> sprintBoost = general.add(new BoolSetting.Builder().name("sprint-boost")
         .description("Hold your Sprint key to boost horizontal movement and deliberate climb/descent. Keeps terrain and correction limits.")
         .defaultValue(true).build());
+    private final Setting<Boolean> engineHud = general.add(new BoolSetting.Builder().name("engine-hud")
+        .description("Display a live Adaptive Elytra Fly engine overview in the top-right corner.")
+        .defaultValue(false).build());
     private final Setting<Double> cruiseMaximum = general.add(new DoubleSetting.Builder().name("cruise-max-speed")
-        .description("Cruise maximum as a percentage of the adaptive engine's attainable speed. 100% uses its full output; see Flight Diagnostics for blocks/second.")
+        .description("Horizontal cruise maximum as a percentage of the adaptive engine's attainable speed. 100% uses its full output; see Flight Diagnostics for blocks/second.")
         .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
     private final Setting<Double> sprintMaximum = general.add(new DoubleSetting.Builder().name("sprint-max-speed")
-        .description("Sprint maximum as a percentage of the adaptive engine's attainable speed, including vertical input. 100% uses its full output.")
+        .description("Horizontal Sprint maximum as a percentage of the adaptive engine's attainable speed. 100% uses its full output.")
+        .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(sprintBoost::get).build());
+    private final Setting<Double> verticalCruiseMaximum = general.add(new DoubleSetting.Builder().name("vertical-cruise-max-speed")
+        .description("Jump/Sneak cruise maximum as a percentage of the learned adaptive ascent or descent limit.")
+        .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
+    private final Setting<Double> verticalSprintMaximum = general.add(new DoubleSetting.Builder().name("vertical-sprint-max-speed")
+        .description("Sprint + Jump/Sneak maximum as a percentage of the learned adaptive ascent or descent limit.")
         .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(sprintBoost::get).build());
     private final Setting<Double> initialVerticalSpeed = general.add(new DoubleSetting.Builder().name("initial-vertical-speed")
         .description("Starting climb/descent limit on an unknown server, in blocks per tick. Clean boosted flight learns higher limits separately for up and down.")
@@ -344,11 +355,13 @@ public final class AdaptiveElytraFly extends Module {
                 mc.player.getBoundingBox(), probe, lookahead.get(), margin.get(),
                 new AdaptiveFlightStep.Controls(sprinting,
                     (sprinting ? sprintMaximum.get() : cruiseMaximum.get()) / 100,
+                    (sprinting ? verticalSprintMaximum.get() : verticalCruiseMaximum.get()) / 100,
                     verticalInput, releaseSafeCollisions, glide, learning.limits()));
             learning.observe(step.motion(), verticalInput, sprinting,
                 step.corridor() != null && step.corridor().reason() == FlightCorridor.Reason.CLEAR
                     && !step.glideLimited() && controller.speedFactor() >= .999,
-                (sprinting ? sprintMaximum.get() : cruiseMaximum.get()) / 100);
+                (sprinting ? sprintMaximum.get() : cruiseMaximum.get()) / 100,
+                (sprinting ? verticalSprintMaximum.get() : verticalCruiseMaximum.get()) / 100);
             adaptiveMaximum = step.adaptiveMaximum();
             maneuvering = step.safeManeuvering();
             if (step.glideLimited()) glideLimitedTicks++;
@@ -562,6 +575,24 @@ public final class AdaptiveElytraFly extends Module {
         if (ms > 50) slowFrames++;
     }
 
+    @EventHandler private void onRender2D(Render2DEvent event) {
+        if (!engineHud.get()) return;
+        Motion output = controller.output();
+        var limits = learning.limits();
+        AdaptiveEngineHud.renderRight(event, "Adaptive Elytra Fly", List.of(
+            String.format(Locale.ROOT, "State: %s", state),
+            String.format(Locale.ROOT, "Speed: %.1f b/s | H %.1f | V %+.1f",
+                measuredSpeed, output.horizontalLength() * 20, output.y() * 20),
+            String.format(Locale.ROOT, "Engine max: %.1f b/s | recovery %.0f%%",
+                adaptiveMaximum * 20, controller.speedFactor() * 100),
+            String.format(Locale.ROOT, "Learned: H %.1f | up %.1f | down %.1f b/s",
+                limits.horizontal() * 20, limits.ascent() * 20, limits.descent() * 20),
+            String.format(Locale.ROOT, "Corrections: %d | server glide %s",
+                controller.correctionCount(), serverGlide == null ? "idle"
+                    : String.format(Locale.ROOT, "%.1f b/s", serverGlide.horizontalLength() * 20))
+        ));
+    }
+
     private void updateStatus() {
         hud = String.format(Locale.ROOT, "%s %.0f b/s", state, measuredSpeed);
         if (statusLabel != null) statusLabel.set(String.format(Locale.ROOT,
@@ -571,16 +602,19 @@ public final class AdaptiveElytraFly extends Module {
                 braking.get(), lookahead.get(), margin.get()) * controller.speedFactor();
             maximum = Math.min(maximum, learning.limits().horizontal() * controller.speedFactor());
             speedLabel.set(String.format(Locale.ROOT,
-                "Adaptive max %.1f b/s | cruise %.1f b/s (%.1f%%) | Sprint %.1f b/s (%.1f%%)",
+                "Horizontal max %.1f b/s | cruise %.1f (%.1f%%) | Sprint %.1f (%.1f%%) | vertical cruise/Sprint %.1f%%/%.1f%%",
                 maximum * 20, maximum * cruiseMaximum.get() / 5, cruiseMaximum.get(),
-                maximum * sprintMaximum.get() / 5, sprintMaximum.get()));
+                maximum * sprintMaximum.get() / 5, sprintMaximum.get(),
+                verticalCruiseMaximum.get(), verticalSprintMaximum.get()));
         }
         if (learningLabel != null) {
             var limits = learning.limits();
+            var guidance = learning.ceilings();
             learningLabel.set(String.format(Locale.ROOT,
-                "Learned limits: horizontal %.1f | up %.1f | down %.1f b/s | vertical acceleration %.3f%s",
+                "Adaptive limits: horizontal %.1f | up %.1f | down %.1f b/s | vertical acceleration %.3f | correction guidance %.1f/%.1f/%.1f%s",
                 Math.min(limits.horizontal(), AdaptiveFlightStep.maximumSpeed(braking.get(), lookahead.get(), margin.get())) * 20,
                 limits.ascent() * 20, limits.descent() * 20, limits.verticalAcceleration(),
+                guidance.horizontal() * 20, guidance.ascent() * 20, guidance.descent() * 20,
                 profile == null ? " | session only" : " | server memory"));
         }
         if (countsLabel != null) countsLabel.set("Corrections " + (controller.correctionCount() - diagnosticCorrectionBase)
