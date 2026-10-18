@@ -3,6 +3,7 @@
 
 import ctypes as C
 from pathlib import Path
+import re
 import struct
 import zipfile
 
@@ -80,7 +81,11 @@ def main():
 
     shader_path = ROOT / "src/main/resources/assets/tnt-coating/shaders"
     solid = program((shader_path / "shulker_icon.vert").read_text(), (shader_path / "shulker_icon.frag").read_text())
-    minecraft = next((ROOT / ".gradle/loom-cache/minecraftMaven").rglob("minecraft-merged-*.jar"))
+    version_catalog = (ROOT / "gradle/libs.versions.toml").read_text()
+    minecraft_version = re.search(r'^minecraft = "([^"]+)"$', version_catalog, re.MULTILINE).group(1)
+    minecraft = next((ROOT / ".gradle/loom-cache/minecraftMaven").rglob(
+        f"minecraft-merged-*-{minecraft_version}.jar"
+    ))
     with zipfile.ZipFile(minecraft) as jar:
         normal = program(jar.read("assets/minecraft/shaders/core/position_tex_color.vsh").decode(),
                          jar.read("assets/minecraft/shaders/core/position_tex_color.fsh").decode())

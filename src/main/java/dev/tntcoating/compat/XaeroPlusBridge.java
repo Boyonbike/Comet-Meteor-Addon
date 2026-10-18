@@ -17,7 +17,7 @@ public interface XaeroPlusBridge {
         String version = mod.get().getMetadata().getVersion().getFriendlyString();
         if (!SUPPORTED_VERSION.equals(version)) {
             return unavailable("XaeroPlus " + version + " is unsupported; Trail Hunter requires "
-                + SUPPORTED_VERSION + " for Minecraft 26.2.");
+                + SUPPORTED_VERSION + " for Minecraft 26.1.2.");
         }
         try {
             return new XaeroPlusIntegration();

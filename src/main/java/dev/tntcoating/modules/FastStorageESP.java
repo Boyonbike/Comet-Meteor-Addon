@@ -242,7 +242,7 @@ public final class FastStorageESP extends Module {
         if (shader == null) shader = new StorageEspShader();
         rebuild(event);
 
-        var camera = mc.gameRenderer.mainCamera().position();
+        var camera = mc.gameRenderer.getMainCamera().position();
         // Use the same view/bob/vertical-camera transform as MeshRenderer. Never use terrain occlusion:
         // storage behind walls must still contribute to the shader mask.
         StorageEspView.frustumTransform(transform, RenderUtils.projection, RenderSystem.getModelViewStack(), event.matrices.last().pose(), camera.y);
@@ -273,7 +273,7 @@ public final class FastStorageESP extends Module {
             Batch batch = entry.getValue();
             StorageEspView.batchTransform(transform, event.matrices.last().pose(), batch.originX, batch.originZ, camera.x, camera.z);
             MeshRenderer.begin().attachments(shader.framebuffer).pipeline(StorageEspShader.MASK_PIPELINE)
-                .mesh(batch.vertices.slice(), batch.indices.slice()).transform(transform)
+                .mesh(batch.vertices, batch.indices).transform(transform)
                 .uniform("StorageData", shader.maskUniform(batch.originX, batch.originZ,
                     mc.player.getX(), mc.player.getY(), mc.player.getZ(), fadeDistance.get())).end();
             count += batch.count;
@@ -365,7 +365,7 @@ public final class FastStorageESP extends Module {
             key = cell.key();
             revision = cell.revision();
             entries = new ArrayList<>(cell.values());
-            var camera = meteordevelopment.meteorclient.MeteorClient.mc.gameRenderer.mainCamera().position();
+            var camera = meteordevelopment.meteorclient.MeteorClient.mc.gameRenderer.getMainCamera().position();
             originX = camera.x;
             originZ = camera.z;
             mesh.begin();

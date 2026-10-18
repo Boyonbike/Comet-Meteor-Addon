@@ -51,8 +51,8 @@ public final class WaypointDelete extends Module {
 
     /** True when a waypoint was deleted; the press is then not passed on. */
     private boolean deleteLookedAt() {
-        if (mc.gui.screen() != null || mc.player == null || mc.gui.hud.isHidden()) return false;
-        Camera camera = mc.gameRenderer.mainCamera();
+        if (mc.screen != null || mc.player == null || mc.options.hideGui) return false;
+        Camera camera = mc.gameRenderer.getMainCamera();
         Vector3fc forward = camera.forwardVector();
         Vec3 eye = camera.position(), look = new Vec3(forward.x(), forward.y(), forward.z());
         Waypoint meteor = meteorTarget();

@@ -41,7 +41,7 @@ public final class ShulkerIconRulesSetting extends Setting<List<Rule<Item>>> {
             var rules = (ShulkerIconRulesSetting) setting;
             var row = table.add(theme.horizontalList()).expandX().widget();
             var edit = row.add(theme.button("Edit Combos")).expandX().widget();
-            edit.action = () -> mc.gui.setScreen(new Editor(theme, rules));
+            edit.action = () -> mc.setScreen(new Editor(theme, rules));
             var reset = row.add(theme.button("Reset")).widget();
             reset.action = rules::reset;
         });
@@ -143,7 +143,7 @@ public final class ShulkerIconRulesSetting extends Setting<List<Rule<Item>>> {
             iconRow.add(preview);
             var iconName = iconRow.add(theme.label(Names.get(draft.icon))).widget();
             var select = iconRow.add(theme.button("Select Icon")).widget();
-            select.action = () -> mc.gui.setScreen(new ShulkerIconPicker(theme, draft.style(), draft.colour.get().getPacked(), item -> {
+            select.action = () -> mc.setScreen(new ShulkerIconPicker(theme, draft.style(), draft.colour.get().getPacked(), item -> {
                 draft.icon = item;
                 draft.commit();
                 iconName.set(Names.get(item));
@@ -151,7 +151,7 @@ public final class ShulkerIconRulesSetting extends Setting<List<Rule<Item>>> {
             var colourRow = section.add(theme.horizontalList()).expandX().widget();
             colourRow.add(theme.quad(draft.colour.get()));
             var colourButton = colourRow.add(theme.button("Select Colour")).widget();
-            colourButton.action = () -> mc.gui.setScreen(new ColorSettingScreen(theme, draft.colour));
+            colourButton.action = () -> mc.setScreen(new ColorSettingScreen(theme, draft.colour));
             var solid = colourRow.add(theme.checkbox(draft.solid.get())).widget();
             solid.tooltip = "On: use the selected solid colour. Off: use the original item design.";
             solid.action = () -> draft.solid.set(solid.checked);

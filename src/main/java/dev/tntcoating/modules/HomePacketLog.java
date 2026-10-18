@@ -33,7 +33,7 @@ import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandSignedPacket;
-import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.phys.Vec3;
@@ -80,7 +80,7 @@ public final class HomePacketLog extends Module {
                 mc.level.dimension().identifier().toString());
             JsonObject header = next.event("session_start", "local", null);
             header.addProperty("format_version", 1);
-            header.addProperty("minecraft", "26.2");
+            header.addProperty("minecraft", "26.1.2");
             header.addProperty("player_filter", next.filter);
             header.addProperty("relative_moves", next.relativeMoves);
             header.addProperty("other_packet_types", next.packetTypes);
@@ -238,7 +238,7 @@ public final class HomePacketLog extends Module {
                 }
             } else if (packet instanceof ClientboundAddEntityPacket add) {
                 players.remove(add.getId());
-                if (add.getType() != EntityTypes.PLAYER) return;
+                if (add.getType() != EntityType.PLAYER) return;
                 PlayerState state = new PlayerState(add.getUUID(), names.get(add.getUUID()), new PacketPosition(add.getX(), add.getY(), add.getZ()), "packet");
                 players.put(add.getId(), state);
                 JsonObject event = playerEvent("player_spawn", packet, add.getId(), state);
@@ -323,7 +323,7 @@ public final class HomePacketLog extends Module {
             // Vanilla resolves relative teleports against the current interpolated client position.
             // A packet-only reconstruction is an estimate; always retain the original fields/flags.
             state.basis = relativePosition(relatives) ? "packet_estimate" : "packet";
-            // TeleportEntity does not reset VecDeltaCodec in 26.2. PositionSync does.
+            // TeleportEntity does not reset VecDeltaCodec in 26.1.2. PositionSync does.
             if (syncCodec) {
                 state.codecBase = state.position;
                 state.codecBasis = "packet";

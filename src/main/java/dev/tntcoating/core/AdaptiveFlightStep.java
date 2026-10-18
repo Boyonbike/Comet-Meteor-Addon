@@ -31,24 +31,31 @@ public final class AdaptiveFlightStep {
      */
     public record Controls(boolean sprintBoost, double maximumFraction, double verticalFraction, int verticalInput,
                            boolean releaseSafeCollisions, ServerGlide.Context glide,
-                           AdaptiveFlightMemory.Limits limits) {
+                           AdaptiveFlightMemory.Limits limits, double collisionReleaseSpeed) {
         public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
                         boolean releaseSafeCollisions) {
             this(sprintBoost, maximumFraction, maximumFraction, verticalInput,
-                releaseSafeCollisions, null, null);
+                releaseSafeCollisions, null, null, SAFE_MANEUVER_SPEED);
         }
 
         public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
                         boolean releaseSafeCollisions, ServerGlide.Context glide) {
             this(sprintBoost, maximumFraction, maximumFraction, verticalInput,
-                releaseSafeCollisions, glide, null);
+                releaseSafeCollisions, glide, null, SAFE_MANEUVER_SPEED);
         }
 
         public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
                         boolean releaseSafeCollisions, ServerGlide.Context glide,
                         AdaptiveFlightMemory.Limits limits) {
             this(sprintBoost, maximumFraction, maximumFraction, verticalInput,
-                releaseSafeCollisions, glide, limits);
+                releaseSafeCollisions, glide, limits, SAFE_MANEUVER_SPEED);
+        }
+
+        public Controls(boolean sprintBoost, double maximumFraction, double verticalFraction, int verticalInput,
+                        boolean releaseSafeCollisions, ServerGlide.Context glide,
+                        AdaptiveFlightMemory.Limits limits) {
+            this(sprintBoost, maximumFraction, verticalFraction, verticalInput,
+                releaseSafeCollisions, glide, limits, SAFE_MANEUVER_SPEED);
         }
 
         public Controls {
@@ -60,6 +67,9 @@ public final class AdaptiveFlightStep {
             }
             if (verticalInput < -1 || verticalInput > 1) {
                 throw new IllegalArgumentException("Vertical input must be -1, 0 or 1.");
+            }
+            if (!Double.isFinite(collisionReleaseSpeed) || collisionReleaseSpeed <= 0) {
+                throw new IllegalArgumentException("Collision release speed must be finite and positive.");
             }
         }
     }
@@ -190,8 +200,10 @@ public final class AdaptiveFlightStep {
 
         // Inspect the actual blended trajectory once. Separate old/requested rays
         // can miss an obstacle between them and multiply the per-tick probe budget.
-        boolean mayRelease = controls != null && controls.releaseSafeCollisions() && harmless(previous);
-        boolean safeManeuvering = mayRelease && harmless(limited);
+        double releaseSpeed = controls == null ? SAFE_MANEUVER_SPEED : controls.collisionReleaseSpeed();
+        boolean mayRelease = controls != null && controls.releaseSafeCollisions()
+            && within(previous, releaseSpeed);
+        boolean safeManeuvering = mayRelease && within(limited, releaseSpeed);
         FlightCorridor.Result corridor = FlightCorridor.inspect(box,
             new Vec3(limited.x(), limited.y(), limited.z()), lookahead, safeManeuvering ? chunksOnly : probe);
         // Brake early enough for a wall or chunk edge ahead that the server's own glide cannot reach it
@@ -210,12 +222,12 @@ public final class AdaptiveFlightStep {
         // braking at the adaptive maximum's stopping distance instead of their own.
         boolean clipped = speed > allowed;
         Motion actual = clipped ? scale(limited, allowed / speed) : limited;
-        // Once the guard has slowed flight to harmless contact, allow a crawl even if
+        // Once the guard has slowed flight to the configured close-object speed, allow movement even if
         // the next acceleration step would be too fast. Otherwise .2 -> .35 -> .2 can
-        // remain stuck forever at a wall. Minecraft resolves the harmless block contact.
+        // remain stuck forever at a wall. The live module resolves this vector through Minecraft collision.
         if (mayRelease && !safeManeuvering && corridor.reason() == FlightCorridor.Reason.OBSTACLE
-            && harmless(actual)) {
-            adaptiveMaximum = Math.min(horizonMaximum, SAFE_MANEUVER_SPEED) * controller.speedFactor();
+            && within(actual, releaseSpeed)) {
+            adaptiveMaximum = Math.min(horizonMaximum, releaseSpeed) * controller.speedFactor();
             Motion crawl = scale(limited, Math.min(1, adaptiveMaximum * fraction / speed));
             FlightCorridor.Result chunks = FlightCorridor.inspect(box,
                 new Vec3(crawl.x(), crawl.y(), crawl.z()), crawl.length() + margin, chunksOnly);
@@ -250,6 +262,10 @@ public final class AdaptiveFlightStep {
     private static Motion scale(Motion motion, double factor) {
         return factor == 0 ? Motion.ZERO
             : new Motion(motion.x() * factor, motion.y() * factor, motion.z() * factor);
+    }
+
+    private static boolean within(Motion motion, double maximum) {
+        return motion.length() <= maximum + 1e-9;
     }
 
     private static void nonnegativeFinite(double value, String name) {

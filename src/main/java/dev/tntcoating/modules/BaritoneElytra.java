@@ -47,8 +47,8 @@ public final class BaritoneElytra extends Module {
     private Trip trip;
     /**
      * True when this module started the flight from a #goto: it walks the rest after landing, manages the elytra and
-     * ElytraFly, and reports how the flight ended. A flight started by #elytra or another addon (such as Stash-Hunter,
-     * which toggles ElytraFly itself) only gets take-off help and firework restocking.
+     * ElytraFly, and reports how the flight ended. A flight started by #elytra or another addon only gets take-off help
+     * and firework restocking.
      */
     private boolean ours;
     private boolean glided;

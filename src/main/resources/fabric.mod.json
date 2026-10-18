@@ -6,7 +6,7 @@
   "authors": [
     "Boyonabike"
   ],
-  "description": "Comet by Boyonabike: inventory-aware Auto Tool and Auto Weapon, optimized Scaffold placement, bounded trajectory simulation, client-thread container transfers, efficient Auto Totem decisions and offhand swaps, adaptive Vanilla elytra movement with terrain pacing and correction recovery, cached shader storage ESP, fast item use without opening newly placed shulkers, TNT surface coating, priority jump placement, scaffold strips, tunnel backfill, Meteor waypoints on Xaero's maps, look-to-delete waypoints, Baritone elytra trips, elytra replacement, low-elytra logout, ElytraFly for Stash-Hunter, spiral area searches, base hunting along XaeroPlus old-chunk trails and player teleport packet logging.",
+  "description": "Comet by Boyonabike: inventory-aware Auto Tool and Auto Weapon, optimized Scaffold placement, bounded trajectory simulation, client-thread container transfers, adaptive Vanilla elytra movement with terrain pacing and correction recovery, cached shader storage ESP, fast item use without opening newly placed shulkers, TNT surface coating, priority jump placement, scaffold strips, tunnel backfill, Meteor waypoints on Xaero's maps, look-to-delete waypoints, Baritone elytra trips, elytra replacement, low-elytra logout, spiral area searches, base hunting along XaeroPlus old-chunk trails and player teleport packet logging.",
   "environment": "client",
   "license": "CC0-1.0",
   "entrypoints": {
@@ -27,8 +27,7 @@
     "xaerominimap": "*",
     "xaeroworldmap": "*",
     "xaeroplus": "*",
-    "baritone-meteor": "*",
-    "stash-hunter": "*"
+    "baritone-meteor": "*"
   },
   "mixins": [
     "comet.mixins.json"

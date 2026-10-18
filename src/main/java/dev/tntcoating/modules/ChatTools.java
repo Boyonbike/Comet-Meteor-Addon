@@ -27,7 +27,7 @@ import net.minecraft.commands.arguments.GameProfileArgument;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.Style;
-import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.EntityType;
 
 public final class ChatTools extends Module {
     private final SettingGroup general = settings.getDefaultGroup();
@@ -48,7 +48,7 @@ public final class ChatTools extends Module {
         if (player == null) return false;
         List<Option> options = options(player);
         if (options.isEmpty()) return false;
-        mc.gui.setScreen(new ChatToolsScreen(GuiThemes.get(), player, options, this::choose));
+        mc.setScreen(new ChatToolsScreen(GuiThemes.get(), player, options, this::choose));
         return true;
     }
 
@@ -56,8 +56,8 @@ public final class ChatTools extends Module {
         String command = option.command();
         if (runOnClick.get() && option.complete() && !Character.isWhitespace(command.charAt(command.length() - 1))) {
             if (mc.getConnection() != null) mc.getConnection().sendCommand(withoutSlash(command));
-            mc.gui.setScreen(null);
-        } else mc.gui.setScreen(new ChatScreen(command, true));
+            mc.setScreen(null);
+        } else mc.setScreen(new ChatScreen(command, true));
     }
 
     private List<Option> options(String player) {
@@ -105,7 +105,7 @@ public final class ChatTools extends Module {
         if (mc.getConnection() == null || style == null) return null;
         String insertion = onlineName(style.getInsertion());
         if (insertion != null) return insertion;
-        if (style.getHoverEvent() instanceof HoverEvent.ShowEntity show && show.entity().type == EntityTypes.PLAYER) {
+        if (style.getHoverEvent() instanceof HoverEvent.ShowEntity show && show.entity().type == EntityType.PLAYER) {
             PlayerInfo info = mc.getConnection().getPlayerInfo(show.entity().uuid);
             if (info != null && !isSelf(info.getProfile().name())) return info.getProfile().name();
             if (show.entity().name.isPresent()) {

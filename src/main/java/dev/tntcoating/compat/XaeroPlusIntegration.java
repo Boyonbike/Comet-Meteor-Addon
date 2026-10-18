@@ -71,7 +71,7 @@ public final class XaeroPlusIntegration implements XaeroPlusBridge {
      * XaeroPlus 2.36.6 dispatches this on the client thread from handleLevelChunkWithLight RETURN. OldChunks and
      * PaletteNewChunks scan synchronously in the same dispatch. Queue coordinates here; inspect caches in drain(),
      * after the entire dispatch returns, so registration order and event priorities cannot produce a stale result.
-     * Verified against the 26.2 release source:
+     * Verified against the 26.1.2 release source:
      * https://github.com/rfresh2/XaeroPlus/tree/5bb9236657d7165f4b8c17f92beb88243e3e7276/common/src/main/java/xaeroplus
      */
     @EventHandler

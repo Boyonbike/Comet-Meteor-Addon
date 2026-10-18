@@ -1,10 +1,8 @@
 package dev.tntcoating.render;
 
-import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.buffers.Std140SizeCalculator;
-import com.mojang.blaze3d.pipeline.BindGroupLayout;
 import com.mojang.blaze3d.pipeline.BlendFunction;
 import com.mojang.blaze3d.pipeline.ColorTargetState;
 import com.mojang.blaze3d.pipeline.DepthStencilState;
@@ -13,6 +11,7 @@ import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import meteordevelopment.meteorclient.renderer.ExtendedRenderPipelineBuilder;
 import meteordevelopment.meteorclient.renderer.MeshRenderer;
 import meteordevelopment.meteorclient.renderer.MeteorRenderPipelines;
@@ -34,14 +33,11 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public final class StorageEspShader extends PostProcessShader implements AutoCloseable {
     public static final RenderPipeline MASK_PIPELINE = new ExtendedRenderPipelineBuilder()
         .withLocation(id("pipeline/storage_mask"))
-        .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
-        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+        .withVertexFormat(DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.TRIANGLES)
         .withVertexShader(id("shaders/storage_mask.vert"))
         .withFragmentShader(id("shaders/storage_mask.frag"))
-        .withBindGroupLayout(BindGroupLayout.builder()
-            .withUniform("MeshData", UniformType.UNIFORM_BUFFER)
-            .withUniform("StorageData", UniformType.UNIFORM_BUFFER)
-            .build())
+        .withUniform("MeshData", UniformType.UNIFORM_BUFFER)
+        .withUniform("StorageData", UniformType.UNIFORM_BUFFER)
         // This depth belongs only to the mask. Terrain must never hide storage ESP.
         .withDepthStencilState(new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, true))
         .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
@@ -84,7 +80,7 @@ public final class StorageEspShader extends PostProcessShader implements AutoClo
         // Rotate before writing this frame so previous GPU draws retain their uniform values.
         maskUniforms.endFrame();
         RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
-            framebuffer.getColorTexture(), Color.CLEAR.getVec4f(), framebuffer.getDepthTexture(), 1.0);
+            framebuffer.getColorTexture(), Color.CLEAR.getPacked(), framebuffer.getDepthTexture(), 1.0);
     }
 
     /** The model vertices retain build-origin-relative X/Z and world Y. */

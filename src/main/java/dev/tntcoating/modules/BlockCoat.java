@@ -933,7 +933,7 @@ public final class BlockCoat extends Module {
         Input original = mc.player.input.keyPresses;
         var connection = mc.getConnection();
         if (connection == null) return;
-        // In 26.2 shift state is carried by the ordinary player input packet.
+        // In 26.1.2 shift state is carried by the ordinary player input packet.
         Input sneaking = new Input(original.forward(), original.backward(), original.left(), original.right(),
             original.jump(), true, original.sprint());
         connection.send(new ServerboundPlayerInputPacket(sneaking));

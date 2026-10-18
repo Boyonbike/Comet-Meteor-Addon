@@ -8,12 +8,12 @@ import dev.tntcoating.modules.ChatTools;
 import dev.tntcoating.modules.ElytraLog;
 import dev.tntcoating.modules.ElytraReplace;
 import dev.tntcoating.modules.HomePacketLog;
+import dev.tntcoating.modules.PlayerSpeedHud;
 import dev.tntcoating.modules.FastStorageESP;
 import dev.tntcoating.modules.SafeFastUse;
 import dev.tntcoating.modules.ShulkerIcons;
 import dev.tntcoating.gui.ShulkerIconRulesSetting;
 import dev.tntcoating.modules.SmartSponge;
-import dev.tntcoating.modules.StashHunterFly;
 import dev.tntcoating.modules.WaypointDelete;
 import dev.tntcoating.modules.XaeroWaypoints;
 import java.util.Comparator;
@@ -23,7 +23,6 @@ import meteordevelopment.meteorclient.addons.MeteorAddon;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.Category;
-import meteordevelopment.meteorclient.systems.modules.combat.AutoTotem;
 import meteordevelopment.meteorclient.systems.modules.combat.AutoWeapon;
 import meteordevelopment.meteorclient.systems.modules.misc.InventoryTweaks;
 import meteordevelopment.meteorclient.systems.modules.movement.Scaffold;
@@ -51,7 +50,6 @@ public final class TntCoatingAddon extends MeteorAddon {
             // Flight and flight safety.
             new AdaptiveElytraFly(),
             new BaritoneElytra(),
-            new StashHunterFly(),
             new ElytraReplace(),
             new ElytraLog(),
             // The original movement module, upgraded in place.
@@ -71,9 +69,9 @@ public final class TntCoatingAddon extends MeteorAddon {
             // Combat and inventory.
             modules.get(AutoTool.class),
             modules.get(AutoWeapon.class),
-            modules.get(AutoTotem.class),
             modules.get(InventoryTweaks.class),
             // Diagnostics.
+            new PlayerSpeedHud(),
             new HomePacketLog()
         );
         orderedModules.forEach(module -> {

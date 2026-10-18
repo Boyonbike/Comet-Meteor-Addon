@@ -184,6 +184,22 @@ class AdaptiveFlightControlsTest {
         assertFalse(guardedProbe.boxes.isEmpty());
     }
 
+    @Test void configuredCloseObjectSpeedCanExceedTheVanillaDamageThreshold() {
+        AdaptiveFlightController controller = controller(.1, .5);
+        controller.accept(new Motion(.5, 0, 0));
+        Probe probe = touchingWall();
+
+        var step = AdaptiveFlightStep.move(controller, new Motion(.5, 0, 0),
+            1, 0, BODY, probe, 64, .35,
+            new Controls(false, 1, 1, 0, true, null, null, .6));
+
+        assertTrue(step.safeManeuvering());
+        assertEquals(.6, step.motion().length(), EPSILON);
+        assertTrue(probe.boxes.isEmpty(),
+            "the live module resolves this faster contact vector with Minecraft collision");
+        assertTrue(probe.chunkChecks > 0, "faster close-object control still guards unloaded chunks");
+    }
+
     @Test void priorFastMotionMustBeStoppedBeforeTheWallCanReleaseToASafeCrawl() {
         AdaptiveFlightController controller = controller(1, .5);
         controller.accept(new Motion(2, 0, 0));

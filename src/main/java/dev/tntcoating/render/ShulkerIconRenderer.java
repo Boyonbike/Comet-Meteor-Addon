@@ -12,6 +12,7 @@ import net.minecraft.client.renderer.state.gui.BlitRenderState;
 import net.minecraft.client.renderer.state.gui.GuiItemRenderState;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
+import com.mojang.blaze3d.shaders.UniformType;
 
 public final class ShulkerIconRenderer {
     // GUI extraction and Meteor's deferred widget draws run on the render thread.
@@ -45,17 +46,18 @@ public final class ShulkerIconRenderer {
 
         private static RenderPipeline create() {
             RenderPipeline base = RenderPipelines.GUI_TEXTURED_PREMULTIPLIED_ALPHA;
-            var builder = RenderPipeline.builder()
+            return RenderPipeline.builder()
                 .withLocation(id("pipeline/shulker_icon"))
                 .withVertexShader(id("shaders/shulker_icon.vert"))
                 .withFragmentShader(id("shaders/shulker_icon.frag"))
-                .withVertexBinding(0, base.getVertexFormatBinding(0))
-                .withPrimitiveTopology(base.getPrimitiveTopology())
+                .withSampler("Sampler0")
+                .withUniform("DynamicTransforms", UniformType.UNIFORM_BUFFER)
+                .withUniform("Projection", UniformType.UNIFORM_BUFFER)
+                .withVertexFormat(base.getVertexFormat(), base.getVertexFormatMode())
                 .withDepthStencilState(java.util.Optional.ofNullable(base.getDepthStencilState()))
                 .withColorTargetState(base.getColorTargetState())
-                .withCull(base.isCull());
-            base.getBindGroupLayouts().forEach(builder::withBindGroupLayout);
-            return builder.build();
+                .withCull(base.isCull())
+                .build();
         }
     }
 

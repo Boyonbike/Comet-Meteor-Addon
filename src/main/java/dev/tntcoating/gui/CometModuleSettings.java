@@ -7,14 +7,15 @@ import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 
+import static meteordevelopment.meteorclient.MeteorClient.mc;
+
 /** Shared menu links from original module settings to their Comet upgrades. */
 public final class CometModuleSettings {
     private static final Map<String, List<String>> UPGRADES = Map.of(
-        "elytra-fly", List.of("adaptive-elytra-fly", "baritone-elytra", "stash-hunter-elytrafly", "elytra-replace", "elytra-log"),
+        "elytra-fly", List.of("adaptive-elytra-fly", "baritone-elytra", "elytra-replace", "elytra-log"),
         "storage-esp", List.of("fast-storage-esp"),
         "fast-use", List.of("safe-fast-use"),
-        "waypoints", List.of("xaero-waypoints", "waypoint-delete"),
-        "stash-hunter", List.of("stash-hunter-elytrafly")
+        "waypoints", List.of("xaero-waypoints", "waypoint-delete")
     );
 
     private CometModuleSettings() {}
@@ -33,8 +34,14 @@ public final class CometModuleSettings {
 
         var list = theme.verticalList();
         var section = list.add(theme.section("Comet", false)).expandX().widget();
-        section.add(theme.label("Left click to toggle; right click for settings."));
-        for (Module upgrade : upgrades) section.add(theme.module(upgrade)).expandX();
+        section.add(theme.label("Toggle an upgrade or open its settings."));
+        for (Module upgrade : upgrades) {
+            var row = section.add(theme.table()).expandX().widget();
+            row.add(theme.module(upgrade)).expandX();
+            var settings = row.add(theme.button("Settings")).widget();
+            settings.action = () -> mc.setScreen(theme.moduleScreen(upgrade));
+            row.row();
+        }
         return list;
     }
 }

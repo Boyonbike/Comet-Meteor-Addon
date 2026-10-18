@@ -118,8 +118,11 @@ public final class AdaptiveElytraFly extends Module {
         .description("Check swept player boxes for blocks. Meteor's No Crash also enables this protection.")
         .defaultValue(true).build());
     private final Setting<Boolean> safeManeuvering = terrain.add(new BoolSetting.Builder().name("safe-maneuvering")
-        .description("Release block avoidance at harmless contact speeds, including after braking for a wall. Keeps unloaded-chunk protection.")
+        .description("Resolve close-object movement with Minecraft collision, including after braking for a wall. Keeps unloaded-chunk protection.")
         .defaultValue(true).build());
+    private final Setting<Double> closeObjectSpeed = terrain.add(new DoubleSetting.Builder().name("close-object-speed")
+        .description("Maximum movement speed near an object, in blocks per tick. Press Sprint there to override it until clear.")
+        .defaultValue(.6).range(.1, 4).sliderRange(.1, 2).decimalPlaces(2).visible(safeManeuvering::get).build());
     private final Setting<Boolean> serverGlideGuard = terrain.add(new BoolSetting.Builder().name("server-glide-guard")
         .description("Keep walls out of reach of the server's own elytra glide. A vanilla server keeps simulating a normal glide from your reported position every tick, and that hidden speed, not your visible speed, deals fly-into-wall damage.")
         .defaultValue(true).build());
@@ -185,7 +188,7 @@ public final class AdaptiveElytraFly extends Module {
     private WLabel statusLabel, speedLabel, learningLabel, countsLabel, glideLabel, frameLabel, checksLabel;
     private double frameAverageMs, framePeakMs, measuredSpeed;
     private double adaptiveMaximum;
-    private boolean maneuvering, harmlessPhysicsAtTickStart;
+    private boolean maneuvering, closeObjectOverride;
     private long slowFrames, sampleTime;
     private int diagnosticCorrectionBase;
     private Vec3 samplePosition, lastControlledPosition;
@@ -246,9 +249,6 @@ public final class AdaptiveElytraFly extends Module {
         learning.configure(initialVerticalSpeed.get(), verticalAcceleration.get());
         bindProfile();
         playerId = mc.player == null ? Integer.MIN_VALUE : mc.player.getId();
-        // Vanilla snapshots pre-travel horizontal speed before posting PlayerMoveEvent.
-        // Never release protection from a newly reset controller while physical flight is still fast.
-        harmlessPhysicsAtTickStart = mc.player != null && harmless(mc.player.getDeltaMovement());
         chunkChecks = collisionChecks = 0;
         ElytraFly fly = Modules.get().get(ElytraFly.class);
         if (!eligible(fly)) suspend(reason(fly));
@@ -321,11 +321,15 @@ public final class AdaptiveElytraFly extends Module {
         }
         checkBlocks = avoidBlocks.get() || fly.noCrash.get();
         consumeCorrections();
-        // Keep harmless block contact under our controller: yielding to stock here
+        // Keep close-object contact under our controller: yielding to stock here
         // would invoke Meteor's unconditional No Crash and trap tight-space movement.
-        boolean releaseSafeCollisions = safeManeuvering.get() && harmlessPhysicsAtTickStart
-            && harmless(event.movement);
-        boolean harmlessStart = releaseSafeCollisions && AdaptiveFlightStep.harmless(controller.output());
+        boolean sprintKey = sprintBoost.get() && mc.screen == null && mc.isWindowActive()
+            && Input.isPressed(mc.options.keySprint);
+        if (maneuvering && sprintKey) closeObjectOverride = true;
+        double releaseSpeed = closeObjectOverride ? AdaptiveFlightStep.MAX_HORIZONTAL_SPEED : closeObjectSpeed.get();
+        boolean releaseSafeCollisions = safeManeuvering.get() && (closeObjectOverride
+            || within(mc.player.getDeltaMovement(), releaseSpeed) && within(event.movement, releaseSpeed));
+        boolean harmlessStart = releaseSafeCollisions && controller.output().length() <= releaseSpeed;
         // Corrections/unloads can strand the body in unknown terrain. Let stock physics withdraw from an existing
         // overlap; a blocked path from a safe starting box still uses the adaptive guard normally.
         FlightCorridor.Result start = FlightCorridor.inspectStart(mc.player.getBoundingBox(),
@@ -342,8 +346,7 @@ public final class AdaptiveElytraFly extends Module {
             mode.autoTakeoff();
             mode.handleAutopilot();
             Motion requested = requested(fly, event.movement.y);
-            boolean sprinting = sprintBoost.get() && mc.gui.screen() == null && mc.isWindowActive()
-                && Input.isPressed(mc.options.keySprint);
+            boolean sprinting = sprintKey || closeObjectOverride;
             int verticalInput = finite(fly.verticalSpeed.get(), 0, 64) == 0 ? 0
                 : mc.options.keyJump.isDown() ? 1 : mc.options.keyShift.isDown() ? -1 : 0;
             ServerGlide.Context glide = checkBlocks && serverGlideGuard.get() && serverGlide != null
@@ -356,8 +359,17 @@ public final class AdaptiveElytraFly extends Module {
                 new AdaptiveFlightStep.Controls(sprinting,
                     (sprinting ? sprintMaximum.get() : cruiseMaximum.get()) / 100,
                     (sprinting ? verticalSprintMaximum.get() : verticalCruiseMaximum.get()) / 100,
-                    verticalInput, releaseSafeCollisions, glide, learning.limits()));
-            learning.observe(step.motion(), verticalInput, sprinting,
+                    verticalInput, releaseSafeCollisions, glide, learning.limits(), releaseSpeed));
+            Motion actualMotion = step.motion();
+            boolean contactResolved = false;
+            if (step.safeManeuvering()) {
+                Motion resolved = resolveCollision(actualMotion);
+                contactResolved = difference(actualMotion, resolved) > EPSILON;
+                actualMotion = resolved;
+                controller.accept(actualMotion);
+            }
+            if (closeObjectOverride && step.safeManeuvering() && !contactResolved) closeObjectOverride = false;
+            learning.observe(actualMotion, verticalInput, sprinting,
                 step.corridor() != null && step.corridor().reason() == FlightCorridor.Reason.CLEAR
                     && !step.glideLimited() && controller.speedFactor() >= .999,
                 (sprinting ? sprintMaximum.get() : cruiseMaximum.get()) / 100,
@@ -375,7 +387,7 @@ public final class AdaptiveElytraFly extends Module {
                 chunkLimitedTicks++;
             } else if (ahead != null && ahead.reason() == FlightCorridor.Reason.INVALID) state = "Invalid terrain";
             else if (step.glideLimited()) state = "Glide clearance";
-            else if (maneuvering) state = "Low-speed control";
+            else if (maneuvering) state = closeObjectOverride ? "Sprint close-object override" : "Close-object control";
             else if (step.terrainLimited() && ahead != null && ahead.reason() == FlightCorridor.Reason.OBSTACLE) {
                 state = "Obstacle limited";
                 obstacleLimitedTicks++;
@@ -389,7 +401,7 @@ public final class AdaptiveElytraFly extends Module {
             Motion output = controller.output();
             FlightCorridor.Result actual = FlightCorridor.inspect(mc.player.getBoundingBox(), toVec(output),
                 output.length() + margin.get(), releaseSafeCollisions && maneuvering
-                    && AdaptiveFlightStep.harmless(output) ? chunksOnlyProbe() : probe);
+                    && output.length() <= releaseSpeed ? chunksOnlyProbe() : probe);
             chunkChecks += actual.chunkChecks();
             double allowed = Math.max(0, actual.clearDistance() - margin.get());
             if (allowed < output.length()) controller.accept(scale(output, allowed / output.length()));
@@ -463,6 +475,7 @@ public final class AdaptiveElytraFly extends Module {
         movementTick = Integer.MIN_VALUE;
         state = why;
         maneuvering = false;
+        closeObjectOverride = false;
         adaptiveMaximum = 0;
     }
 
@@ -491,7 +504,7 @@ public final class AdaptiveElytraFly extends Module {
         frameAverageMs = framePeakMs = measuredSpeed = 0;
         adaptiveMaximum = 0;
         maneuvering = false;
-        harmlessPhysicsAtTickStart = false;
+        closeObjectOverride = false;
         samplePosition = null;
         lastControlledPosition = null;
         sampleTime = 0;
@@ -670,8 +683,20 @@ public final class AdaptiveElytraFly extends Module {
         return Double.isFinite(vec.x) && Double.isFinite(vec.y) && Double.isFinite(vec.z)
             ? new Motion(vec.x, vec.y, vec.z) : Motion.ZERO;
     }
-    private static boolean harmless(Vec3 motion) {
-        return motion.length() <= AdaptiveFlightStep.SAFE_MANEUVER_SPEED;
+    private Motion resolveCollision(Motion motion) {
+        Vec3 requested = toVec(motion);
+        List<VoxelShape> entities = mc.level.getEntityCollisions(mc.player,
+            mc.player.getBoundingBox().expandTowards(requested));
+        return toMotion(Entity.collideBoundingBox(mc.player, requested,
+            mc.player.getBoundingBox(), mc.level, entities));
+    }
+    private static boolean within(Vec3 motion, double maximum) {
+        return motion.length() <= maximum;
+    }
+    private static double difference(Motion a, Motion b) {
+        return Math.sqrt((a.x() - b.x()) * (a.x() - b.x())
+            + (a.y() - b.y()) * (a.y() - b.y())
+            + (a.z() - b.z()) * (a.z() - b.z()));
     }
     private static Motion scale(Motion motion, double factor) {
         return new Motion(motion.x() * factor, motion.y() * factor, motion.z() * factor);

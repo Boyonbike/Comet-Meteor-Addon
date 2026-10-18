@@ -14,6 +14,8 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 /** Temporarily exchanges a main-inventory item with a hotbar slot and later reverses the exchange. */
 public final class InventorySlotLoan {
+    private static final int WEAPON_DISPLAY_TICKS = 4;
+
     public enum Owner { AutoTool, AutoWeapon }
 
     public static final InventorySlotLoan INSTANCE = new InventorySlotLoan();
@@ -24,6 +26,7 @@ public final class InventorySlotLoan {
     private ItemStack borrowed = ItemStack.EMPTY;
     private ItemStack displaced = ItemStack.EMPTY;
     private boolean restoreWeapon;
+    private int weaponDisplayTicks;
 
     private InventorySlotLoan() {}
 
@@ -61,7 +64,12 @@ public final class InventorySlotLoan {
     }
 
     public void restoreAfterAttack() {
-        if (owner == Owner.AutoWeapon) restoreWeapon = true;
+        if (owner == Owner.AutoWeapon) {
+            restoreWeapon = true;
+            // Keep the borrowed weapon selected long enough for the hand renderer and server inventory
+            // processing to observe it. A new attack still restores/re-scores immediately in prepare().
+            weaponDisplayTicks = WEAPON_DISPLAY_TICKS;
+        }
     }
 
     public void restore(Owner requestedBy) {
@@ -111,7 +119,8 @@ public final class InventorySlotLoan {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (owner == Owner.AutoWeapon && (restoreWeapon || !Modules.get().isActive(AutoWeapon.class))) restore();
+        if (owner == Owner.AutoWeapon && !Modules.get().isActive(AutoWeapon.class)) restore();
+        else if (owner == Owner.AutoWeapon && restoreWeapon && weaponDisplayTicks-- <= 0) restore();
         else if (owner == Owner.AutoTool
             && (!Modules.get().isActive(AutoTool.class) || mc.options == null || !mc.options.keyAttack.isDown())) restore();
     }
@@ -128,5 +137,6 @@ public final class InventorySlotLoan {
         borrowed = ItemStack.EMPTY;
         displaced = ItemStack.EMPTY;
         restoreWeapon = false;
+        weaponDisplayTicks = 0;
     }
 }

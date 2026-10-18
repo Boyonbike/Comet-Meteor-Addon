@@ -1,27 +1,26 @@
 # Comet by Boyonabike — 0.23.9
 
-Meteor Client addon for Minecraft **26.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
+Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
-- **Flight:** **adaptive-elytra-fly**, **baritone-elytra**, **stash-hunter-elytrafly**, **elytra-replace**, **elytra-log**.
+- **Flight:** **adaptive-elytra-fly**, **baritone-elytra**, **elytra-replace**, **elytra-log**.
 - **Ground movement:** Meteor's built-in **speed**, with adaptive controls.
 - **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **shulker-icons**, **trajectories**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**.
 - **Building:** **scaffold**, **block-coat**, **smart-sponge**, **safe-fast-use**.
-- **Combat and inventory:** **auto-tool**, **auto-weapon**, **auto-totem**, **inventory-tweaks**.
+- **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**.
 - **Diagnostics:** **home-packet-log**.
 
-Requires Meteor 26.2, Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap, **baritone-elytra** needs Baritone, and **stash-hunter-elytrafly** needs Stash-Hunter. Area Spiral Search and Trail Hunter have been removed. The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.23.9.jar`.
+Requires Meteor 26.1.2, Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Area Spiral Search and Trail Hunter have been removed. The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.23.9.jar`.
 
-**Speed**, **Scaffold**, **Trajectories**, **Auto Tool**, **Auto Weapon**, **Auto Totem** and **Inventory Tweaks** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
+**Speed**, **Scaffold**, **Trajectories**, **Auto Tool**, **Auto Weapon** and **Inventory Tweaks** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
 | Original module | Comet upgrades in its dropdown |
 | --- | --- |
-| Elytra Fly | Adaptive Elytra Fly, Baritone Elytra, Stash-Hunter ElytraFly, Elytra Replace, Elytra Log |
+| Elytra Fly | Adaptive Elytra Fly, Baritone Elytra, Elytra Replace, Elytra Log |
 | Storage ESP | Fast Storage ESP |
 | Fast Use | Safe Fast Use |
 | Waypoints | Xaero Waypoints, Waypoint Delete |
-| Stash-Hunter (when installed) | Stash-Hunter ElytraFly |
 
-Expand **Comet**, then left-click an upgrade to toggle it or right-click it to open its full settings. These links use the same module instances as the Comet category, so changes apply from either location.
+Expand **Comet**, then left-click an upgrade to toggle it or use its **Settings** button to open the full settings directly. Right-clicking the upgrade still works too. These links use the same module instances as the Comet category, so changes apply from either location.
 
 Right-click a Comet module to open its settings, then click a section header or arrow to expand its dropdown. Setting sections start collapsed; saved section states are respected when loading a configuration. Adaptive Elytra Fly also has a **Flight Diagnostics** dropdown, and Fast Storage ESP puts **Clear Opened Containers** under **Actions**. The **Comet** sections added to Meteor's Scaffold and Trajectories also start collapsed.
 
@@ -96,16 +95,6 @@ When the winning item is outside the hotbar, Comet swaps it with the currently s
 
 Only one temporary loan can exist at a time. A new loan first restores the old one. If the player or another module manually changes either endpoint, Comet abandons its remembered exchange instead of moving unrelated items. Live server testing is still needed for click/attack acceptance and very high latency.
 
-## Auto Totem optimization
-
-Comet automatically optimizes Meteor's existing **auto-totem** in the **Combat** category. Enable and configure that module normally; its Smart/Strict modes, health threshold, explosion/fall checks, elytra option, item count, Offhand lock and delay after a pop remain in Meteor.
-
-Strict mode skips damage prediction. Smart mode also skips it when the configured elytra condition already applies or health plus absorption is already at/below the threshold. Otherwise it runs Meteor's current damage prediction on every eligible tick; threat checks are never cached or throttled.
-
-Equipping from an ordinary hotbar/main-inventory slot uses one normal offhand SWAP click instead of two pickup clicks (three when returning a displaced offhand item). The swap preserves the cursor and returns the old offhand item to the source slot. Source slots are resolved from the open menu's actual player inventory, so chests and shulkers do not use the player's own inventory-menu slot numbers. Creative mode and unsupported/restricted slot layouts retain Meteor's original move handling. No equip action is sent when a totem is already in the offhand.
-
-Regression checks cover decision equivalence and menu-slot resolution, and a Fabric prelaunch check verifies the mixin against Meteor 26.2-35. Live server testing is still needed for swap acceptance and repeated pops; this does not guarantee survival or a measured FPS improvement.
-
 ## Adaptive Elytra Fly
 
 Enable **adaptive-elytra-fly** in **Comet**, with Meteor's **Elytra Fly** set to **Vanilla**. If Vanilla is selected, enabling Comet's module in a world also enables Elytra Fly. Set horizontal and vertical cruise/Sprint percentages in Comet's **General** dropdown. Meteor's **horizontal-speed** and **vertical-speed** act as zero/nonzero switches for their respective axes; their numeric values no longer set adaptive movement speed. Meteor's **fall-multiplier**, takeoff, autopilot, firework and inventory settings remain available. Comet supplies its own acceleration and braking instead of Meteor's scalar acceleration settings.
@@ -131,7 +120,7 @@ The module list shows current activity and observed horizontal progress over abo
 
 Terrain work is bounded: a current-body overlap check and one lookahead scan per movement tick, at most 40 swept segments including refinement, with non-loading chunk checks before block reads. A blocked move can add a short chunk-only check for the crawl fallback. Following the server's glide costs one short collision check per gliding tick. The guard adds two per moving tick while that glide could hurt, and at most 26 in total when it has to shorten a move or step back near a wall. Extra SELF movements in the same tick use a short guard without advancing acceleration again. No whole-world chunk scans or background chunk generation are performed.
 
-Stash-Hunter's Comet integration continues to steer through normal Meteor keys/settings, so adaptive control applies to its Vanilla flights too, using Comet's **cruise-max-speed** for horizontal speed. Comet's scripted landings and Meteor's Shift auto-hover yield to Meteor's original handling; Shift auto-hover can take priority over boosted descent. Packet, Pitch40, Bounce, Freecam, non-gliding movement and stopped fluid flight keep their original handling. Disabling adaptive control leaves Meteor's Elytra Fly enabled and immediately returns its movement to Meteor. Baritone's normal firework flight is unaffected.
+Comet's scripted landings and Meteor's Shift auto-hover yield to Meteor's original handling; Shift auto-hover can take priority over boosted descent. Packet, Pitch40, Bounce, Freecam, non-gliding movement and stopped fluid flight keep their original handling. Disabling adaptive control leaves Meteor's Elytra Fly enabled and immediately returns its movement to Meteor. Baritone's normal firework flight is unaffected.
 
 Start with Timer at **1×** and low horizontal and vertical cruise percentages, then compare retained progress and the diagnostics as you increase speed. Keep Meteor's horizontal and vertical speeds above zero for the axes you want to control. These are starting settings, not a verified 6b6t speed cap. Live Minecraft/6b6t validation is still required for server acceptance, actual frame performance and interaction with other movement addons.
 
@@ -205,7 +194,7 @@ All modes keep player-body and entity collision checks, world-bound checks, visi
 A separate module. Put **dry sponges** in your hotbar or offhand.
 
 - Searches a cube (**search-radius**, default 5) for valid, unobstructed target cells with a visible, reachable support.
-- Scores each spot by the connected drainable water it would absorb: water sources and flowing water, waterlogged blocks, kelp and seagrass. It models vanilla 26.2's six-step absorption traversal and 64-cell cap, counting water displaced by the sponge itself. Waterlogged solids are drained by adjacent placement, never replaced or mined.
+- Scores each spot by the connected drainable water it would absorb: water sources and flowing water, waterlogged blocks, kelp and seagrass. It models vanilla 26.1.2's six-step absorption traversal and 64-cell cap, counting water displaced by the sponge itself. Waterlogged solids are drained by adjacent placement, never replaced or mined.
 - Places the highest-scoring reachable spot (ties go to the closer one). This is a best-next-placement heuristic, not a minimum-sponge solution; flowing water and server changes can alter results.
 - Places one sponge, waits for the server update (up to 40 ticks), lets it settle, then rescans (**scan-interval**, default 5 ticks).
 - **break-wet-sponges** (default off) mines only server-confirmed wet sponges this module placed during the current activation, with the currently held tool. Drops must be picked up normally.
@@ -257,7 +246,7 @@ A separate module, **baritone-elytra**. It needs Baritone: Meteor's `baritone-me
 - **restock-fireworks** (default on) moves a stack of fireworks into the hotbar whenever the hotbar has none. Unless its `allowInventory` setting is on, Baritone fires fireworks only from the hotbar, yet counts the whole inventory when deciding whether to land. Without restocking it can run dry with fireworks left in the inventory. Comet uses an empty hotbar slot, otherwise slot 9 (8 if 9 is selected); the item there goes to where the fireworks were.
 - Meteor's **ElytraFly** is turned off for the flight and back on afterwards. Baritone only works with vanilla elytra movement.
 - `#goto` or `#goal` during a flight redirects it (Baritone does this), and Comet walks to the new goal after landing. `#stop` cancels a flight; in the air you keep gliding with nobody steering.
-- Flights started some other way, with `#elytra` or by another addon such as Stash-Hunter, only get take-off help and firework restocking. Comet doesn't walk after them, change your elytra or chestplate, toggle ElytraFly or report how they ended; whatever started the flight handles those.
+- Flights started some other way, with `#elytra` or by another addon, only get take-off help and firework restocking. Comet doesn't walk after them, change your elytra or chestplate, toggle ElytraFly or report how they ended; whatever started the flight handles those.
 - Turning the module off stops a flight that hasn't taken off. One already in the air keeps going until it lands or you `#stop` it.
 
 The module list shows `Taking off`, then the remaining distance in blocks.
@@ -289,27 +278,6 @@ A separate module, **elytra-log**. While you're flying, once the elytra you're w
 - After logging you out it turns itself off, so opening the elytra after you rejoin doesn't log you out again. It also turns off Meteor's AutoReconnect, which would put you straight back in the air.
 - You rejoin where you logged out, in mid-air. Open the elytra straight away and glide down.
 - For Baritone elytra flights, keep **durability** above Baritone's `elytraMinimumDurability` (default 5), or Baritone lands before you're logged out.
-
-## Stash-Hunter ElytraFly
-
-A separate module, **stash-hunter-elytrafly**, for the Stash-Hunter addon. It is built against Stash-Hunter 0.26.2, the 26.2 port on its `main` branch. With it on, Stash-Hunter still decides where to go: grid strips, new-chunk trails and edge following. Meteor's **ElytraFly** does the flying, instead of Baritone's firework flight. Set ElytraFly's mode to Vanilla, Packet or Pitch40 and start Stash-Hunter as usual.
-
-Stash-Hunter moves the player in one step, which either starts Baritone's elytra flight (fireworks) or sets your speed itself. While the module is on, Comet takes that step over. It turns you towards Stash-Hunter's next point at up to **turn-speed** degrees per tick (default 10) and works ElytraFly's keys. Each mode behaves differently:
-- **Vanilla:** holds forward, plus jump or sneak to stay within 2 blocks of Stash-Hunter's flight height (`flightAltitude`, default 160). ElytraFly's **horizontal-speed** and **vertical-speed** set how fast.
-- **Packet:** holds forward, plus jump whenever you're below the flight height, because Packet sinks whenever jump is up.
-- **Pitch40:** only steers. ElytraFly keeps you between its **pitch40-lower-bounds** and **pitch40-upper-bounds** (default 180–220) rather than at Stash-Hunter's height. You must already be gliding above the upper bound, because Pitch40 can't take off.
-- **Bounce** is for highways and doesn't suit this; chat says so.
-
-Other behaviour:
-- **take-off** (default on): when Stash-Hunter sets off from the ground, Comet jumps and opens the elytra, in Vanilla and Packet. It makes up to 3 attempts, as baritone-elytra does.
-- On taking over, Comet stops any Baritone flight or walk Stash-Hunter has already started, and turns ElytraFly on if it is off. Stash-Hunter turns ElytraFly off itself when it stops.
-- Keys Comet holds are given back to your keyboard when Stash-Hunter stops moving or the module is turned off.
-- Stash-Hunter's **StuckDetector** treats "Baritone has no path" as being stuck and toggles ElytraFly every 10 seconds to recover. Baritone isn't flying here, so Comet skips that check while it steers. The detector's check for a gliding player who isn't moving still runs.
-- Turning the module off mid-flight hands movement back to Stash-Hunter on its next tick. With Stash-Hunter's `useBaritonePathing` on (its default), that means Baritone's firework flight again.
-- No rockets are fired unless ElytraFly's own **auto-pilot** with **use-fireworks** is on.
-- The hooks attach only when Stash-Hunter is installed. If a later Stash-Hunter version renames the movement step, chat says so after 5 seconds of flight, and Stash-Hunter flies the way it did before.
-
-The module list shows `Taking off`, then the distance to Stash-Hunter's next point (or `ElytraFly off`). Whether ElytraFly's Vanilla or Packet modes get past 6b6t's anticheat is untested; Pitch40 stays closest to normal elytra physics.
 
 ## Server pacing and packets
 
@@ -348,9 +316,9 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.23.9.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 35, `26.2-20261009.074120-35`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.2-20260813.152229-1`, the same jar as `baritone-meteor-26.2.jar`) from Meteor's Maven, as compile-only dependencies. XaeroPlus (`2.36.6+fabric-26.2`) is also compile-only from Modrinth; none is bundled. The Stash-Hunter hooks are mixins that need nothing at build time and are skipped when Stash-Hunter isn't installed.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.23.9.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies. XaeroPlus (`2.36.6+fabric-26.1.2`) is also compile-only from Modrinth; none is bundled.
 
-628 automated tests cover:
+633 automated tests cover:
 
 - shulker icons: total item quantities across slots, deterministic ties, complete and partial combos, rule priority, disabled rules, empty contents, per-rule styles and colours, model geometry identity and colour isolation between draws
 - retained Storage ESP batches, 10,000-entry unchanged stashes, chunk unload/reload identity, camera movement at world-border coordinates and frustum bounds
@@ -375,6 +343,6 @@ Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `bui
 - the lead log and highway geometry
 - whole-flight simulations: trails crossed at every angle followed to their base, wide-band centring, bends, realistic worlds hunted without landing, and noise never followed
 
-A Fabric prelaunch check confirms the adaptive flight mixin applies to Meteor 26.2-35. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), mid-flight elytra swaps, Elytra Log's logout, Stash-Hunter ElytraFly (hooks, steering, height keeping and take-off).
+The release builds and its automated tests pass against Meteor 26.1.2-42. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), mid-flight elytra swaps and Elytra Log's logout.
 
 Source follows the official Meteor addon template and API, under the included CC0 license.

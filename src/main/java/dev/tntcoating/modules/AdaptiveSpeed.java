@@ -213,7 +213,7 @@ public final class AdaptiveSpeed {
         if (owner.vanillaOnGround.get() && !mc.player.onGround()) return "Ground only";
         if (!owner.inLiquids.get() && (mc.player.isInWater() || mc.player.isInLava())) return "In liquid";
         if (Modules.get().isActive(Freecam.class)) return "Freecam";
-        if (mc.gui.screen() != null || !mc.isWindowActive()) return "Input paused";
+        if (mc.screen != null || !mc.isWindowActive()) return "Input paused";
         return null;
     }
 

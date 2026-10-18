@@ -27,7 +27,7 @@ public final class AdaptiveEngineHud {
     }
 
     private static void render(Render2DEvent event, int x, String title, List<String> lines) {
-        if (mc.player == null || mc.level == null || mc.gui.screen() != null || mc.gui.hud.isHidden()) return;
+        if (mc.player == null || mc.level == null || mc.screen != null || mc.options.hideGui) return;
         int width = width(title, lines);
         int height = PADDING * 2 + LINE_HEIGHT * (lines.size() + 1);
         int y = MARGIN;
