@@ -188,7 +188,8 @@ class AdaptiveFlightLearningTest {
             "a teleport after switching profiles cannot punish the previous server's movement");
         for (int tick = 0; tick < 25; tick++) learning.tick(40, .01);
         assertEquals(otherServer, learning.remembered());
-        assertEquals(otherServer, learning.limits());
+        // Without correction guidance, slower remembered vertical speeds start at the configured initial speed.
+        assertEquals(new Limits(64, .75, .75, .03), learning.limits());
         assertEquals(Limits.UNKNOWN, learning.ceilings());
     }
 

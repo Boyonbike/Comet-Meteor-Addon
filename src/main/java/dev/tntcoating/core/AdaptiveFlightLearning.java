@@ -48,13 +48,16 @@ public final class AdaptiveFlightLearning {
         Objects.requireNonNull(limits, "limits");
         guidance = Objects.requireNonNull(correctionGuidance, "correctionGuidance");
         horizontal = limits.horizontal();
-        ascent = limits.ascent() == 64 ? initialVertical : limits.ascent();
-        descent = limits.descent() == 64 ? initialVertical : limits.descent();
+        // A direction this server never corrected has no evidence of a limit below the configured start.
+        ascent = limits.ascent() == 64 ? initialVertical
+            : correctionGuidance.ascent() >= 64 ? Math.max(initialVertical, limits.ascent()) : limits.ascent();
+        descent = limits.descent() == 64 ? initialVertical
+            : correctionGuidance.descent() >= 64 ? Math.max(initialVertical, limits.descent()) : limits.descent();
         total = limits.total();
         verticalAcceleration = Math.min(configuredAcceleration, limits.verticalAcceleration());
         provenHorizontal = limits.horizontal() == 64 ? 0 : horizontal;
-        provenAscent = limits.ascent() == 64 ? 0 : ascent;
-        provenDescent = limits.descent() == 64 ? 0 : descent;
+        provenAscent = limits.ascent() == 64 ? 0 : limits.ascent();
+        provenDescent = limits.descent() == 64 ? 0 : limits.descent();
         provenTotal = total == 64 ? 0 : total;
         observedHorizontal = provenHorizontal;
         observedAscent = provenAscent;

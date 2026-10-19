@@ -11,6 +11,8 @@ public final class AdaptiveFlightStep {
     // Vanilla wall damage is (lost horizontal speed * 10) - 3, positive only above .3.
     // Use the full vector and a small buffer so a harmless crawl also stays slow vertically.
     public static final double SAFE_MANEUVER_SPEED = 0.3 - 1e-7;
+    /** Descent speed at touchdown, in blocks per tick: VolytraFly's tested anti-slam floor. */
+    public static final double LANDING_SPEED = .2;
 
     private AdaptiveFlightStep() {}
 
@@ -31,7 +33,16 @@ public final class AdaptiveFlightStep {
      */
     public record Controls(boolean sprintBoost, double maximumFraction, double verticalFraction, int verticalInput,
                            boolean releaseSafeCollisions, ServerGlide.Context glide,
-                           AdaptiveFlightMemory.Limits limits, double collisionReleaseSpeed) {
+                           AdaptiveFlightMemory.Limits limits, double collisionReleaseSpeed,
+                           Blend blend, Boost boost) {
+        /** Constant-shape vertical control without unlimited boost, as before the blended system. */
+        public Controls(boolean sprintBoost, double maximumFraction, double verticalFraction, int verticalInput,
+                        boolean releaseSafeCollisions, ServerGlide.Context glide,
+                        AdaptiveFlightMemory.Limits limits, double collisionReleaseSpeed) {
+            this(sprintBoost, maximumFraction, verticalFraction, verticalInput, releaseSafeCollisions, glide,
+                limits, collisionReleaseSpeed, null, null);
+        }
+
         public Controls {
             if (!Double.isFinite(maximumFraction) || maximumFraction < 0 || maximumFraction > 1) {
                 throw new IllegalArgumentException("Horizontal maximum fraction must be in [0, 1].");
@@ -44,6 +55,49 @@ public final class AdaptiveFlightStep {
             }
             if (!Double.isFinite(collisionReleaseSpeed) || collisionReleaseSpeed <= 0) {
                 throw new IllegalArgumentException("Collision release speed must be finite and positive.");
+            }
+        }
+    }
+
+    /**
+     * The blended vertical system and unified braking. Vertical percentages are of {@code verticalMaximum} (still
+     * lowered by learned ascent/descent after setbacks); climbing and descending speed up along the boost curve with
+     * {@code rampStep}, scaled by the learned share of the configured vertical acceleration, and slow down along its
+     * mirror; momentum above a lowered ceiling (such as just after boost) brakes down to it instead of snapping.
+     * Terrain braking follows the controller's {@link Braking} policy, and descent towards a floor
+     * {@code floorClearance} blocks below slows to {@link #LANDING_SPEED} before touchdown.
+     */
+    public record Blend(double verticalMaximum, double rampStep, double accelerationScale, double floorClearance) {
+        /** No known floor below. */
+        public Blend(double verticalMaximum, double rampStep, double accelerationScale) {
+            this(verticalMaximum, rampStep, accelerationScale, Double.POSITIVE_INFINITY);
+        }
+
+        public Blend {
+            if (Double.isNaN(floorClearance) || floorClearance < 0) {
+                throw new IllegalArgumentException("Floor clearance cannot be negative.");
+            }
+            if (!Double.isFinite(verticalMaximum) || verticalMaximum <= 0) {
+                throw new IllegalArgumentException("Vertical maximum must be finite and positive.");
+            }
+            if (!Double.isFinite(rampStep) || rampStep < 0) {
+                throw new IllegalArgumentException("Vertical ramp step must be finite and nonnegative.");
+            }
+            if (!Double.isFinite(accelerationScale) || accelerationScale < 0 || accelerationScale > 1) {
+                throw new IllegalArgumentException("Vertical acceleration scale must be in [0, 1].");
+            }
+        }
+    }
+
+    /**
+     * Unlimited boost ramp speeds in blocks per tick; zero leaves that axis on its adaptive limits. A boosted axis
+     * ignores learned limits, the correction ceiling and the adaptive engine maximum, but not the terrain,
+     * chunk and server-glide guards.
+     */
+    public record Boost(double horizontal, double vertical) {
+        public Boost {
+            if (!Double.isFinite(horizontal) || horizontal < 0 || !Double.isFinite(vertical) || vertical < 0) {
+                throw new IllegalArgumentException("Boost speeds must be finite and nonnegative.");
             }
         }
     }
@@ -97,12 +151,19 @@ public final class AdaptiveFlightStep {
         double verticalFraction = controls == null ? 1 : controls.verticalFraction();
         double horizonMaximum = maximumSpeed(controller.settings().braking(), lookahead, margin);
         AdaptiveFlightMemory.Limits learned = controls == null ? null : controls.limits();
+        Blend blend = controls == null ? null : controls.blend();
+        Boost boost = controls == null ? null : controls.boost();
         boolean horizontalEnabled = horizontalCeiling > 0;
         boolean verticalEnabled = verticalCeiling > 0;
+        boolean boostHorizontal = boost != null && boost.horizontal() > 0 && horizontalEnabled
+            && requested.horizontalLength() > 0;
+        boolean boostVertical = boost != null && boost.vertical() > 0 && verticalEnabled
+            && controls.verticalInput() != 0;
+        boolean boosted = boostHorizontal || boostVertical;
         Motion previous = controller.output();
         if (controls != null) {
             double maximum = horizonMaximum * fraction;
-            double horizontalMaximum = learned == null ? maximum
+            double horizontalMaximum = boostHorizontal ? boost.horizontal() : learned == null ? maximum
                 : Math.min(horizonMaximum, Math.min(learned.horizontal(), learned.total())) * fraction;
             double horizontal = requested.horizontalLength();
             if (horizontalCeiling > 0) {
@@ -110,22 +171,28 @@ public final class AdaptiveFlightStep {
                 if (horizontal > 0) requested = new Motion(requested.x() / horizontal * horizontalMaximum,
                     requested.y(), requested.z() / horizontal * horizontalMaximum);
             } else requested = new Motion(0, requested.y(), 0);
-            double verticalMaximum = horizonMaximum * verticalFraction;
-            if (controls.verticalInput() != 0 && verticalCeiling > 0 && (learned != null || sprintBoost)) {
-                double directionalMaximum = learned == null ? verticalMaximum
-                    : Math.min(horizonMaximum, Math.min(learned.total(),
-                        controls.verticalInput() > 0 ? learned.ascent() : learned.descent()))
-                        * verticalFraction;
-                requested = new Motion(requested.x(), controls.verticalInput() * directionalMaximum, requested.z());
-                verticalCeiling = directionalMaximum;
+            double verticalBase = blend == null ? horizonMaximum : Math.min(horizonMaximum, blend.verticalMaximum());
+            double verticalMaximum = verticalBase * verticalFraction;
+            if (boostVertical) {
+                requested = new Motion(requested.x(), controls.verticalInput() * boost.vertical(), requested.z());
+                verticalCeiling = boost.vertical();
+            } else {
+                if (controls.verticalInput() != 0 && verticalCeiling > 0 && (learned != null || sprintBoost)) {
+                    double directionalMaximum = learned == null ? verticalMaximum
+                        : Math.min(verticalBase, Math.min(learned.total(),
+                            controls.verticalInput() > 0 ? learned.ascent() : learned.descent()))
+                            * verticalFraction;
+                    requested = new Motion(requested.x(), controls.verticalInput() * directionalMaximum, requested.z());
+                    verticalCeiling = directionalMaximum;
+                }
+                // A zero maximum stops every axis, including an existing vertical glide.
+                verticalCeiling = Math.min(verticalCeiling, verticalMaximum);
             }
-            // A zero maximum stops every axis, including an existing vertical glide.
-            verticalCeiling = Math.min(verticalCeiling, verticalMaximum);
             requested = new Motion(requested.x(), Math.max(-verticalCeiling,
                 Math.min(verticalCeiling, requested.y())), requested.z());
-            if (learned != null) requested = new Motion(requested.x(), Math.max(-learned.descent(),
+            if (learned != null && !boostVertical) requested = new Motion(requested.x(), Math.max(-learned.descent(),
                 Math.min(learned.ascent(), requested.y())), requested.z());
-            if (learned != null) {
+            if (learned != null && !boosted) {
                 // A mixed flight request shares the server's displacement budget. Percentages
                 // remain fractions of attainable speed, including when one axis is released.
                 double activeFraction = Math.max(requested.horizontalLength() > 0 ? fraction : 0,
@@ -154,31 +221,70 @@ public final class AdaptiveFlightStep {
             : Math.max(horizontalCeiling, previous.horizontalLength());
         double attainableMaximum = Math.min(horizonMaximum, learned == null ? MAX_HORIZONTAL_SPEED : learned.total())
             * controller.speedFactor();
-        Motion blended = controller.step(requested, Math.hypot(steppingHorizontal, steppingVertical), sprintBoost,
-            attainableMaximum);
+        // Boost turns against the adaptive engine maximum too, so its turn authority keeps growing with speed.
+        double turnReference = boosted ? horizonMaximum : attainableMaximum;
+        // The blended vertical is stepped separately below, so the controller's whole vector budget goes to
+        // horizontal acceleration and steering instead of being shared with a climb.
+        boolean separateVertical = learned != null && (blend != null || boostVertical);
+        Motion forController = separateVertical ? new Motion(requested.x(), previous.y(), requested.z()) : requested;
+        Motion blended = controller.step(forController, Math.hypot(steppingHorizontal, steppingVertical), sprintBoost,
+            turnReference, boostHorizontal);
         double horizontal = blended.horizontalLength();
-        double horizontalHardCeiling = learned == null ? horizontalCeiling
+        double horizontalHardCeiling = boostHorizontal ? boost.horizontal() : learned == null ? horizontalCeiling
             : !horizontalEnabled || fraction == 0 ? 0
                 : Math.min(horizonMaximum, Math.min(learned.horizontal(), learned.total())) * controller.speedFactor();
+        if (blend != null && !boostHorizontal && horizontalEnabled && fraction > 0)
+            horizontalHardCeiling = decaying(horizontalHardCeiling, horizontal, previous.horizontalLength());
         double horizontalFactor = horizontal > horizontalHardCeiling ? horizontalHardCeiling / horizontal : 1;
         double y = Math.max(-verticalCeiling, Math.min(verticalCeiling, blended.y()));
         if (learned != null) {
-            boolean slowing = Math.abs(blended.y()) < Math.abs(previous.y()) || blended.y() * previous.y() < 0;
-            double delta = slowing ? Math.min(controller.settings().braking(), 2 * learned.verticalAcceleration())
-                : Math.min(controller.settings().acceleration(), learned.verticalAcceleration());
-            y = previous.y() + Math.max(-delta, Math.min(delta, blended.y() - previous.y()));
-            double up = Math.min(horizonMaximum, learned.ascent()) * controller.speedFactor();
-            double down = Math.min(horizonMaximum, learned.descent()) * controller.speedFactor();
+            double target = separateVertical ? requested.y() : blended.y();
+            boolean slowing = Math.abs(target) < Math.abs(previous.y()) || target * previous.y() < 0;
+            double delta;
+            if (slowing) {
+                delta = Math.min(controller.settings().braking(), 2 * learned.verticalAcceleration());
+                // Slowing mirrors the vertical ramp: firm from fast climbs and dives, gentle near a stop.
+                if (blend != null) delta = Math.max(delta,
+                    blend.rampStep() * Math.abs(previous.y()) / blend.verticalMaximum());
+            } else if (boostVertical) {
+                delta = Double.POSITIVE_INFINITY; // The vertical boost ramp is the acceleration limit.
+            } else {
+                delta = Math.min(controller.settings().acceleration(), learned.verticalAcceleration());
+                if (blend != null) delta = Math.max(delta, BoostRamp.gain(Math.abs(previous.y()), blend.rampStep(),
+                    blend.verticalMaximum()) * blend.accelerationScale());
+            }
+            y = previous.y() + Math.max(-delta, Math.min(delta, target - previous.y()));
+            double up, down;
+            if (boostVertical) up = down = boost.vertical();
+            else {
+                double verticalBase = blend == null ? horizonMaximum : Math.min(horizonMaximum, blend.verticalMaximum());
+                up = Math.min(verticalBase, learned.ascent()) * controller.speedFactor();
+                down = Math.min(verticalBase, learned.descent()) * controller.speedFactor();
+                if (blend != null) {
+                    up = decaying(up, y, previous.y());
+                    down = decaying(down, -y, -previous.y());
+                }
+            }
             y = !verticalEnabled || verticalFraction == 0 ? 0 : Math.max(-down, Math.min(up, y));
+            // Soft landing: brake a descent as the floor approaches, as hard as needed, and touch down slowly.
+            if (blend != null && y < 0 && Double.isFinite(blend.floorClearance())) {
+                double descent = Math.max(LANDING_SPEED, controller.settings().brakingModel()
+                    .allowed(Math.max(0, -previous.y()), blend.floorClearance()));
+                y = Math.max(y, -descent);
+            }
         }
         Motion limited = new Motion(blended.x() * horizontalFactor,
             y,
             blended.z() * horizontalFactor);
         // Retain the shared hard ceiling during turns and existing momentum. Percentages
         // affect the target above so reducing cruise speed still uses normal braking.
-        if (learned != null && limited.length() > learned.total() * controller.speedFactor())
-            limited = limited.scaled(learned.total() * controller.speedFactor() / limited.length());
-        if (learned != null) controller.accept(limited);
+        // Boost is outside the learned displacement budget.
+        if (learned != null && !boosted) {
+            double totalCeiling = learned.total() * controller.speedFactor();
+            if (blend != null) totalCeiling = decaying(totalCeiling, limited.length(), previous.length());
+            if (limited.length() > totalCeiling) limited = limited.scaled(totalCeiling / limited.length());
+        }
+        if (learned != null || boosted) controller.accept(limited);
         double speed = limited.length();
         FlightCorridor.Probe chunksOnly = probe == null ? null : FlightCorridor.Probe.chunksOnly(probe);
         ServerGlide.Context glide = controls == null || controller.pauseTicksRemaining() > 0 ? null : controls.glide();
@@ -207,12 +313,23 @@ public final class AdaptiveFlightStep {
             ? Motion.ZERO : ServerGlide.reach(glide);
         double glideMargin = Math.max(0, (reach.x() * limited.x() + reach.z() * limited.z()) / speed);
         double clearance = Math.max(0, corridor.clearDistance() - margin - glideMargin);
-        double allowed = FlightCorridor.safeSpeed(controller.settings().braking(), clearance);
-        // A maximum-speed request can exceed the finite terrain horizon even after
-        // backoff. Reduce the attainable ceiling too, so sprint cannot mask corrections.
-        if (sprintBoost || controls != null) allowed *= controller.speedFactor();
-        if (learned != null) allowed = Math.min(allowed, learned.total() * controller.speedFactor());
-        double adaptiveMaximum = allowed;
+        // Unified braking: the planned envelope, or as hard as needed when something is closer than planned.
+        double allowed = blend == null ? FlightCorridor.safeSpeed(controller.settings().braking(), clearance)
+            : controller.settings().brakingModel().allowed(previous.length(), clearance);
+        double adaptiveMaximum;
+        if (boosted) adaptiveMaximum = allowed;
+        else {
+            // A maximum-speed request can exceed the finite terrain horizon even after
+            // backoff. Reduce the attainable ceiling too, so sprint cannot mask corrections.
+            if (sprintBoost || controls != null) allowed *= controller.speedFactor();
+            if (learned != null) {
+                double totalCeiling = learned.total() * controller.speedFactor();
+                if (blend != null) totalCeiling = decaying(totalCeiling, speed, previous.length());
+                allowed = Math.min(allowed, totalCeiling);
+            }
+            // Speed-scaled braking widens the terrain allowance; adaptive flight still tops out at its own maximum.
+            adaptiveMaximum = controls == null ? allowed : Math.min(allowed, horizonMaximum * controller.speedFactor());
+        }
         // The requested vector and controller output already observe maximumFraction.
         // Applying it again to this physical cap makes fractional cruise speeds begin
         // braking at the adaptive maximum's stopping distance instead of their own.
@@ -244,6 +361,14 @@ public final class AdaptiveFlightStep {
         return new Result(actual, corridor, clipped && corridor.reason() == FlightCorridor.Reason.CLEAR,
             clipped, adaptiveMaximum, safeManeuvering,
             glideClearance != null && glideClearance.limited(), glideClearance == null ? 0 : glideClearance.damage());
+    }
+
+    /**
+     * A ceiling that momentum from above (such as unlimited boost just released) may exceed while braking down
+     * to it: this tick's {@code next} speed is allowed when it is no faster than the {@code previous} one.
+     */
+    private static double decaying(double ceiling, double next, double previous) {
+        return previous > ceiling ? Math.max(ceiling, Math.min(next, previous)) : ceiling;
     }
 
     private static boolean within(Motion motion, double maximum) {

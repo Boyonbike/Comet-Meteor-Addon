@@ -36,14 +36,25 @@ public final class AdaptiveFlightController {
         }
     }
 
+    /**
+     * {@code braking} is the gentlest braking. With a finite {@code brakingHorizon} and a {@code brakingTop} speed,
+     * braking rises with speed so that a stop from that top speed fits the horizon; see {@link Braking}.
+     */
     public record Settings(double acceleration, double braking, double correctionMultiplier,
                            int correctionPauseTicks, int recoveryDelayTicks, double recoveryPerTick,
-                           double turnRate) {
+                           double turnRate, double brakingHorizon, double brakingTop) {
         /** A zero turn rate retains the original momentum-based steering. Rates are degrees per tick. */
         public Settings(double acceleration, double braking, double correctionMultiplier,
                         int correctionPauseTicks, int recoveryDelayTicks, double recoveryPerTick) {
             this(acceleration, braking, correctionMultiplier, correctionPauseTicks,
                 recoveryDelayTicks, recoveryPerTick, 0);
+        }
+
+        /** Constant braking, as before speed-scaled braking existed. */
+        public Settings(double acceleration, double braking, double correctionMultiplier,
+                        int correctionPauseTicks, int recoveryDelayTicks, double recoveryPerTick, double turnRate) {
+            this(acceleration, braking, correctionMultiplier, correctionPauseTicks,
+                recoveryDelayTicks, recoveryPerTick, turnRate, Double.POSITIVE_INFINITY, 0);
         }
 
         public Settings {
@@ -66,6 +77,22 @@ public final class AdaptiveFlightController {
             if (!Double.isFinite(turnRate) || turnRate < 0 || turnRate > 90) {
                 throw new IllegalArgumentException("Turn rate must be in [0, 90] degrees per tick.");
             }
+            if (Double.isNaN(brakingHorizon) || brakingHorizon < 0) {
+                throw new IllegalArgumentException("Braking horizon cannot be negative.");
+            }
+            if (!Double.isFinite(brakingTop) || brakingTop < 0) {
+                throw new IllegalArgumentException("Braking top speed must be finite and nonnegative.");
+            }
+        }
+
+        /** The unified braking policy these settings describe. */
+        public Braking brakingModel() {
+            return new Braking(braking, brakingHorizon, brakingTop);
+        }
+
+        /** The speed braking sheds in one tick from {@code speed} when no obstacle demands more. */
+        public double brakingAt(double speed) {
+            return brakingModel().capacity(speed);
         }
     }
 
@@ -151,6 +178,12 @@ public final class AdaptiveFlightController {
         boosting = false;
     }
 
+    /** Counts corrections for diagnostics only: no backoff, pause or momentum loss. Unlimited boost owns its own recovery. */
+    public void recordCorrection(int count) {
+        if (count < 0) throw new IllegalArgumentException("Correction count cannot be negative.");
+        correctionCount = (int) Math.min(Integer.MAX_VALUE, (long) correctionCount + count);
+    }
+
     /**
      * Approaches the complete requested velocity vector, including vertical
      * movement. Releasing input, reducing speed, and reversing use the braking
@@ -171,6 +204,15 @@ public final class AdaptiveFlightController {
      * actual speed to twice the configured rate at that speed; positive infinity keeps the configured rate.
      */
     public Motion step(Motion requested, double safeDistance, boolean sprintBoost, double turnReference) {
+        return step(requested, safeDistance, sprintBoost, turnReference, false);
+    }
+
+    /**
+     * {@code rampedHorizontal} is unlimited boost: an external speed ramp is the acceleration limit, so whenever
+     * this step is not braking, horizontal speed takes the requested magnitude on the assisted heading at once.
+     */
+    public Motion step(Motion requested, double safeDistance, boolean sprintBoost, double turnReference,
+                       boolean rampedHorizontal) {
         Objects.requireNonNull(requested, "requested");
         if (Double.isNaN(safeDistance) || safeDistance < 0) {
             throw new IllegalArgumentException("Safe distance must be nonnegative or positive infinity.");
@@ -185,11 +227,21 @@ public final class AdaptiveFlightController {
             return output;
         }
 
-        Motion target = requested.scaled(speedFactor);
+        // A ramped (unlimited boost) horizontal target is outside the correction ceiling; its ramp has its own recovery.
+        Motion target = rampedHorizontal ? new Motion(requested.x(), requested.y() * speedFactor, requested.z())
+            : requested.scaled(speedFactor);
         boosting = sprintBoost && target.length() > 0;
         boolean braking = target.length() < output.length() || oppositeDirection(output, target);
-        output = steer(output, target, braking ? settings.braking() : settings.acceleration(),
-            settings.turnRate(), settings.acceleration(), turnReference);
+        output = steer(output, target, braking ? settings.brakingAt(output.length()) : settings.acceleration(),
+            settings.turnRate(), settings.acceleration(), turnReference, rampedHorizontal);
+        double targetHorizontal = target.horizontalLength();
+        double horizontal = output.horizontalLength();
+        if (rampedHorizontal && !braking && targetHorizontal > 0 && horizontal > 0) {
+            double scale = targetHorizontal / horizontal;
+            output = new Motion(output.x() * scale, output.y(), output.z() * scale);
+        } else if (rampedHorizontal && !braking && targetHorizontal > 0) {
+            output = new Motion(target.x(), output.y(), target.z());
+        }
         double length = output.length();
         if (length > safeDistance) {
             output = output.scaled(safeDistance / length);
@@ -238,7 +290,7 @@ public final class AdaptiveFlightController {
     }
 
     private static Motion steer(Motion current, Motion target, double maxDelta, double turnRate,
-                                double steeringAcceleration, double turnReference) {
+                                double steeringAcceleration, double turnReference, boolean beyondReference) {
         double horizontal = current.horizontalLength();
         double targetHorizontal = target.horizontalLength();
         Motion ordinary = approach(current, target, maxDelta);
@@ -262,7 +314,11 @@ public final class AdaptiveFlightController {
         if (Math.abs(difference) >= Math.PI * .75) return ordinary;
         // A constant rate would let sideways drift grow with speed, so faster
         // flight turns harder: twice the configured rate at the engine maximum.
-        double rate = Math.min(MAX_TURN_RATE, turnRate * (1 + Math.min(1, horizontal / turnReference)));
+        // Beyond it, unlimited boost keeps growing the rate with speed, so the
+        // blocks of sideways drift per corner stay what they are at that maximum.
+        double ratio = turnReference > 0 ? horizontal / turnReference : 1;
+        double rate = Math.min(MAX_TURN_RATE,
+            turnRate * (beyondReference && ratio > 1 ? 2 * ratio : 1 + Math.min(1, ratio)));
         double angle = heading + Math.copySign(
             Math.min(Math.abs(difference), Math.toRadians(rate)), difference);
         double x = Math.cos(angle);
