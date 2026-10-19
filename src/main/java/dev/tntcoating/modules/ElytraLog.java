@@ -20,13 +20,26 @@ import net.minecraft.world.entity.EquipmentSlot;
 public final class ElytraLog extends Module {
     private final SettingGroup general = settings.getDefaultGroup();
     private final Setting<Integer> durability = general.add(new IntSetting.Builder().name("durability").description("Log out once the worn elytra has this much durability left or less and there's no spare. What's left is what you glide down with after logging back in, about one point a second. Keep it above Baritone's elytraMinimumDurability (default 5), or Baritone lands first.").defaultValue(20).range(1, 431).sliderRange(1, 100).build());
+    private final Setting<Integer> warningMargin = general.add(new IntSetting.Builder().name("warning-margin").description("Warn in chat once the worn elytra is within this much durability of logging you out with no spare. Zero disables the warning.").defaultValue(10).range(0, 200).sliderRange(0, 50).build());
+    /** The early warning was shown for the elytra currently worn; cleared once it is no longer close. */
+    private boolean warned;
 
     public ElytraLog() { super(TntCoatingAddon.CATEGORY, "elytra-log", "Logs you out mid-flight when your elytra is nearly broken and there's no spare in your inventory."); }
+
+    @Override public void onActivate() { warned = false; }
 
     @EventHandler private void onTick(TickEvent.Pre event) {
         if (mc.player == null || !flying()) return;
         int worn = ElytraReplace.remaining(mc.player.getItemBySlot(EquipmentSlot.CHEST));
-        if (ElytraReplacement.stranded(worn, ElytraReplace.spares(mc.player.getInventory()), durability.get(), spareThreshold())) logOut(worn);
+        int[] spares = ElytraReplace.spares(mc.player.getInventory());
+        if (ElytraReplacement.stranded(worn, spares, durability.get(), spareThreshold())) {
+            logOut(worn);
+            return;
+        }
+        boolean close = warningMargin.get() > 0
+            && ElytraReplacement.stranded(worn, spares, durability.get() + warningMargin.get(), spareThreshold());
+        if (close && !warned) warning("Your elytra has %d durability left and there's no spare; Elytra Log logs you out at %d.", worn, durability.get());
+        warned = close;
     }
 
     /** A spare only saves the flight if something puts it on: elytra-replace when it's on, otherwise you. */

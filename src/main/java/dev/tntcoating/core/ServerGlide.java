@@ -144,10 +144,10 @@ public final class ServerGlide {
             double unsafe = 1;
             for (int step = 0; step < SEARCH_STEPS; step++) {
                 double middle = (safe + unsafe) * 0.5;
-                if (risk(glide, box, scale(movement, middle), chunks) == 0) safe = middle;
+                if (risk(glide, box, movement.scaled(middle), chunks) == 0) safe = middle;
                 else unsafe = middle;
             }
-            return new Clearance(scale(movement, safe), true, 0);
+            return new Clearance(movement.scaled(safe), true, 0);
         }
 
         // Waiting here lets the server's glide reach the wall, so retreat against its heading.
@@ -157,15 +157,15 @@ public final class ServerGlide {
         if (horizontal == 0) return new Clearance(movement, false, moving);
         Motion back = new Motion(-next.x() / horizontal, 0, -next.z() / horizontal);
         double far = horizontal * REACH_SCALE + REACH_PADDING;
-        if (risk(glide, box, scale(back, far), chunks) > 0) return new Clearance(movement, false, moving);
+        if (risk(glide, box, back.scaled(far), chunks) > 0) return new Clearance(movement, false, moving);
         double unsafe = 0;
         double safe = far;
         for (int step = 0; step < SEARCH_STEPS; step++) {
             double middle = (safe + unsafe) * 0.5;
-            if (risk(glide, box, scale(back, middle), chunks) == 0) safe = middle;
+            if (risk(glide, box, back.scaled(middle), chunks) == 0) safe = middle;
             else unsafe = middle;
         }
-        return new Clearance(scale(back, safe), true, 0);
+        return new Clearance(back.scaled(safe), true, 0);
     }
 
     private static double risk(Context glide, AABB box, Motion movement, FlightCorridor.Probe chunks) {
@@ -249,10 +249,6 @@ public final class ServerGlide {
 
     private static boolean same(double first, double second) {
         return Math.abs(second - first) < 1.0E-5F;
-    }
-
-    private static Motion scale(Motion motion, double factor) {
-        return factor == 0 ? Motion.ZERO : new Motion(motion.x() * factor, motion.y() * factor, motion.z() * factor);
     }
 
     private static Vec3 vec(Motion motion) {

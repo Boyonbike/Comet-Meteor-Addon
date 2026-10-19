@@ -5,10 +5,13 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.core.StorageEspIndex;
 import dev.tntcoating.core.StorageEspIndex.CellKey;
+import dev.tntcoating.render.StorageEspMesh;
 import dev.tntcoating.render.StorageEspShader;
 import dev.tntcoating.render.StorageEspView;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.ResourcePacksReloadedEvent;
@@ -36,7 +39,6 @@ import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.*;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
-import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
@@ -45,11 +47,16 @@ import java.util.*;
 
 /** Shader Storage ESP using Meteor's model renderer and outline pipeline, with retained GPU geometry. */
 public final class FastStorageESP extends Module {
+    /** Interaction history kept for this world and dimension; the oldest entries go first beyond this. */
+    private static final int MAX_OPENED = 65_536;
     private final StorageEspIndex<StorageEntry> index = new StorageEspIndex<>();
     private final Map<CellKey, Batch> batches = new HashMap<>();
     private final List<Map.Entry<CellKey, Batch>> visibleBatches = new ArrayList<>();
     private final Long2ObjectOpenHashMap<LongOpenHashSet> chunkEntries = new Long2ObjectOpenHashMap<>();
-    private final LongOpenHashSet opened = new LongOpenHashSet();
+    // Survives chunk unloads, so looted containers stay marked when you fly away and back.
+    private final LongLinkedOpenHashSet opened = new LongLinkedOpenHashSet();
+    private final LongOpenHashSet liveChunks = new LongOpenHashSet();
+    private LongOpenHashSet spareChunkEntries = new LongOpenHashSet();
     private final Color color = new Color();
     private final Matrix4f transform = new Matrix4f();
     private final FrustumIntersection frustum = new FrustumIntersection();
@@ -97,7 +104,7 @@ public final class FastStorageESP extends Module {
     private final Setting<SettingColor> enderChest = colorSetting(colors, "ender-chest", new SettingColor(120, 0, 255));
     private final Setting<SettingColor> other = colorSetting(colors, "other", new SettingColor(140, 140, 140));
     private final Setting<Boolean> hideOpened = openedRendering.add(new BoolSetting.Builder()
-        .name("hide-opened").description("Hide containers you have interacted with in this world.")
+        .name("hide-opened").description("Hide containers you have interacted with in this world and dimension.")
         .defaultValue(false).onChanged(value -> refreshRequested = true).build());
     private final Setting<SettingColor> openedColor = colorSetting(openedRendering, "opened-color", new SettingColor(203, 90, 203, 0));
 
@@ -124,10 +131,19 @@ public final class FastStorageESP extends Module {
 
     @EventHandler private void onReload(ResourcePacksReloadedEvent event) {
         // Reload completion can be posted from an executor. GPU/cache work belongs on the client thread.
-        mc.execute(() -> { if (isActive()) reset(); });
+        // Models and shaders change with resources; which containers were opened does not.
+        mc.execute(() -> { if (isActive()) releaseCaches(); });
     }
 
+    /** Releases everything, including interaction history: a new world or dimension starts fresh. */
     private void reset() {
+        releaseCaches();
+        opened.clear();
+        world = mc.level;
+        ticks = 0;
+    }
+
+    private void releaseCaches() {
         if (build != null) build.close();
         build = null;
         batches.values().forEach(Batch::close);
@@ -135,11 +151,9 @@ public final class FastStorageESP extends Module {
         visibleBatches.clear();
         index.clear();
         chunkEntries.clear();
-        opened.clear();
         if (shader != null) shader.close();
         shader = null;
-        world = mc.level;
-        ticks = count = 0;
+        count = 0;
         refreshRequested = true;
     }
 
@@ -154,14 +168,15 @@ public final class FastStorageESP extends Module {
     private void reconcile() {
         refreshRequested = false;
         Set<BlockEntityType<?>> selected = new HashSet<>(storageBlocks.get());
-        LongOpenHashSet liveChunks = new LongOpenHashSet();
+        liveChunks.clear();
         double rangeSquared = (double) maxDistance.get() * maxDistance.get();
 
         for (var chunk : Utils.chunks()) {
             if (!(chunk instanceof LevelChunk loaded)) continue;
             long chunkKey = loaded.getPos().pack();
             liveChunks.add(chunkKey);
-            LongOpenHashSet current = new LongOpenHashSet();
+            LongOpenHashSet current = spareChunkEntries;
+            current.clear();
 
             for (BlockEntity entity : loaded.getBlockEntities().values()) {
                 if (entity.isRemoved() || !selected.contains(entity.getType())) continue;
@@ -173,28 +188,29 @@ public final class FastStorageESP extends Module {
                 SettingColor tint = interacted && openedColor.get().a > 0 ? openedColor.get() : colorFor(entity);
                 if (tint.a == 0) continue;
                 current.add(packed);
-                index.put(pos, new StorageEntry(entity, entity.getBlockState(), tint.getPacked(), pose(entity)));
+                // Unchanged storage keeps its existing entry: no allocation or batch rebuild for an idle stash.
+                BlockState state = entity.getBlockState();
+                int rgba = tint.getPacked(), pose = pose(entity);
+                StorageEntry existing = index.get(pos);
+                if (existing == null || existing.entity != entity || existing.state != state
+                    || existing.rgba != rgba || existing.pose != pose) {
+                    index.put(pos, new StorageEntry(entity, state, rgba, pose));
+                }
             }
 
             LongOpenHashSet previous = chunkEntries.put(chunkKey, current);
             if (previous != null) {
                 for (long packed : previous) if (!current.contains(packed)) index.remove(BlockPos.of(packed));
-            }
+                spareChunkEntries = previous;
+            } else spareChunkEntries = new LongOpenHashSet();
         }
 
         var iterator = chunkEntries.long2ObjectEntrySet().fastIterator();
         while (iterator.hasNext()) {
             var entry = iterator.next();
             if (liveChunks.contains(entry.getLongKey())) continue;
-            for (long packed : entry.getValue()) opened.remove(packed);
             index.removeChunk((int) entry.getLongKey(), (int) (entry.getLongKey() >> 32));
             iterator.remove();
-        }
-        // Opened/hidden containers are not necessarily present in the render index.
-        var openedIterator = opened.iterator();
-        while (openedIterator.hasNext()) {
-            long pos = openedIterator.nextLong();
-            if (!liveChunks.contains(ChunkPos.pack(BlockPos.getX(pos) >> 4, BlockPos.getZ(pos) >> 4))) openedIterator.remove();
         }
     }
 
@@ -218,13 +234,19 @@ public final class FastStorageESP extends Module {
         BlockPos pos = event.result.getBlockPos();
         BlockEntity entity = mc.level.getBlockEntity(pos);
         if (entity == null) return;
-        opened.add(pos.asLong());
+        markOpened(pos.asLong());
         BlockState state = entity.getBlockState();
         if (entity instanceof ChestBlockEntity && state.hasProperty(ChestBlock.TYPE)
             && state.getValue(ChestBlock.TYPE) != ChestType.SINGLE) {
-            opened.add(pos.relative(ChestBlock.getConnectedDirection(state)).asLong());
+            markOpened(pos.relative(ChestBlock.getConnectedDirection(state)).asLong());
         }
         refreshRequested = true;
+    }
+
+    private void markOpened(long pos) {
+        // Re-adding moves a container to the newest end, so revisited containers are evicted last.
+        opened.addAndMoveToLast(pos);
+        while (opened.size() > MAX_OPENED) opened.removeFirstLong();
     }
 
     @Override public WWidget getWidget(GuiTheme theme) {
@@ -239,7 +261,17 @@ public final class FastStorageESP extends Module {
         count = 0;
         if (world != mc.level) reset();
         if (mc.level == null || mc.player == null) return;
-        if (shader == null) shader = new StorageEspShader();
+        if (shader == null) {
+            try {
+                shader = new StorageEspShader();
+            } catch (RuntimeException e) {
+                // A failing pipeline would otherwise throw on every frame and crash the client.
+                MeteorClient.LOG.error("Fast Storage ESP could not create its shader", e);
+                error("Couldn't create the storage shader (%s). Turning off; see the log.", e.getMessage());
+                toggle();
+                return;
+            }
+        }
         rebuild(event);
 
         var camera = mc.gameRenderer.getMainCamera().position();
@@ -354,7 +386,7 @@ public final class FastStorageESP extends Module {
         final CellKey key;
         final long revision;
         final List<StorageEntry> entries;
-        final MeshBuilder mesh = new MeshBuilder(StorageEspShader.MASK_PIPELINE);
+        final MeshBuilder mesh = StorageEspMesh.createBuilder();
         final MeshBuilderVertexConsumerProvider consumer = new MeshBuilderVertexConsumerProvider(mesh);
         final double originX;
         final double originZ;

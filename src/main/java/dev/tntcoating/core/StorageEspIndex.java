@@ -87,6 +87,12 @@ public final class StorageEspIndex<T> {
 
     public Cell<T> cell(CellKey key) { return cells.get(key); }
 
+    /** The value stored at this position, or null. */
+    public T get(BlockPos pos) {
+        Cell<T> cell = cells.get(CellKey.of(pos));
+        return cell == null ? null : cell.entries.get(pos.asLong());
+    }
+
     /** A live, read-only view. Mutations and iteration must both happen on the client thread. */
     public Collection<Cell<T>> cells() { return cellsView; }
 

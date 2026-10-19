@@ -33,10 +33,10 @@ class AdaptiveFlightMemoryTest {
         assertEquals(1, memory.size(), "a lookup does not create a learned profile");
     }
 
-    @Test void roundTripRestoresIndependentHorizontalUpDownAndAccelerationCeilings() throws IOException {
+    @Test void roundTripRestoresIndependentAxesAccelerationAndTotalDisplacement() throws IOException {
         var memory = new AdaptiveFlightMemory();
-        var first = new Limits(6.4, .8, 1.3, .035);
-        var second = new Limits(2, 1.6, .65, .08);
+        var first = new Limits(6.4, .8, 1.3, .035, 5.8);
+        var second = new Limits(2, 1.6, .65, .08, 2.1);
         memory.put("server-a:25565", first);
         memory.put("server-b:25565", second);
         Path path = directory.resolve("nested/flight.memory");
@@ -63,13 +63,13 @@ class AdaptiveFlightMemoryTest {
         assertEquals(64, restored.getProfile("tested-server").ceilings().ascent(),
             "a .75 clean reconnect hint must still allow subsequent upward exploration");
         assertEquals(ProfileLimits.UNKNOWN, restored.getProfile("new-server"));
-        assertEquals(2, java.nio.ByteBuffer.wrap(Files.readAllBytes(file)).getInt(4));
+        assertEquals(3, java.nio.ByteBuffer.wrap(Files.readAllBytes(file)).getInt(4));
     }
 
     @Test void knownRejectionCeilingsRemainDistinctFromLowerProvenHints() throws IOException {
         var memory = new AdaptiveFlightMemory();
-        var proven = new Limits(4.5, .28, .7, .025);
-        var rejected = new Limits(5, .3, .8, .03);
+        var proven = new Limits(4.5, .28, .7, .025, 4.6);
+        var rejected = new Limits(5, .3, .8, .03, 5.1);
         var profile = new ProfileLimits(proven, rejected);
         memory.putProfile("limited-server", profile);
         Path file = directory.resolve("rejected-ceilings.memory");
@@ -80,7 +80,7 @@ class AdaptiveFlightMemoryTest {
         assertEquals(new ProfileLimits(rejected, rejected), memory.getProfile("legacy-call"));
     }
 
-    @Test void versionOneLimitsMigrateConservativelyAndResaveAsVersionTwo() throws IOException {
+    @Test void versionOneLimitsMigrateConservativelyAndResaveAsVersionThree() throws IOException {
         Path file = directory.resolve("legacy.memory");
         Files.write(file, encoded(1, 1, "legacy-server", 5, .04));
         var migrated = AdaptiveFlightMemory.load(file);
@@ -88,8 +88,21 @@ class AdaptiveFlightMemoryTest {
         assertEquals(new ProfileLimits(old, old), migrated.getProfile("legacy-server"));
         migrated.save(file);
 
-        assertEquals(2, java.nio.ByteBuffer.wrap(Files.readAllBytes(file)).getInt(4));
+        assertEquals(3, java.nio.ByteBuffer.wrap(Files.readAllBytes(file)).getInt(4));
         assertEquals(new ProfileLimits(old, old), AdaptiveFlightMemory.load(file).getProfile("legacy-server"));
+    }
+
+    @Test void versionTwoPreservesBothAxisProfilesAndStartsWithUnknownTotalDisplacement() throws IOException {
+        Path file = directory.resolve("version-two.memory");
+        Files.write(file, encoded(2, 1, "legacy-server", 5, .04, 6, .05));
+        var migrated = AdaptiveFlightMemory.load(file);
+        var expected = new ProfileLimits(new Limits(5, .8, 1.4, .04, 64),
+            new Limits(6, .8, 1.4, .05, 64));
+
+        assertEquals(expected, migrated.getProfile("legacy-server"));
+        migrated.save(file);
+        assertEquals(3, java.nio.ByteBuffer.wrap(Files.readAllBytes(file)).getInt(4));
+        assertEquals(expected, AdaptiveFlightMemory.load(file).getProfile("legacy-server"));
     }
 
     @Test void warmStartMayExceedIndependentCorrectionGuidance() {
@@ -122,6 +135,7 @@ class AdaptiveFlightMemoryTest {
             assertThrows(IllegalArgumentException.class, () -> new Limits(invalid, 1, 1, .1));
             assertThrows(IllegalArgumentException.class, () -> new Limits(1, invalid, 1, .1));
             assertThrows(IllegalArgumentException.class, () -> new Limits(1, 1, invalid, .1));
+            assertThrows(IllegalArgumentException.class, () -> new Limits(1, 1, 1, .1, invalid));
         }
         for (double invalid : new double[] {Double.NaN, Double.POSITIVE_INFINITY, 0, -.1, 2.01})
             assertThrows(IllegalArgumentException.class, () -> new Limits(1, 1, 1, invalid));
@@ -210,7 +224,7 @@ class AdaptiveFlightMemoryTest {
 
     @Test void validChecksumsCannotAdmitUnknownSchemasInvalidCountsOrInvalidLimits() throws IOException {
         Path file = directory.resolve("invalid.memory");
-        Files.write(file, encoded(3, 0, null, 1, 1));
+        Files.write(file, encoded(4, 0, null, 1, 1));
         assertEquals(0, AdaptiveFlightMemory.load(file).size());
         Files.write(file, encoded(2, MAX_SERVER_PROFILES + 1, null, 1, 1));
         assertEquals(0, AdaptiveFlightMemory.load(file).size());
@@ -235,6 +249,16 @@ class AdaptiveFlightMemoryTest {
         Files.write(file, encoded(2, 1, "server", 1, .05, .5, .05));
         assertEquals(1, AdaptiveFlightMemory.load(file).size(),
             "demonstrated speeds may exceed remembered correction guidance");
+    }
+
+    @Test void validChecksumsCannotAdmitInvalidTotalDisplacementLimits() throws IOException {
+        Path file = directory.resolve("invalid-total.memory");
+        for (double invalid : new double[] {Double.NaN, Double.POSITIVE_INFINITY, -.3, 0, 65}) {
+            Files.write(file, encoded(3, 1, "server", 1, .05, 1, .05, invalid, 2));
+            assertEquals(0, AdaptiveFlightMemory.load(file).size());
+            Files.write(file, encoded(3, 1, "server", 1, .05, 1, .05, 2, invalid));
+            assertEquals(0, AdaptiveFlightMemory.load(file).size());
+        }
     }
 
     @Test void duplicateBlankAndUnnormalizedStoredIdentitiesAreRejected() throws IOException {
@@ -288,6 +312,13 @@ class AdaptiveFlightMemoryTest {
     private static byte[] encoded(int version, int count, String server, double horizontal,
                                   double acceleration, double ceilingHorizontal,
                                   double ceilingAcceleration) throws IOException {
+        return encoded(version, count, server, horizontal, acceleration, ceilingHorizontal,
+            ceilingAcceleration, 64, 64);
+    }
+
+    private static byte[] encoded(int version, int count, String server, double horizontal,
+                                  double acceleration, double ceilingHorizontal,
+                                  double ceilingAcceleration, double total, double ceilingTotal) throws IOException {
         var bytes = new ByteArrayOutputStream();
         var crc = new CRC32();
         try (var out = new DataOutputStream(new CheckedOutputStream(bytes, crc))) {
@@ -302,11 +333,13 @@ class AdaptiveFlightMemoryTest {
                     out.writeDouble(.8);
                     out.writeDouble(1.4);
                     out.writeDouble(acceleration);
+                    if (version >= 3) out.writeDouble(total);
                     if (version >= 2) {
                         out.writeDouble(ceilingHorizontal);
                         out.writeDouble(.8);
                         out.writeDouble(1.4);
                         out.writeDouble(ceilingAcceleration);
+                        if (version >= 3) out.writeDouble(ceilingTotal);
                     }
                 }
             }

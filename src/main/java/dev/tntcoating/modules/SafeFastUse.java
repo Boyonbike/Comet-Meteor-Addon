@@ -63,7 +63,16 @@ public final class SafeFastUse extends Module {
         return selected ? cooldown.get() : 4;
     }
 
-    @Override public void onActivate() { reset(); }
+    @Override public void onActivate() {
+        reset();
+        if (nothingSelected()) warning("Some mode has no items selected and blocks off, so nothing is sped up.");
+    }
+
+    @Override public String getInfoString() { return nothingSelected() ? "Nothing selected" : null; }
+
+    private boolean nothingSelected() {
+        return mode.get() == Mode.Some && items.get().isEmpty() && !blocks.get();
+    }
     @Override public void onDeactivate() { reset(); }
 
     private void reset() {

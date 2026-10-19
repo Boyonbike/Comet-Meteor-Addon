@@ -42,6 +42,7 @@ public final class PacketCaptureLog implements AutoCloseable {
     private volatile long writtenRecords;
     private volatile long droppedRecords;
     private volatile IOException failure;
+    private Runnable finishedCallback;
 
     /** Creates a fresh capture. The limit must leave at least 256 bytes for the final summary. */
     public static PacketCaptureLog open(Path directory, long maxBytes) throws IOException {
@@ -124,6 +125,22 @@ public final class PacketCaptureLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Runs once the writer has drained and closed the file, on the writer thread, or immediately if it already has.
+     * Final record counts are only complete at that point.
+     */
+    public void onFinished(Runnable callback) {
+        Objects.requireNonNull(callback, "callback");
+        synchronized (lock) {
+            if (!finished) {
+                Runnable previous = finishedCallback;
+                finishedCallback = previous == null ? callback : () -> { previous.run(); callback.run(); };
+                return;
+            }
+        }
+        callback.run();
+    }
+
     public boolean isAccepting() { return accepting; }
     public boolean isFinished() { return finished; }
     public long writtenRecords() { return writtenRecords; }
@@ -184,11 +201,15 @@ public final class PacketCaptureLog implements AutoCloseable {
                     else if (failure != error) failure.addSuppressed(error);
                 }
             }
+            Runnable callback;
             synchronized (lock) {
                 accepting = false;
                 finished = true;
+                callback = finishedCallback;
+                finishedCallback = null;
                 lock.notifyAll();
             }
+            if (callback != null) callback.run();
         }
     }
 

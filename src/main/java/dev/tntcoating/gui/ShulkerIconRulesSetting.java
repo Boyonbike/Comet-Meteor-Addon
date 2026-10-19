@@ -18,6 +18,7 @@ import meteordevelopment.meteorclient.settings.Settings;
 import meteordevelopment.meteorclient.settings.StringSetting;
 import meteordevelopment.meteorclient.utils.misc.Names;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
+import meteordevelopment.meteorclient.utils.render.prompts.YesNoPrompt;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -43,7 +44,15 @@ public final class ShulkerIconRulesSetting extends Setting<List<Rule<Item>>> {
             var edit = row.add(theme.button("Edit Combos")).expandX().widget();
             edit.action = () -> mc.setScreen(new Editor(theme, rules));
             var reset = row.add(theme.button("Reset")).widget();
-            reset.action = rules::reset;
+            reset.action = () -> {
+                if (rules.get().isEmpty()) return;
+                YesNoPrompt.create(theme, mc.screen)
+                    .title("Reset Shulker Icon Combos")
+                    .message("Delete all %d combos? This cannot be undone.", rules.get().size())
+                    .dontShowAgainCheckboxVisible(false)
+                    .onYes(rules::reset)
+                    .show();
+            };
         });
     }
 

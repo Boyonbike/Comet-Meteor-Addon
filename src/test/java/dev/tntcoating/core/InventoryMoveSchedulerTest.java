@@ -133,4 +133,19 @@ class InventoryMoveSchedulerTest {
         assertNull(mover.poll(CONTEXT, 0, 1, 0, () -> fail("Filtered slots used delay"), slot -> null));
         assertFalse(mover.isValid(CONTEXT));
     }
+
+    @Test void anActionWhoseCallbackNeverRunsIsAbandonedAfterTheTimeout() {
+        var mover = new InventoryMoveScheduler<String>();
+        mover.start(CONTEXT, 0, 2, true, 0);
+        var stuck = mover.poll(CONTEXT, 0, 1, 0, () -> 0, slot -> "stack");
+        assertEquals(0, stuck.slot());
+        long timeout = InventoryMoveScheduler.IN_FLIGHT_TIMEOUT_NANOS;
+        assertNull(mover.poll(CONTEXT, timeout - 1, 2, 0, () -> 0, slot -> "stack"));
+        var next = mover.poll(CONTEXT, timeout, 3, 0, () -> 0, slot -> "stack");
+        assertEquals(1, next.slot());
+        // A late callback for the abandoned action can neither click nor complete the current one.
+        assertFalse(mover.isCurrent(stuck, CONTEXT));
+        mover.complete(stuck, timeout);
+        assertTrue(mover.isCurrent(next, CONTEXT));
+    }
 }

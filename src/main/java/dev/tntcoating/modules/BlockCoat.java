@@ -57,6 +57,9 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -145,21 +148,21 @@ public final class BlockCoat extends Module {
     private final AtomicInteger sentPackets = new AtomicInteger();
     private int plannedPackets, rotationsPlanned, corrections;
     private boolean packetLimited;
-    private static final int STICKY_HOLD_TICKS = 20;
-    private int stickyRestore = -1, stickySlot = -1, stickyUsed;
+    private final StickySlot sticky = new StickySlot();
     private final Set<BlockPos> changed = ConcurrentHashMap.newKeySet();
     private final Deque<BlockPos> searchQueue = new ArrayDeque<>();
     private final Map<BlockPos, BlockHitResult> hitCache = new HashMap<>();
-    private final AtomicBoolean blastDirty = new AtomicBoolean(true);
-    private final Set<TntBlastPlanner.Cell> nearbyTnt = new HashSet<>();
-    private final Map<TntBlastPlanner.Cell, Set<TntBlastPlanner.Cell>> blastCache = new HashMap<>();
-    private final Map<TntBlastPlanner.Cell, TntBlastPlanner.Material> blastMaterials = new HashMap<>();
-    private final Map<Long, Boolean> blastChunks = new HashMap<>();
-    private BlockPos blastOrigin;
-    private int blastRadius, blastTick;
-    private static final int BLAST_PREDICTIONS_PER_TICK = 16;
-    private int blastPredictions, blastPredictionTick;
-    private boolean blastLimited;
+    private final BlockCoatBlasts blasts = new BlockCoatBlasts();
+    private final BlockCoatBlasts.Terrain blastTerrain = new BlockCoatBlasts.Terrain() {
+        @Override public boolean loaded(BlockPos pos) { return BlockCoat.this.loaded(pos); }
+        @Override public boolean coatable(BlockPos pos) { return terrain(pos); }
+        @Override public boolean faceEnabled(Direction face) { return enabledFace(face); }
+    };
+    // Section answers stay valid until a block, chunk or tick boundary; see clearRedstoneSections.
+    private final TntRedstoneSafety.SectionMemo redstoneSections = new TntRedstoneSafety.SectionMemo(this::redstoneSection);
+    private static final Color PREVIEW_FILL = new Color(70, 220, 110, 35), PREVIEW_LINE = new Color(70, 220, 110, 180);
+    private static final Color PENDING_FILL = new Color(255, 180, 50, 40), PENDING_LINE = new Color(255, 180, 50, 200);
+    private static final Color REJECTED_FILL = new Color(230, 70, 70, 20), REJECTED_LINE = new Color(230, 70, 70, 100);
     private boolean reorder = true;
     private boolean searching;
     private int rays;
@@ -230,6 +233,9 @@ public final class BlockCoat extends Module {
     @Override public void onActivate() { reset(); }
     @Override public void onDeactivate() { reset(); }
     @Override public String getInfoString() { return status; }
+
+    /** The packets-per-second ceiling shared with Smart Sponge, so both modules respect one limit. */
+    public int packetLimit() { return packetLimit.get(); }
     @Override public BlockCoat fromTag(CompoundTag tag) {
         super.fromTag(BlockCoatSettings.migrate(tag));
         return this;
@@ -247,7 +253,8 @@ public final class BlockCoat extends Module {
         tracker.clear(); visibilityRetry.clear();
         changed.clear(); searchQueue.clear(); hitCache.clear(); reorder = true;
         candidates.clear(); updates.clear();
-        clearBlastCache();
+        blasts.clear();
+        redstoneSections.clear();
         clearPreview();
         dirty.set(true); corrected.set(false);
         level = null; scanOrigin = null; lastPosition = null;
@@ -260,12 +267,6 @@ public final class BlockCoat extends Module {
     }
 
     private void clearPreview() { validPreview.clear(); invalidPreview.clear(); }
-
-    private void clearBlastCache() {
-        nearbyTnt.clear(); blastCache.clear(); blastMaterials.clear(); blastChunks.clear();
-        blastOrigin = null; blastDirty.set(true);
-        blastPredictions = 0; blastPredictionTick = -1; blastLimited = false;
-    }
 
     @EventHandler
     private void onReceive(PacketEvent.Receive event) {
@@ -319,8 +320,13 @@ public final class BlockCoat extends Module {
         changed.add(event.blockPos.immutable());
     }
 
+    // Packets are applied before the tick starts, so section answers from the previous tick may be stale.
+    @EventHandler
+    private void onTickPre(TickEvent.Pre event) { redstoneSections.clear(); }
+
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
+        redstoneSections.clear();
         if (event.oldState.is(Blocks.TNT) && !event.newState.is(Blocks.TNT))
             passageClearance.removed(clearanceCell(event.pos), tick);
         BlockPos origin = scanOrigin;
@@ -328,19 +334,20 @@ public final class BlockCoat extends Module {
             origin.getX(), origin.getY(), origin.getZ(), scannedRadius + 1)) changed.add(event.pos.immutable());
         // Sources can sit outside the coating cube, with shielding another blast radius beyond them.
         if (origin != null && PlacementGeometry.inCube(event.pos.getX(), event.pos.getY(), event.pos.getZ(),
-            origin.getX(), origin.getY(), origin.getZ(), scannedRadius + 2 * TntBlastPlanner.RADIUS + 1)) blastDirty.set(true);
+            origin.getX(), origin.getY(), origin.getZ(), scannedRadius + 2 * TntBlastPlanner.RADIUS + 1)) blasts.markDirty();
     }
 
     @EventHandler
     private void onChunkData(ChunkDataEvent event) {
         // Full chunk replacement need not emit individual block updates. This event runs after it is applied.
+        redstoneSections.clear();
         BlockPos origin = scanOrigin;
         if (origin == null) return;
         var chunk = event.chunk().getPos();
         int margin = scannedRadius + 2 * TntBlastPlanner.RADIUS + 1;
         if (chunk.x() < ((origin.getX() - margin) >> 4) || chunk.x() > ((origin.getX() + margin) >> 4)
             || chunk.z() < ((origin.getZ() - margin) >> 4) || chunk.z() > ((origin.getZ() + margin) >> 4)) return;
-        blastDirty.set(true);
+        blasts.markDirty();
         if ((conservativeTnt.get() || liquidFiller.get()) && activeBlock == Blocks.TNT) dirty.set(true);
     }
 
@@ -358,7 +365,7 @@ public final class BlockCoat extends Module {
             activeConservativeTnt = conservativeTnt.get();
             generation++;
             tracker.discardUnsent();
-            clearBlastCache();
+            blasts.clear();
         }
         if (activeLiquidFiller != liquidFiller.get()) {
             activeLiquidFiller = liquidFiller.get();
@@ -375,7 +382,7 @@ public final class BlockCoat extends Module {
         tick++;
         packetBudget.record(tick, sentPackets.getAndSet(0));
         plannedPackets = rotationsPlanned = 0; packetLimited = false;
-        if (stickyRestore >= 0 && (autoSwitch.get() != AutoSwitch.Sticky || tick - stickyUsed > STICKY_HOLD_TICKS)) releaseSticky();
+        if (sticky.holding() && (autoSwitch.get() != AutoSwitch.Sticky || sticky.idle(tick))) releaseSticky();
         facingYaw = mc.player.getYRot();
         clearPreview();
         drainUpdates();
@@ -425,6 +432,9 @@ public final class BlockCoat extends Module {
             return;
         }
         if (tick < pauseUntil || mc.player.isInWater() || !mc.player.isAlive()) { status = "Paused"; return; }
+        // A passenger sends no movement packets, so Meteor never runs rotation callbacks and queues their packets
+        // for a burst on dismount. Rotated placement waits until you get off.
+        if (rotating() && mc.player.isPassenger()) { generation++; tracker.discardUnsent(); status = "Paused while riding"; return; }
         if (!flightPlacementAllowed()) { strip.clear(); criticalStrip.clear(); status = "Flight coating off"; return; }
         if (spongeHasPriority()) {
             generation++;
@@ -617,33 +627,15 @@ public final class BlockCoat extends Module {
         };
     }
 
-    private void holdSticky(int slot) {
-        var inventory = mc.player.getInventory();
-        int selected = inventory.getSelectedSlot();
-        if (selected != slot) {
-            // A slot the player picks while the block is held becomes the one to return to.
-            if (stickyRestore < 0 || selected != stickySlot) stickyRestore = selected;
-            inventory.setSelectedSlot(slot);
-            ((GameModeInvoker) mc.gameMode).comet$ensureHasSentCarriedItem();
-        }
-        stickySlot = slot;
-        stickyUsed = tick;
-    }
-
     /** Return to the slot Sticky switched away from, unless the player has since picked another. */
     private void releaseSticky() {
-        if (stickyRestore >= 0 && mc.player != null && mc.gameMode != null
-            && !pauseForHeldItem() && mc.player.getInventory().getSelectedSlot() == stickySlot) {
-            mc.player.getInventory().setSelectedSlot(stickyRestore);
-            ((GameModeInvoker) mc.gameMode).comet$ensureHasSentCarriedItem();
-        }
-        stickyRestore = stickySlot = -1;
+        sticky.release(() -> !pauseForHeldItem());
     }
 
     private void drainUpdates() {
         Update update;
         while ((update = updates.poll()) != null) {
-            blastDirty.set(true);
+            blasts.markDirty();
             changed.add(update.pos);
             visibilityRetry.remove(update.pos);
             tracker.update(update.pos, update.matchesBlock, update.replaceable, update.attempt, tick, retryDelay.get());
@@ -737,89 +729,6 @@ public final class BlockCoat extends Module {
             if (enabledFace(side.getOpposite()) && terrain(target.relative(side))) return true;
         }
         return false;
-    }
-
-    /** Keep coverage separate from candidates: a failed or removed source must reopen its neighbours. */
-    private boolean blastCovered(BlockPos target) {
-        blastLimited = false;
-        refreshBlastCache();
-        Set<TntBlastPlanner.Cell> remaining = new HashSet<>();
-        for (Direction side : Direction.values()) {
-            BlockPos terrain = target.relative(side);
-            if (enabledFace(side.getOpposite()) && terrain(terrain)) remaining.add(blastCell(terrain));
-        }
-        Set<TntBlastPlanner.Cell> uniqueSources = new HashSet<>(nearbyTnt);
-        // Reservations prevent duplicate coverage within a batch, including deferred rotations.
-        for (BlockPos source : tracker.pendingPositions()) uniqueSources.add(blastCell(source));
-        List<TntBlastPlanner.Cell> sources = new ArrayList<>(uniqueSources);
-        sources.removeIf(source -> Math.abs(source.x() - target.getX()) > TntBlastPlanner.RADIUS + 1
-            || Math.abs(source.y() - target.getY()) > TntBlastPlanner.RADIUS + 1
-            || Math.abs(source.z() - target.getZ()) > TntBlastPlanner.RADIUS + 1);
-        sources.sort(Comparator.comparingDouble(source -> {
-            double dx = source.x() - target.getX(), dy = source.y() - target.getY(), dz = source.z() - target.getZ();
-            return dx * dx + dy * dy + dz * dz;
-        }));
-        return TntBlastPlanner.coveredByOthers(blastCell(target), remaining, sources, this::sourceCoverage);
-    }
-
-    private Set<TntBlastPlanner.Cell> sourceCoverage(TntBlastPlanner.Cell cell) {
-        BlockPos source = new BlockPos(cell.x(), cell.y(), cell.z());
-        PlacementTracker.Attempt<Block> pending = tracker.attempt(source);
-        if (pending == null) {
-            // Client prediction can leave a ghost after timeout; only trust confirmed world TNT.
-            if (tracker.unconfirmed(source) || !loaded(source) || !mc.level.getBlockState(source).is(Blocks.TNT)
-                || !mc.level.getBlockState(source).getFluidState().isEmpty()) return Set.of();
-        } else if (pending.block != Blocks.TNT) return Set.of();
-        Set<TntBlastPlanner.Cell> cached = blastCache.get(cell);
-        if (cached != null) return cached;
-        if (blastPredictionTick != tick) { blastPredictionTick = tick; blastPredictions = 0; }
-        if (blastPredictions >= BLAST_PREDICTIONS_PER_TICK) { blastLimited = true; return Set.of(); }
-        blastPredictions++;
-        Set<TntBlastPlanner.Cell> coverage = TntBlastPlanner.coverage(cell,
-            pos -> blastMaterials.computeIfAbsent(pos, this::blastMaterial));
-        blastCache.put(cell, coverage);
-        return coverage;
-    }
-
-    private static TntBlastPlanner.Cell blastCell(BlockPos pos) {
-        return new TntBlastPlanner.Cell(pos.getX(), pos.getY(), pos.getZ());
-    }
-
-    private TntBlastPlanner.Material blastMaterial(TntBlastPlanner.Cell cell) {
-        BlockPos pos = new BlockPos(cell.x(), cell.y(), cell.z());
-        boolean chunkLoaded = loaded(pos);
-        long chunk = ((long) (pos.getX() >> 4) << 32) | ((pos.getZ() >> 4) & 0xffffffffL);
-        blastChunks.put(chunk, chunkLoaded);
-        if (!chunkLoaded || mc.level.isOutsideBuildHeight(pos) || !mc.level.getWorldBorder().isWithinBounds(pos))
-            return TntBlastPlanner.Material.BLOCKED;
-        BlockState state = mc.level.getBlockState(pos);
-        if (state.isAir() && state.getFluidState().isEmpty()) return TntBlastPlanner.Material.AIR;
-        if (state.getDestroySpeed(mc.level, pos) < 0) return TntBlastPlanner.Material.BLOCKED;
-        float resistance = Math.max(state.getBlock().getExplosionResistance(), state.getFluidState().getExplosionResistance());
-        if (!Float.isFinite(resistance) || resistance < 0) return TntBlastPlanner.Material.BLOCKED;
-        return new TntBlastPlanner.Material(resistance, terrain(pos));
-    }
-
-    private void refreshBlastCache() {
-        BlockPos origin = mc.player.blockPosition();
-        boolean invalidate = blastDirty.getAndSet(false) || !origin.equals(blastOrigin) || blastRadius != radius.get();
-        if (!invalidate && tick - blastTick < 5) return;
-        if (!invalidate) {
-            for (var entry : blastChunks.entrySet()) {
-                long chunk = entry.getKey();
-                if (mc.level.hasChunk((int) (chunk >> 32), (int) chunk) != entry.getValue()) { invalidate = true; break; }
-            }
-        }
-        // Periodic source discovery preserves completed predictions, so large jobs can span ticks.
-        if (invalidate) { blastCache.clear(); blastMaterials.clear(); blastChunks.clear(); }
-        nearbyTnt.clear();
-        blastOrigin = origin.immutable(); blastRadius = radius.get(); blastTick = tick;
-        int r = radius.get() + TntBlastPlanner.RADIUS + 1;
-        for (BlockPos pos : BlockPos.betweenClosed(origin.offset(-r, -r, -r), origin.offset(r, r, r))) {
-            if (loaded(pos) && !mc.level.isOutsideBuildHeight(pos) && !tracker.unconfirmed(pos)
-                && mc.level.getBlockState(pos).is(Blocks.TNT) && mc.level.getBlockState(pos).getFluidState().isEmpty())
-                nearbyTnt.add(blastCell(pos));
-        }
     }
 
     private boolean touchesWall(BlockPos target) {
@@ -933,6 +842,18 @@ public final class BlockCoat extends Module {
 
     private boolean loaded(BlockPos pos) { return mc.level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4); }
 
+    /** A section's palette tells whether it can hold a redstone component, without reading its blocks. */
+    private TntRedstoneSafety.Section redstoneSection(int sectionX, int sectionY, int sectionZ) {
+        LevelChunk chunk = mc.level.getChunkSource().getChunk(sectionX, sectionZ, ChunkStatus.FULL, false);
+        if (chunk == null) return TntRedstoneSafety.Section.UNKNOWN;
+        int index = chunk.getSectionIndexFromSectionY(sectionY);
+        // Outside the build height: those positions are skipped before the section matters.
+        if (index < 0 || index >= chunk.getSectionsCount()) return TntRedstoneSafety.Section.CLEAR;
+        LevelChunkSection section = chunk.getSection(index);
+        return section.hasOnlyAir() || !section.maybeHas(TntRedstoneSafety::component)
+            ? TntRedstoneSafety.Section.CLEAR : TntRedstoneSafety.Section.MAYBE;
+    }
+
     private Validation reject(Rejection reason) { return new Validation(reason, null, false); }
 
     private Validation validate(BlockPos target, boolean underfoot, BlockHitResult preferred) {
@@ -944,7 +865,7 @@ public final class BlockCoat extends Module {
         if (tracker.retryBlocked(target, tick)) return reject(Rejection.Retry);
         // Unpowered circuits can react to placement; re-read the whole buffer on deferred sends too.
         if (!TntRedstoneSafety.canPlace(activeBlock == Blocks.TNT, target, mc.level::isOutsideBuildHeight,
-            pos -> loaded(pos) ? mc.level.getBlockState(pos) : null, mc.level::hasNeighborSignal))
+            pos -> loaded(pos) ? mc.level.getBlockState(pos) : null, mc.level::hasNeighborSignal, redstoneSections))
             return reject(Rejection.Redstone);
         boolean platform = !underfoot && scaffoldTarget(target);
         if (!underfoot && !platform && !liquid && !hasTerrainFace(target)) return reject(Rejection.NoTerrain);
@@ -961,9 +882,9 @@ public final class BlockCoat extends Module {
         }
         if (!BlockUtils.canPlaceBlock(target, true, activeBlock)) return reject(Rejection.Entity);
         if (conservativeTnt.get() && activeBlock == Blocks.TNT && !underfoot && !platform && !liquid) {
-            if (blastCovered(target)) return reject(Rejection.Covered);
+            if (blasts.covered(target, tick, radius.get(), tracker, blastTerrain)) return reject(Rejection.Covered);
             // Incomplete coverage must defer placement rather than spend TNT on an unknown result.
-            if (blastLimited) return reject(Rejection.Planning);
+            if (blasts.limited()) return reject(Rejection.Planning);
         }
         BlockHitResult hit;
         rayLimited = false;
@@ -1035,7 +956,7 @@ public final class BlockCoat extends Module {
             boolean offhand = material.isOffhand();
             AutoSwitch mode = autoSwitch.get();
             boolean swapBack = mode == AutoSwitch.Silent;
-            if (!offhand && mode == AutoSwitch.Sticky) holdSticky(material.slot());
+            if (!offhand && mode == AutoSwitch.Sticky) sticky.hold(material.slot(), tick);
             else if (!offhand && mode != AutoSwitch.Disabled) InvUtils.swap(material.slot(), swapBack);
             try {
                 if (underfoot) jumpPlaced = true;
@@ -1081,11 +1002,8 @@ public final class BlockCoat extends Module {
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (!preview.get() || mc.player == null || mc.level != level || corrected.get()) return;
-        Color green = new Color(70, 220, 110, 35), greenLine = new Color(70, 220, 110, 180);
-        Color amber = new Color(255, 180, 50, 40), amberLine = new Color(255, 180, 50, 200);
-        Color red = new Color(230, 70, 70, 20), redLine = new Color(230, 70, 70, 100);
-        for (BlockPos pos : validPreview) event.renderer.box(pos, green, greenLine, ShapeMode.Both, 0);
-        for (BlockPos pos : tracker.pendingPositions()) event.renderer.box(pos, amber, amberLine, ShapeMode.Both, 0);
-        if (rejectedPreview.get()) for (BlockPos pos : invalidPreview) event.renderer.box(pos, red, redLine, ShapeMode.Both, 0);
+        for (BlockPos pos : validPreview) event.renderer.box(pos, PREVIEW_FILL, PREVIEW_LINE, ShapeMode.Both, 0);
+        for (BlockPos pos : tracker.pendingPositions()) event.renderer.box(pos, PENDING_FILL, PENDING_LINE, ShapeMode.Both, 0);
+        if (rejectedPreview.get()) for (BlockPos pos : invalidPreview) event.renderer.box(pos, REJECTED_FILL, REJECTED_LINE, ShapeMode.Both, 0);
     }
 }

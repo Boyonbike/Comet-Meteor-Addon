@@ -236,4 +236,19 @@ class PacketCaptureLogTest {
         while (!log.isFinished() && System.nanoTime() < deadline) Thread.sleep(5);
         assertTrue(log.isFinished(), "capture writer did not terminate");
     }
+
+    @Test void finishedCallbacksRunAfterTheDrainWithFinalCounts() throws Exception {
+        PacketCaptureLog log = PacketCaptureLog.open(directory, 1_000_000);
+        for (int i = 0; i < 50; i++) assertTrue(log.append(event("record " + i)));
+        var counted = new java.util.concurrent.atomic.AtomicLong(-1);
+        var done = new CountDownLatch(1);
+        log.onFinished(() -> { counted.set(log.writtenRecords()); done.countDown(); });
+        log.close();
+        assertTrue(done.await(5, TimeUnit.SECONDS));
+        assertEquals(50, counted.get());
+        assertTrue(log.isFinished());
+        var late = new CountDownLatch(1);
+        log.onFinished(late::countDown);
+        assertEquals(0, late.getCount(), "a callback registered after finishing runs immediately");
+    }
 }

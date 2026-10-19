@@ -176,7 +176,8 @@ public abstract class InventoryTweaksMixin {
                 comet$mover.complete(action, System.nanoTime());
                 continue;
             }
-            if (action.steal() && stealDrop.get() && dropBackwards.get()) {
+            // A passenger sends no movement packets, so Meteor never runs rotation callbacks: drop without turning.
+            if (action.steal() && stealDrop.get() && dropBackwards.get() && !mc.player.isPassenger()) {
                 Rotations.rotate(mc.player.getYRot() - 180, mc.player.getXRot(), () -> {
                     if (stealDrop.get() && dropBackwards.get() && comet$canClick(action))
                         InvUtils.drop().slotId(action.slot());

@@ -173,10 +173,41 @@ class TntRedstoneSafetyTest {
             pos -> { throw new AssertionError("Unexpected power query"); }));
     }
 
+    @Test void clearSectionsAreSkippedUnknownSectionsFailAndMaybeSectionsAreRead() {
+        Grid world = new Grid();
+        world.blocks.put(TARGET.east(), Blocks.LEVER.defaultBlockState());
+        // A palette without components proves the section clear; its blocks are not read.
+        assertTrue(TntRedstoneSafety.canPlace(true, TARGET, pos -> false, pos -> fail("read a clear section"),
+            pos -> false, (x, y, z) -> TntRedstoneSafety.Section.CLEAR));
+        assertFalse(TntRedstoneSafety.canPlace(true, TARGET, pos -> false, world::state, pos -> false,
+            (x, y, z) -> TntRedstoneSafety.Section.UNKNOWN));
+        assertFalse(TntRedstoneSafety.canPlace(true, TARGET, pos -> false, world::state, pos -> false,
+            (x, y, z) -> TntRedstoneSafety.Section.MAYBE));
+        world.blocks.clear();
+        assertTrue(TntRedstoneSafety.canPlace(true, TARGET, pos -> false, world::state, pos -> false,
+            (x, y, z) -> TntRedstoneSafety.Section.MAYBE));
+    }
+
+    @Test void sectionMemoAsksEachSectionOnceUntilCleared() {
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        var memo = new TntRedstoneSafety.SectionMemo((x, y, z) -> { asked.incrementAndGet(); return TntRedstoneSafety.Section.CLEAR; });
+        // The 5-block buffer around this target spans two sections on each axis.
+        BlockPos corner = new BlockPos(16, 64, 16);
+        for (int i = 0; i < 3; i++) assertTrue(TntRedstoneSafety.canPlace(true, corner, pos -> false, pos -> null, pos -> false, memo));
+        assertEquals(8, asked.get());
+        memo.clear();
+        assertTrue(TntRedstoneSafety.canPlace(true, corner, pos -> false, pos -> null, pos -> false, memo));
+        assertEquals(16, asked.get());
+    }
+
     private static final class Grid {
         final Map<BlockPos, BlockState> blocks = new HashMap<>();
         final Set<BlockPos> unloaded = new HashSet<>();
         final Set<BlockPos> powered = new HashSet<>();
+
+        BlockState state(BlockPos pos) {
+            return unloaded.contains(pos) ? null : blocks.getOrDefault(pos, Blocks.AIR.defaultBlockState());
+        }
 
         boolean canPlace(BlockPos target) {
             return TntRedstoneSafety.canPlace(true, target, pos -> false,

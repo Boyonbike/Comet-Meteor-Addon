@@ -23,7 +23,7 @@ class AdaptiveFlightVerticalTest {
             Limits limits = new Limits(3, .75, .75, .05);
 
             Motion motion = move(controller, new Motion(2, direction * .1, 0), 2, .1,
-                new Controls(true, 1, direction, false, null, limits)).motion();
+                TestControls.of(true, 1, direction, false, null, limits)).motion();
 
             assertTrue(direction * motion.y() > 0);
             assertTrue(Math.abs(motion.y()) <= .05 + EPSILON);
@@ -41,7 +41,7 @@ class AdaptiveFlightVerticalTest {
             for (int tick = 0; tick < 100; tick++) {
                 controller.tick();
                 motion = move(controller, new Motion(0, direction * .1, 0), 0, .1,
-                    new Controls(true, 1, direction, false, null, limits)).motion();
+                    TestControls.of(true, 1, direction, false, null, limits)).motion();
             }
 
             assertEquals(direction > 0 ? .4 : -.6, motion.y(), EPSILON);
@@ -56,7 +56,7 @@ class AdaptiveFlightVerticalTest {
             controller.accept(new Motion(0, direction * .8, 0));
 
             Motion motion = move(controller, Motion.ZERO, 0, .1,
-                new Controls(false, 1, 0, false, null, limits)).motion();
+                TestControls.of(false, 1, 0, false, null, limits)).motion();
 
             assertTrue(direction * motion.y() >= .5 - EPSILON,
                 "releasing Sprint must keep the configured .3 braking budget");
@@ -71,7 +71,7 @@ class AdaptiveFlightVerticalTest {
         controller.accept(new Motion(0, .4, 0));
 
         Motion motion = move(controller, new Motion(0, -.1, 0), 0, .1,
-            new Controls(true, 1, -1, false, null, limits)).motion();
+            TestControls.of(true, 1, -1, false, null, limits)).motion();
 
         assertTrue(motion.y() >= .1 - EPSILON);
         assertTrue(motion.y() < .4);
@@ -86,7 +86,7 @@ class AdaptiveFlightVerticalTest {
             for (int tick = 0; tick < 150; tick++) {
                 controller.tick();
                 motion = move(controller, new Motion(2, .1, 0), 2, .1,
-                    new Controls(true, fraction, 1, false, null, limits)).motion();
+                    TestControls.of(true, fraction, 1, false, null, limits)).motion();
             }
 
             assertEquals(1.2 * fraction, motion.horizontalLength(), EPSILON);
@@ -102,7 +102,7 @@ class AdaptiveFlightVerticalTest {
         for (int tick = 0; tick < 150; tick++) {
             controller.tick();
             motion = move(controller, new Motion(2, .1, 0), 2, .1,
-                new Controls(false, .25, .5, 1, false, null, limits)).motion();
+                TestControls.of(false, .25, .5, 1, false, null, limits)).motion();
         }
 
         assertEquals(.5, motion.horizontalLength(), EPSILON);
@@ -116,7 +116,7 @@ class AdaptiveFlightVerticalTest {
         for (int tick = 0; tick < 150; tick++) {
             controller.tick();
             motion = move(controller, new Motion(2, .1, 0), 2, .1,
-                new Controls(true, .35, 1, 1, false, null, limits)).motion();
+                TestControls.of(true, .35, 1, 1, false, null, limits)).motion();
         }
 
         assertEquals(.7, motion.horizontalLength(), EPSILON);
@@ -128,14 +128,14 @@ class AdaptiveFlightVerticalTest {
         AdaptiveFlightController controller = controller();
         for (int tick = 0; tick < 100; tick++) {
             move(controller, new Motion(0, .1, 0), 0, .1,
-                new Controls(true, 1, 1, 1, false, null, limits));
+                TestControls.of(true, 1, 1, 1, false, null, limits));
         }
         assertEquals(.8, controller.output().y(), EPSILON);
 
         double previous = .8;
         for (int tick = 0; tick < 20; tick++) {
             Motion motion = move(controller, new Motion(0, .1, 0), 0, .1,
-                new Controls(false, 1, .35, 1, false, null, limits)).motion();
+                TestControls.of(false, 1, .35, 1, false, null, limits)).motion();
             assertTrue(motion.y() <= previous + EPSILON);
             assertTrue(previous - motion.y() <= .1 + EPSILON);
             assertTrue(motion.y() >= .8 * .35 - EPSILON);
@@ -157,7 +157,7 @@ class AdaptiveFlightVerticalTest {
         for (int tick = 0; tick < 80; tick++) {
             controller.tick();
             var step = AdaptiveFlightStep.move(controller, new Motion(2, .1, 0), 2, .1,
-                body, probe, 64, .35, new Controls(true, 1, 1, false, null, limits));
+                body, probe, 64, .35, TestControls.of(true, 1, 1, false, null, limits));
             body = body.move(step.motion().x(), step.motion().y(), step.motion().z());
             assertFalse(body.intersects(wall));
             assertTrue(body.maxX < 8);

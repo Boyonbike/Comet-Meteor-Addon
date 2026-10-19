@@ -41,6 +41,7 @@ public final class BaritoneElytra extends Module {
     private final Setting<Boolean> equip = general.add(new BoolSetting.Builder().name("equip-elytra").description("Put on an elytra from your inventory for the flight.").defaultValue(true).build());
     private final Setting<Boolean> swapBack = general.add(new BoolSetting.Builder().name("swap-back").description("Put the chestplate the elytra replaced back on after landing.").defaultValue(true).visible(equip::get).build());
     private final Setting<Boolean> restock = general.add(new BoolSetting.Builder().name("restock-fireworks").description("Move fireworks into the hotbar when it has none. Baritone only uses hotbar fireworks unless its allowInventory setting is on.").defaultValue(true).build());
+    private final Setting<Integer> restockSlot = general.add(new IntSetting.Builder().name("restock-slot").description("Hotbar slot (1-9) that receives fireworks when the hotbar has no empty slot; its item goes to where the fireworks were. The neighbouring slot is used while this one is selected.").defaultValue(9).range(1, 9).sliderRange(1, 9).visible(restock::get).build());
     private final ElytraTakeoff takeoff = new ElytraTakeoff();
     private BaritoneBridge baritone;
     /** The flight being looked after, or null. */
@@ -83,14 +84,21 @@ public final class BaritoneElytra extends Module {
     }
 
     @Override public void onDeactivate() {
+        boolean airborne = false;
         try {
             if (trip != null && baritone != null && mc.player != null && baritone.flight() != null) {
                 // Cancelling mid-air would leave the player gliding with nobody steering.
-                if (mc.player.isFallFlying()) info("Baritone keeps flying; #stop cancels it.");
+                airborne = mc.player.isFallFlying();
+                if (airborne) info("Baritone keeps flying; #stop cancels it.");
                 else baritone.stop();
             }
         } catch (LinkageError | RuntimeException e) {
             MeteorClient.LOG.error("Stopping Baritone's elytra flight failed", e);
+        }
+        if (airborne && resumeElytraFly) {
+            // ElytraFly would fight Baritone's steering for the rest of this flight: turn it back on after landing.
+            resumeElytraFly = false;
+            ElytraFlyResume.afterLanding();
         }
         finishFlight();
         if (mc.player != null && !mc.player.isFallFlying()) swapBack();
@@ -184,7 +192,11 @@ public final class BaritoneElytra extends Module {
         restock();
         if (!takeOff.get() || handsOff || baritone.autoJump()) return;
         if (!baritone.readyForTakeoff()) {
-            if (!glided && ++pathWait > PATH_TICKS) fallBack("Baritone couldn't find a flight path.", true);
+            if (!glided && ++pathWait > PATH_TICKS) {
+                // Readiness is read from Baritone's status text, which can change between Baritone versions.
+                MeteorClient.LOG.warn("Baritone elytra take-off timed out; Baritone's status was \"{}\"", baritone.flightStatus());
+                fallBack("Baritone couldn't find a flight path.", true);
+            }
             return;
         }
         boolean fluid = mc.player.isInWater() || mc.player.isInLava();
@@ -333,7 +345,8 @@ public final class BaritoneElytra extends Module {
         for (int i = Inventory.SELECTION_SIZE; i < Inventory.INVENTORY_SIZE; i++) {
             if (!isFirework(inventory.getItem(i))) continue;
             // Without an empty hotbar slot, the item swapped out goes to where the fireworks were.
-            int to = empty >= 0 ? empty : inventory.getSelectedSlot() == 8 ? 7 : 8;
+            int preferred = restockSlot.get() - 1;
+            int to = empty >= 0 ? empty : inventory.getSelectedSlot() != preferred ? preferred : preferred == 0 ? 1 : preferred - 1;
             InvUtils.move().from(i).toHotbar(to);
             restockWait = RESTOCK_TICKS;
             return;
@@ -360,7 +373,10 @@ public final class BaritoneElytra extends Module {
         return stack.is(Items.FIREWORK_ROCKET) && fireworks != null && fireworks.explosions().isEmpty();
     }
 
-    /** Remaining durability of an elytra Baritone can fly with (a real elytra, not about to break), otherwise -1. */
+    /**
+     * Remaining durability of an elytra Baritone can fly with (a real elytra, not about to break), otherwise -1. Unlike
+     * the other elytra modules this needs the vanilla elytra item: Baritone's elytra process checks for exactly that.
+     */
     private static int elytraDurability(ItemStack stack) {
         return stack.is(Items.ELYTRA) && !stack.nextDamageWillBreak() ? stack.getMaxDamage() - stack.getDamageValue() : -1;
     }
@@ -375,5 +391,25 @@ public final class BaritoneElytra extends Module {
             }
         }
         return best;
+    }
+
+    /** Turns ElytraFly back on once a flight left to Baritone has landed, after this module itself is off. */
+    private static final class ElytraFlyResume {
+        private static ElytraFlyResume pending;
+
+        static void afterLanding() {
+            if (pending != null) return;
+            pending = new ElytraFlyResume();
+            MeteorClient.EVENT_BUS.subscribe(pending);
+        }
+
+        @EventHandler private void onTick(TickEvent.Post event) {
+            // Without a player there is no flight left to conflict with.
+            if (MeteorClient.mc.player != null && MeteorClient.mc.player.isFallFlying()) return;
+            MeteorClient.EVENT_BUS.unsubscribe(this);
+            pending = null;
+            ElytraFly elytraFly = Modules.get().get(ElytraFly.class);
+            if (elytraFly != null && !elytraFly.isActive()) elytraFly.toggle();
+        }
     }
 }

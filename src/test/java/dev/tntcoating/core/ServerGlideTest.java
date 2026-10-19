@@ -241,7 +241,7 @@ class ServerGlideTest {
                 boolean release = AdaptiveFlightStep.harmless(controller.output());
                 ServerGlide.Context glide = world.glide(serverGlide);
                 var step = AdaptiveFlightStep.move(controller, new Motion(1, 0, 0), 1, .5, box, world, 64, .35,
-                    new Controls(false, .35, 0, release, guard ? glide : null));
+                    TestControls.of(false, .35, 0, release, guard ? glide : null));
                 if (step.glideLimited()) glideLimitedTicks++;
                 lastGlideLimited = step.glideLimited();
                 lastMotion = step.motion();

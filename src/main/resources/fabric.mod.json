@@ -6,7 +6,7 @@
   "authors": [
     "Boyonabike"
   ],
-  "description": "Comet by Boyonabike: inventory-aware Auto Tool and Auto Weapon, optimized Scaffold placement, bounded trajectory simulation, client-thread container transfers, adaptive Vanilla elytra movement with terrain pacing and correction recovery, cached shader storage ESP, fast item use without opening newly placed shulkers, TNT surface coating, priority jump placement, scaffold strips, tunnel backfill, Meteor waypoints on Xaero's maps, look-to-delete waypoints, Baritone elytra trips, elytra replacement, low-elytra logout, spiral area searches, base hunting along XaeroPlus old-chunk trails and player teleport packet logging.",
+  "description": "Comet by Boyonabike: adaptive Vanilla elytra movement with terrain pacing and correction recovery, Baritone elytra trips, elytra replacement and low-elytra logout, cached shader storage ESP, shulker content icons, bounded trajectory simulation, Meteor waypoints on Xaero's maps and look-to-delete waypoints, an interactive chat HUD for player commands, homes and teleport timers, TNT surface coating with jump placement, scaffold strips and tunnel backfill, Smart Sponge, fast item use without opening newly placed shulkers, inventory-aware Auto Tool and Auto Weapon, optimized Scaffold placement, client-thread container transfers, movable engine and speed HUD elements, and player teleport packet logging.",
   "environment": "client",
   "license": "CC0-1.0",
   "entrypoints": {
@@ -21,12 +21,11 @@
     "java": ">=${jdk_version}",
     "minecraft": "${minecraft_version}",
     "fabricloader": ">=0.19.3",
-    "meteor-client": "*"
+    "meteor-client": ">=26.1.2-42"
   },
   "suggests": {
     "xaerominimap": "*",
     "xaeroworldmap": "*",
-    "xaeroplus": "*",
     "baritone-meteor": "*"
   },
   "mixins": [

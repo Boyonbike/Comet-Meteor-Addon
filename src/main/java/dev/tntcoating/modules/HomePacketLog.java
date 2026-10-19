@@ -18,6 +18,7 @@ import meteordevelopment.meteorclient.settings.StringSetting;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
@@ -80,7 +81,8 @@ public final class HomePacketLog extends Module {
                 mc.level.dimension().identifier().toString());
             JsonObject header = next.event("session_start", "local", null);
             header.addProperty("format_version", 1);
-            header.addProperty("minecraft", "26.1.2");
+            header.addProperty("minecraft", FabricLoader.getInstance().getModContainer("minecraft")
+                .map(container -> container.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));
             header.addProperty("player_filter", next.filter);
             header.addProperty("relative_moves", next.relativeMoves);
             header.addProperty("other_packet_types", next.packetTypes);
@@ -116,7 +118,10 @@ public final class HomePacketLog extends Module {
         if (previous != null) {
             previous.stop();
             info("Packet log: %s", previous.log.path().toAbsolutePath());
-            if (previous.log.droppedRecords() > 0) warning("%d log records were dropped; check the summary before interpreting this capture.", previous.log.droppedRecords());
+            // The dropped count is only final once the writer has drained the queue.
+            previous.log.onFinished(() -> mc.execute(() -> {
+                if (previous.log.droppedRecords() > 0) warning("%d log records were dropped; check the summary before interpreting this capture.", previous.log.droppedRecords());
+            }));
         }
     }
 

@@ -17,18 +17,16 @@ public abstract class ScaffoldBlockUpdatesMixin {
     @Inject(method = "handleBlockUpdate", at = @At("TAIL"))
     private void comet$blockUpdate(ClientboundBlockUpdatePacket packet, CallbackInfo ci) {
         if (Modules.get() == null) return;
-        Scaffold scaffold = Modules.get().get(Scaffold.class);
-        if (scaffold != null && scaffold.isActive()) {
-            ((ScaffoldPlacementFeedback) scaffold).comet$serverBlockUpdate(packet.getPos(), packet.getBlockState());
+        // Not a ScaffoldPlacementFeedback if Comet's Scaffold upgrade was skipped for this Meteor build.
+        if (Modules.get().get(Scaffold.class) instanceof ScaffoldPlacementFeedback feedback && ((Scaffold) feedback).isActive()) {
+            feedback.comet$serverBlockUpdate(packet.getPos(), packet.getBlockState());
         }
     }
 
     @Inject(method = "handleChunkBlocksUpdate", at = @At("TAIL"))
     private void comet$sectionUpdate(ClientboundSectionBlocksUpdatePacket packet, CallbackInfo ci) {
         if (Modules.get() == null) return;
-        Scaffold scaffold = Modules.get().get(Scaffold.class);
-        if (scaffold != null && scaffold.isActive()) {
-            ScaffoldPlacementFeedback feedback = (ScaffoldPlacementFeedback) scaffold;
+        if (Modules.get().get(Scaffold.class) instanceof ScaffoldPlacementFeedback feedback && ((Scaffold) feedback).isActive()) {
             packet.runUpdates(feedback::comet$serverBlockUpdate);
         }
     }

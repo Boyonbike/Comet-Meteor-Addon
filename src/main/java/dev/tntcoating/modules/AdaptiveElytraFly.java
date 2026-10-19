@@ -1,28 +1,30 @@
 package dev.tntcoating.modules;
 
 import dev.tntcoating.TntCoatingAddon;
+import dev.tntcoating.compat.MeteorUpgrades;
 import dev.tntcoating.core.AdaptiveFlightController;
 import dev.tntcoating.core.AdaptiveFlightController.Motion;
 import dev.tntcoating.core.AdaptiveFlightStep;
 import dev.tntcoating.core.AdaptiveFlightLearning;
 import dev.tntcoating.core.AdaptiveFlightMemory;
-import dev.tntcoating.core.ElytraPilot;
+import dev.tntcoating.core.Finite;
 import dev.tntcoating.core.FlightCorridor;
 import dev.tntcoating.core.ServerGlide;
 import dev.tntcoating.mixin.FireworkRocketAccessor;
-import dev.tntcoating.render.AdaptiveEngineHud;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
@@ -69,6 +71,12 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 /** Optional replacement for Meteor's Vanilla movement; flight planners continue to own their normal keys/settings. */
 public final class AdaptiveElytraFly extends Module {
     private static final double EPSILON = 1e-7;
+    // Flight memory is written off the client thread; its fsync must never stall a movement tick.
+    private static final ExecutorService MEMORY_WRITER = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "comet-flight-memory");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final SettingGroup general = settings.getDefaultGroup();
     private final SettingGroup terrain = settings.createGroup("Terrain");
     private final SettingGroup recovery = settings.createGroup("Correction Recovery");
@@ -84,9 +92,6 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Boolean> sprintBoost = general.add(new BoolSetting.Builder().name("sprint-boost")
         .description("Hold your Sprint key to boost horizontal movement and deliberate climb/descent. Keeps terrain and correction limits.")
         .defaultValue(true).build());
-    private final Setting<Boolean> engineHud = general.add(new BoolSetting.Builder().name("engine-hud")
-        .description("Display a live Adaptive Elytra Fly engine overview in the top-right corner.")
-        .defaultValue(false).build());
     private final Setting<Double> cruiseMaximum = general.add(new DoubleSetting.Builder().name("cruise-max-speed")
         .description("Horizontal cruise maximum as a percentage of the adaptive engine's attainable speed. 100% uses its full output; see Flight Diagnostics for blocks/second.")
         .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
@@ -106,7 +111,7 @@ public final class AdaptiveElytraFly extends Module {
         .description("Maximum vertical velocity change per tick. Vertical braking uses up to twice this; setbacks can reduce it further.")
         .defaultValue(.05).range(.005, .5).sliderRange(.005, .15).decimalPlaces(3).build());
     private final Setting<Boolean> rememberLimits = recovery.add(new BoolSetting.Builder().name("remember-server-limits")
-        .description("Save tested horizontal, ascent, descent and vertical acceleration limits separately for each server and dimension.")
+        .description("Save tested horizontal, ascent, descent, total movement and vertical acceleration limits separately for each server and dimension.")
         .defaultValue(true).build());
     private final Setting<Integer> lookahead = terrain.add(new IntSetting.Builder().name("lookahead")
         .description("Maximum corridor distance to check, in blocks. Work is bounded at 64 blocks per scan.")
@@ -150,8 +155,11 @@ public final class AdaptiveElytraFly extends Module {
     private AdaptiveFlightMemory memory;
     private AdaptiveFlightMemory.ProfileLimits savedLimits = AdaptiveFlightMemory.ProfileLimits.UNKNOWN;
     private String profile;
-    private boolean memoryDirty, memoryWarning;
+    private boolean memoryDirty;
     private int memorySaveTicks;
+    private final AtomicBoolean memoryWriteQueued = new AtomicBoolean();
+    private volatile String memoryFailure;
+    private volatile boolean memoryWarning;
     private final FlightCorridor.Probe probe = new FlightCorridor.Probe() {
         @Override public boolean loaded(int x, int z) { return mc.level.getChunkSource().hasChunk(x, z); }
         @Override public boolean clear(AABB swept) {
@@ -165,6 +173,7 @@ public final class AdaptiveElytraFly extends Module {
             return true;
         }
     };
+    private final FlightCorridor.Probe chunksOnly = FlightCorridor.Probe.chunksOnly(probe);
     // The server resolves its own glide against blocks the same way, minus step-up.
     private final ServerGlide.Collider collider = (box, movement) -> {
         Vec3 vec = toVec(movement);
@@ -189,7 +198,7 @@ public final class AdaptiveElytraFly extends Module {
     private double frameAverageMs, framePeakMs, measuredSpeed;
     private double adaptiveMaximum;
     private boolean maneuvering, closeObjectOverride;
-    private long slowFrames, sampleTime;
+    private long slowFrames, sampleTime, lastTickNanos;
     private int diagnosticCorrectionBase;
     private Vec3 samplePosition, lastControlledPosition;
 
@@ -200,6 +209,11 @@ public final class AdaptiveElytraFly extends Module {
 
     @Override public void onActivate() {
         reset();
+        if (!MeteorUpgrades.applied("ElytraFlyMixin")) {
+            error("This Meteor build changed Elytra Fly, so Comet's adaptive movement could not attach to it. See the log.");
+            toggle();
+            return;
+        }
         ElytraFly fly = Modules.get().get(ElytraFly.class);
         if (fly.flightMode.get() != ElytraFlightModes.Vanilla) {
             warning("Choose Vanilla in Meteor's Elytra Fly to use adaptive flight.");
@@ -244,6 +258,9 @@ public final class AdaptiveElytraFly extends Module {
             world = mc.level;
             player = mc.player;
         }
+        long now = System.nanoTime();
+        if (controlling && lastTickNanos != 0 && now - lastTickNanos > 250_000_000L) learning.pauseForLag();
+        lastTickNanos = now;
         controller.configure(controllerSettings());
         controller.tick();
         learning.configure(initialVerticalSpeed.get(), verticalAcceleration.get());
@@ -315,8 +332,8 @@ public final class AdaptiveElytraFly extends Module {
     public boolean move(ElytraFly fly, ElytraFlightMode mode, PlayerMoveEvent event) {
         if (!isActive() || !eligible(fly) || event.type != MoverType.SELF) return false;
         // Stock hover has its own near-ground/key handling, so let that branch run in full when requested.
-        if (ElytraPilot.landingInProgress() || (fly.autoHover.get() && mc.options.keyShift.isDown())) {
-            suspend(ElytraPilot.landingInProgress() ? "Landing" : "Meteor hover");
+        if (fly.autoHover.get() && mc.options.keyShift.isDown()) {
+            suspend("Meteor hover");
             return false;
         }
         checkBlocks = avoidBlocks.get() || fly.noCrash.get();
@@ -328,12 +345,12 @@ public final class AdaptiveElytraFly extends Module {
         if (maneuvering && sprintKey) closeObjectOverride = true;
         double releaseSpeed = closeObjectOverride ? AdaptiveFlightStep.MAX_HORIZONTAL_SPEED : closeObjectSpeed.get();
         boolean releaseSafeCollisions = safeManeuvering.get() && (closeObjectOverride
-            || within(mc.player.getDeltaMovement(), releaseSpeed) && within(event.movement, releaseSpeed));
+            || mc.player.getDeltaMovement().length() <= releaseSpeed && event.movement.length() <= releaseSpeed);
         boolean harmlessStart = releaseSafeCollisions && controller.output().length() <= releaseSpeed;
         // Corrections/unloads can strand the body in unknown terrain. Let stock physics withdraw from an existing
         // overlap; a blocked path from a safe starting box still uses the adaptive guard normally.
         FlightCorridor.Result start = FlightCorridor.inspectStart(mc.player.getBoundingBox(),
-            harmlessStart ? chunksOnlyProbe() : probe);
+            harmlessStart ? chunksOnly : probe);
         chunkChecks += start.chunkChecks();
         if (start.reason() != FlightCorridor.Reason.CLEAR) {
             suspend("Terrain overlap");
@@ -347,14 +364,14 @@ public final class AdaptiveElytraFly extends Module {
             mode.handleAutopilot();
             Motion requested = requested(fly, event.movement.y);
             boolean sprinting = sprintKey || closeObjectOverride;
-            int verticalInput = finite(fly.verticalSpeed.get(), 0, 64) == 0 ? 0
+            int verticalInput = Finite.clamp(fly.verticalSpeed.get(), 0, 64, 0) == 0 ? 0
                 : mc.options.keyJump.isDown() ? 1 : mc.options.keyShift.isDown() ? -1 : 0;
             ServerGlide.Context glide = checkBlocks && serverGlideGuard.get() && serverGlide != null
                 ? glideContext(mc.player, mc.player.getXRot(), mc.player.getYRot()) : null;
             // Probe the actual blended trajectory once, rather than separately scanning old and desired headings.
             AdaptiveFlightStep.Result step = AdaptiveFlightStep.move(controller, requested,
-                finite(fly.horizontalSpeed.get(), 0, 64),
-                Math.max(Math.abs(requested.y()), finite(fly.verticalSpeed.get(), 0, 64) * 0.5),
+                Finite.clamp(fly.horizontalSpeed.get(), 0, 64, 0),
+                Math.max(Math.abs(requested.y()), Finite.clamp(fly.verticalSpeed.get(), 0, 64, 0) * 0.5),
                 mc.player.getBoundingBox(), probe, lookahead.get(), margin.get(),
                 new AdaptiveFlightStep.Controls(sprinting,
                     (sprinting ? sprintMaximum.get() : cruiseMaximum.get()) / 100,
@@ -371,7 +388,7 @@ public final class AdaptiveElytraFly extends Module {
             if (closeObjectOverride && step.safeManeuvering() && !contactResolved) closeObjectOverride = false;
             learning.observe(actualMotion, verticalInput, sprinting,
                 step.corridor() != null && step.corridor().reason() == FlightCorridor.Reason.CLEAR
-                    && !step.glideLimited() && controller.speedFactor() >= .999,
+                    && !step.glideLimited() && !contactResolved && controller.speedFactor() >= .999,
                 (sprinting ? sprintMaximum.get() : cruiseMaximum.get()) / 100,
                 (sprinting ? verticalSprintMaximum.get() : verticalCruiseMaximum.get()) / 100);
             adaptiveMaximum = step.adaptiveMaximum();
@@ -401,10 +418,10 @@ public final class AdaptiveElytraFly extends Module {
             Motion output = controller.output();
             FlightCorridor.Result actual = FlightCorridor.inspect(mc.player.getBoundingBox(), toVec(output),
                 output.length() + margin.get(), releaseSafeCollisions && maneuvering
-                    && output.length() <= releaseSpeed ? chunksOnlyProbe() : probe);
+                    && output.length() <= releaseSpeed ? chunksOnly : probe);
             chunkChecks += actual.chunkChecks();
             double allowed = Math.max(0, actual.clearDistance() - margin.get());
-            if (allowed < output.length()) controller.accept(scale(output, allowed / output.length()));
+            if (allowed < output.length()) controller.accept(output.scaled(allowed / output.length()));
         }
         Motion output = controller.output();
         lastControlledPosition = mc.player.position();
@@ -415,7 +432,7 @@ public final class AdaptiveElytraFly extends Module {
     private boolean eligible(ElytraFly fly) {
         return mc.player != null && mc.level != null && fly != null && fly.isActive()
             && fly.flightMode.get() == ElytraFlightModes.Vanilla && mc.player.isFallFlying()
-            && mc.player.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER)
+            && ElytraReplace.isGlider(mc.player.getItemBySlot(EquipmentSlot.CHEST))
             && !mc.player.isInLava() && !(mc.player.isInWater() && fly.stopInWater.get())
             && !Modules.get().isActive(Freecam.class);
     }
@@ -431,26 +448,21 @@ public final class AdaptiveElytraFly extends Module {
         int forward = (mc.options.keyUp.isDown() ? 1 : 0) - (mc.options.keyDown.isDown() ? 1 : 0);
         int right = (mc.options.keyRight.isDown() ? 1 : 0) - (mc.options.keyLeft.isDown() ? 1 : 0);
         double length = Math.hypot(forward, right);
-        double speed = finite(fly.horizontalSpeed.get(), 0, 64);
+        double speed = Finite.clamp(fly.horizontalSpeed.get(), 0, 64, 0);
         double yaw = Math.toRadians(mc.player.getYRot());
         double x = length == 0 ? 0 : (-Math.sin(yaw) * forward - Math.cos(yaw) * right) * speed / length;
         double z = length == 0 ? 0 : (Math.cos(yaw) * forward - Math.sin(yaw) * right) * speed / length;
-        double y = naturalY < 0 ? naturalY * finite(fly.fallMultiplier.get(), 0, 64) : 0;
-        if (mc.options.keyJump.isDown()) y += 0.5 * finite(fly.verticalSpeed.get(), 0, 64);
-        else if (mc.options.keyShift.isDown()) y -= 0.5 * finite(fly.verticalSpeed.get(), 0, 64);
-        return new Motion(x, finite(y, -64, 64), z);
-    }
-
-    private FlightCorridor.Probe chunksOnlyProbe() {
-        return new FlightCorridor.Probe() {
-            @Override public boolean loaded(int x, int z) { return probe.loaded(x, z); }
-            @Override public boolean clear(AABB swept) { return true; }
-        };
+        double y = naturalY < 0 ? naturalY * Finite.clamp(fly.fallMultiplier.get(), 0, 64, 0) : 0;
+        if (mc.options.keyJump.isDown()) y += 0.5 * Finite.clamp(fly.verticalSpeed.get(), 0, 64, 0);
+        else if (mc.options.keyShift.isDown()) y -= 0.5 * Finite.clamp(fly.verticalSpeed.get(), 0, 64, 0);
+        return new Motion(x, Finite.clamp(y, -64, 64, 0), z);
     }
 
     private void consumeCorrections() {
         int count = corrections.getAndSet(0);
         if (count > 0 && controlling && mc.player != null && mc.player.isFallFlying()) {
+            // Several packets before one controlled move carry no independent speed evidence.
+            if (count > 1) learning.pauseForLag();
             // Long explicit teleports still pause movement, but do not permanently
             // teach a server that an otherwise clean flight speed was rejected.
             ClientboundPlayerPositionPacket packet = glideSetback.get();
@@ -461,7 +473,7 @@ public final class AdaptiveElytraFly extends Module {
             if (lastControlledPosition != null && target.distanceToSqr(lastControlledPosition) <= 64 * 64)
                 learning.corrected(correctionBackoff.get());
             else learning.resetHistory();
-            controller.corrected(count);
+            controller.corrected(count, learning.isLagPaused());
             saveProfile(true);
             movementTick = Integer.MIN_VALUE;
             samplePosition = null;
@@ -508,6 +520,7 @@ public final class AdaptiveElytraFly extends Module {
         samplePosition = null;
         lastControlledPosition = null;
         sampleTime = 0;
+        lastTickNanos = 0;
         diagnosticCorrectionBase = 0;
         state = "Waiting for flight";
         updateStatus();
@@ -517,8 +530,9 @@ public final class AdaptiveElytraFly extends Module {
         return MeteorClient.FOLDER.toPath().resolve("comet/adaptive-flight-limits.dat");
     }
 
+    /** The server/world and dimension these limits belong to, whether or not they are persisted. */
     private String profileIdentity() {
-        if (!rememberLimits.get() || mc.level == null) return null;
+        if (mc.level == null) return null;
         String server;
         if (mc.isLocalServer()) server = "local:" + Utils.getWorldName();
         else if (mc.getCurrentServer() != null && !mc.getCurrentServer().ip.isBlank()) {
@@ -529,37 +543,58 @@ public final class AdaptiveElytraFly extends Module {
         return identity.length() <= 1024 ? identity : null;
     }
 
+    /**
+     * Learning restarts only when the server, world or dimension changes. Toggling remember-server-limits only
+     * changes persistence, so the current session's learning is kept either way.
+     */
     private void bindProfile() {
         String next = profileIdentity();
         if (Objects.equals(profile, next)) return;
         saveProfile(true);
         profile = next;
-        if (memory == null) memory = AdaptiveFlightMemory.load(memoryPath());
-        savedLimits = next == null ? AdaptiveFlightMemory.ProfileLimits.UNKNOWN : memory.getProfile(next);
+        savedLimits = AdaptiveFlightMemory.ProfileLimits.UNKNOWN;
+        if (next != null && rememberLimits.get()) savedLimits = memory().getProfile(next);
         learning.restore(savedLimits.limits(), savedLimits.ceilings());
         controller.reset();
     }
 
+    private AdaptiveFlightMemory memory() {
+        if (memory == null) memory = AdaptiveFlightMemory.load(memoryPath());
+        return memory;
+    }
+
     private void saveProfile(boolean flush) {
-        if (profile != null && memory != null && rememberLimits.get()) {
+        if (profile != null && rememberLimits.get()) {
             var current = new AdaptiveFlightMemory.ProfileLimits(learning.remembered(), learning.ceilings());
             if (!current.equals(savedLimits)) {
-                memory.putProfile(profile, current);
+                memory().putProfile(profile, current);
                 savedLimits = current;
                 memoryDirty = true;
             }
         }
+        String failure = memoryFailure;
+        if (failure != null) {
+            memoryFailure = null;
+            if (!memoryWarning) warning("Could not save flight limits: %s", failure);
+            memoryWarning = true;
+            memoryDirty = true; // Retried on the next save interval.
+        }
         if (!flush && ++memorySaveTicks < 200) return;
         memorySaveTicks = 0;
         if (!memoryDirty || memory == null) return;
-        try {
-            memory.save(memoryPath());
-            memoryDirty = false;
-            memoryWarning = false;
-        } catch (IOException | SecurityException e) {
-            if (!memoryWarning) warning("Could not save flight limits: %s", e.getMessage());
-            memoryWarning = true;
-        }
+        memoryDirty = false;
+        AdaptiveFlightMemory target = memory;
+        // A queued write snapshots the latest profiles when it runs, so further saves coalesce into it.
+        if (!memoryWriteQueued.compareAndSet(false, true)) return;
+        MEMORY_WRITER.execute(() -> {
+            memoryWriteQueued.set(false);
+            try {
+                target.save(memoryPath());
+                memoryWarning = false;
+            } catch (IOException | RuntimeException e) {
+                memoryFailure = e.getMessage() == null ? e.toString() : e.getMessage();
+            }
+        });
     }
 
     private AdaptiveFlightController.Settings controllerSettings() {
@@ -588,11 +623,12 @@ public final class AdaptiveElytraFly extends Module {
         if (ms > 50) slowFrames++;
     }
 
-    @EventHandler private void onRender2D(Render2DEvent event) {
-        if (!engineHud.get()) return;
+    /** Lines for the Adaptive Elytra Fly HUD element, or null while the module is off. */
+    public List<String> hudLines() {
+        if (!isActive()) return null;
         Motion output = controller.output();
         var limits = learning.limits();
-        AdaptiveEngineHud.renderRight(event, "Adaptive Elytra Fly", List.of(
+        return List.of(
             String.format(Locale.ROOT, "State: %s", state),
             String.format(Locale.ROOT, "Speed: %.1f b/s | H %.1f | V %+.1f",
                 measuredSpeed, output.horizontalLength() * 20, output.y() * 20),
@@ -600,20 +636,24 @@ public final class AdaptiveElytraFly extends Module {
                 adaptiveMaximum * 20, controller.speedFactor() * 100),
             String.format(Locale.ROOT, "Learned: H %.1f | up %.1f | down %.1f b/s",
                 limits.horizontal() * 20, limits.ascent() * 20, limits.descent() * 20),
+            String.format(Locale.ROOT, "Total movement max: %.1f b/s", limits.total() * 20),
             String.format(Locale.ROOT, "Corrections: %d | server glide %s",
                 controller.correctionCount(), serverGlide == null ? "idle"
                     : String.format(Locale.ROOT, "%.1f b/s", serverGlide.horizontalLength() * 20))
-        ));
+        );
     }
 
     private void updateStatus() {
         hud = String.format(Locale.ROOT, "%s %.0f b/s", state, measuredSpeed);
+        // Diagnostics labels are only visible in a settings screen; skip their formatting during play.
+        if (mc.screen == null) return;
         if (statusLabel != null) statusLabel.set(String.format(Locale.ROOT,
             "%s | ceiling %.0f%% | measured %.1f b/s", state, controller.speedFactor() * 100, measuredSpeed));
         if (speedLabel != null) {
             double maximum = controlling ? adaptiveMaximum : AdaptiveFlightStep.maximumSpeed(
                 braking.get(), lookahead.get(), margin.get()) * controller.speedFactor();
             maximum = Math.min(maximum, learning.limits().horizontal() * controller.speedFactor());
+            maximum = Math.min(maximum, learning.limits().total() * controller.speedFactor());
             speedLabel.set(String.format(Locale.ROOT,
                 "Horizontal max %.1f b/s | cruise %.1f (%.1f%%) | Sprint %.1f (%.1f%%) | vertical cruise/Sprint %.1f%%/%.1f%%",
                 maximum * 20, maximum * cruiseMaximum.get() / 5, cruiseMaximum.get(),
@@ -624,11 +664,11 @@ public final class AdaptiveElytraFly extends Module {
             var limits = learning.limits();
             var guidance = learning.ceilings();
             learningLabel.set(String.format(Locale.ROOT,
-                "Adaptive limits: horizontal %.1f | up %.1f | down %.1f b/s | vertical acceleration %.3f | correction guidance %.1f/%.1f/%.1f%s",
+                "Adaptive limits: horizontal %.1f | up %.1f | down %.1f | total %.1f b/s | vertical acceleration %.3f | correction guidance %.1f/%.1f/%.1f/%.1f%s",
                 Math.min(limits.horizontal(), AdaptiveFlightStep.maximumSpeed(braking.get(), lookahead.get(), margin.get())) * 20,
-                limits.ascent() * 20, limits.descent() * 20, limits.verticalAcceleration(),
-                guidance.horizontal() * 20, guidance.ascent() * 20, guidance.descent() * 20,
-                profile == null ? " | session only" : " | server memory"));
+                limits.ascent() * 20, limits.descent() * 20, limits.total() * 20, limits.verticalAcceleration(),
+                guidance.horizontal() * 20, guidance.ascent() * 20, guidance.descent() * 20, guidance.total() * 20,
+                profile == null || !rememberLimits.get() ? " | session only" : " | server memory"));
         }
         if (countsLabel != null) countsLabel.set("Corrections " + (controller.correctionCount() - diagnosticCorrectionBase)
             + " | chunk-limited ticks " + chunkLimitedTicks + " | obstacle-limited ticks " + obstacleLimitedTicks);
@@ -690,18 +730,9 @@ public final class AdaptiveElytraFly extends Module {
         return toMotion(Entity.collideBoundingBox(mc.player, requested,
             mc.player.getBoundingBox(), mc.level, entities));
     }
-    private static boolean within(Vec3 motion, double maximum) {
-        return motion.length() <= maximum;
-    }
     private static double difference(Motion a, Motion b) {
         return Math.sqrt((a.x() - b.x()) * (a.x() - b.x())
             + (a.y() - b.y()) * (a.y() - b.y())
             + (a.z() - b.z()) * (a.z() - b.z()));
-    }
-    private static Motion scale(Motion motion, double factor) {
-        return new Motion(motion.x() * factor, motion.y() * factor, motion.z() * factor);
-    }
-    private static double finite(double value, double min, double max) {
-        return Double.isFinite(value) ? Math.max(min, Math.min(max, value)) : 0;
     }
 }

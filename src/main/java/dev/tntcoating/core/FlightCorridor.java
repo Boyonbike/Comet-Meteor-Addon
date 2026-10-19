@@ -19,6 +19,14 @@ public final class FlightCorridor {
 
         /** Called only after every chunk covered by this swept box is loaded. */
         boolean clear(AABB sweptSegment);
+
+        /** Keeps this probe's non-loading chunk checks and treats every block as clear. */
+        static Probe chunksOnly(Probe probe) {
+            return new Probe() {
+                @Override public boolean loaded(int chunkX, int chunkZ) { return probe.loaded(chunkX, chunkZ); }
+                @Override public boolean clear(AABB sweptSegment) { return true; }
+            };
+        }
     }
 
     public enum Reason { CLEAR, CHUNKS, OBSTACLE, INVALID }
@@ -26,6 +34,19 @@ public final class FlightCorridor {
     /** Counts include the bounded refinement checks; CLEAR can cover a capped horizon. */
     public record Result(double clearDistance, Reason reason, int segments,
                          int chunkChecks, int collisionChecks) {}
+
+    /**
+     * The fastest speed that can still stop within {@code clearance} at {@code braking} per tick, reserving this
+     * tick's travel as well as the stopping distance, and never more than the clearance itself.
+     */
+    public static double safeSpeed(double braking, double clearance) {
+        // sqrt(b*b + 2*b*d) - b, in an equivalent form that avoids cancellation and overflow.
+        double rootBraking = Math.sqrt(braking);
+        double twiceClearance = 2 * clearance;
+        double brakingSpeed = rootBraking * (twiceClearance
+            / (Math.hypot(rootBraking, Math.sqrt(twiceClearance)) + rootBraking));
+        return Math.min(clearance, brakingSpeed);
+    }
 
     /**
      * A downward physical move may land on shapes wholly below the current feet:

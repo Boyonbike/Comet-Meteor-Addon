@@ -31,7 +31,7 @@ public final class AdaptiveFlightController {
             return Math.hypot(x, z);
         }
 
-        private Motion scaled(double factor) {
+        public Motion scaled(double factor) {
             return factor == 0 ? ZERO : new Motion(x * factor, y * factor, z * factor);
         }
     }
@@ -79,6 +79,7 @@ public final class AdaptiveFlightController {
     private boolean pauseStarted;
     private boolean terrainLimited;
     private boolean boosting;
+    private boolean transientRecovery;
 
     public AdaptiveFlightController(Settings settings) {
         configure(settings);
@@ -99,6 +100,7 @@ public final class AdaptiveFlightController {
         pauseStarted = false;
         terrainLimited = false;
         boosting = false;
+        transientRecovery = false;
     }
 
     /**
@@ -113,18 +115,33 @@ public final class AdaptiveFlightController {
         pauseStarted = true;
         terrainLimited = false;
         if (ticksSinceCorrection < Integer.MAX_VALUE) ticksSinceCorrection++;
-        if (!pausedThisTick && correctionCount > 0 && ticksSinceCorrection > settings.recoveryDelayTicks()) {
-            speedFactor = Math.min(1, speedFactor + settings.recoveryPerTick());
+        int recoveryDelay = transientRecovery ? Math.min(settings.recoveryDelayTicks(), 20) : settings.recoveryDelayTicks();
+        double recoveryRate = transientRecovery ? Math.min(1, settings.recoveryPerTick() * 4) : settings.recoveryPerTick();
+        if (!pausedThisTick && correctionCount > 0 && ticksSinceCorrection > recoveryDelay) {
+            speedFactor = Math.min(1, speedFactor + recoveryRate);
+            if (speedFactor == 1) transientRecovery = false;
         }
     }
 
     /** Records one or more server corrections without overflowing counters. */
     public void corrected(int count) {
+        corrected(count, false);
+    }
+
+    /** A stall's correction burst shares one temporary backoff and recovers promptly after feedback settles. */
+    public void corrected(int count, boolean transientFeedback) {
         if (count < 0) throw new IllegalArgumentException("Correction count cannot be negative.");
         if (count == 0) return;
         correctionCount = (int) Math.min(Integer.MAX_VALUE, (long) correctionCount + count);
-        speedFactor = Math.max(MIN_SPEED_FACTOR,
-            speedFactor * Math.pow(settings.correctionMultiplier(), count));
+        if (transientFeedback) {
+            if (!transientRecovery)
+                speedFactor = Math.max(MIN_SPEED_FACTOR, speedFactor * settings.correctionMultiplier());
+            transientRecovery = speedFactor < 1;
+        } else {
+            transientRecovery = false;
+            speedFactor = Math.max(MIN_SPEED_FACTOR,
+                speedFactor * Math.pow(settings.correctionMultiplier(), count));
+        }
         ticksSinceCorrection = 0;
         futurePauseTicks = settings.correctionPauseTicks();
         pausedThisTick = futurePauseTicks > 0;

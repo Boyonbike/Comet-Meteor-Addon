@@ -22,7 +22,7 @@ import java.util.zip.CheckedOutputStream;
 
 /**
  * Adaptive flight speeds and correction guidance remembered independently per server identity.
- * Unknown axes retain sentinel guidance, so learning one axis never limits another.
+ * Unknown axes retain sentinel guidance; total displacement is a separate shared limit.
  * Profiles expire 180 days after their last learned update and least recently used profiles are bounded.
  */
 public final class AdaptiveFlightMemory {
@@ -33,14 +33,21 @@ public final class AdaptiveFlightMemory {
 
     private static final int MAGIC = 0x4341464d; // CAFM
     private static final int LEGACY_VERSION = 1;
-    private static final int VERSION = 2;
+    private static final int GUIDANCE_VERSION = 2;
+    private static final int VERSION = 3;
     private static final int MAX_IDENTITY_LENGTH = 1_024;
     private static final long HEADER_AND_CHECKSUM_BYTES = 20;
     private static final long MAX_FILE_BYTES = HEADER_AND_CHECKSUM_BYTES
-        + MAX_SERVER_PROFILES * (2L + 3L * MAX_IDENTITY_LENGTH + 8 + 8 * 8);
+        + MAX_SERVER_PROFILES * (2L + 3L * MAX_IDENTITY_LENGTH + 8 + 10 * 8);
 
     /** Speeds are blocks per client tick; vertical acceleration is blocks per tick squared. */
-    public record Limits(double horizontal, double ascent, double descent, double verticalAcceleration) {
+    public record Limits(double horizontal, double ascent, double descent, double verticalAcceleration,
+                         double total) {
+        /** Older profiles and callers have no evidence of a combined displacement limit. */
+        public Limits(double horizontal, double ascent, double descent, double verticalAcceleration) {
+            this(horizontal, ascent, descent, verticalAcceleration, MAX_SPEED);
+        }
+
         /** A sentinel only: callers still apply their configured limits and conservative initial learning. */
         public static final Limits UNKNOWN = new Limits(MAX_SPEED, MAX_SPEED, MAX_SPEED, MAX_VERTICAL_ACCELERATION);
 
@@ -49,6 +56,7 @@ public final class AdaptiveFlightMemory {
             validateLimit(ascent, MAX_SPEED);
             validateLimit(descent, MAX_SPEED);
             validateLimit(verticalAcceleration, MAX_VERTICAL_ACCELERATION);
+            validateLimit(total, MAX_SPEED);
         }
 
         private static void validateLimit(double limit, double maximum) {
@@ -122,7 +130,7 @@ public final class AdaptiveFlightMemory {
                 new BufferedInputStream(Files.newInputStream(path)), crc))) {
                 if (in.readInt() != MAGIC) return memory;
                 int version = in.readInt();
-                if (version != VERSION && version != LEGACY_VERSION) return memory;
+                if (version != VERSION && version != GUIDANCE_VERSION && version != LEGACY_VERSION) return memory;
                 int count = in.readInt();
                 if (count < 0 || count > MAX_SERVER_PROFILES) return memory;
                 var restored = new LinkedHashMap<String, Profile>();
@@ -132,8 +140,8 @@ public final class AdaptiveFlightMemory {
                     if (!server.equals(identity(server))) return memory;
                     long learnedAt = in.readLong();
                     if (learnedAt < 0) return memory;
-                    var starting = readLimits(in);
-                    var limits = new ProfileLimits(starting, version == LEGACY_VERSION ? starting : readLimits(in));
+                    var starting = readLimits(in, version);
+                    var limits = new ProfileLimits(starting, version == LEGACY_VERSION ? starting : readLimits(in, version));
                     // Clock corrections cannot make an otherwise valid profile immortal.
                     var profile = new Profile(server, limits, Math.min(learnedAt, now));
                     if (restored.put(server, profile) != null) return memory;
@@ -186,8 +194,9 @@ public final class AdaptiveFlightMemory {
         return new ArrayList<>(profiles.values());
     }
 
-    private static Limits readLimits(DataInputStream in) throws IOException {
-        return new Limits(in.readDouble(), in.readDouble(), in.readDouble(), in.readDouble());
+    private static Limits readLimits(DataInputStream in, int version) throws IOException {
+        return new Limits(in.readDouble(), in.readDouble(), in.readDouble(), in.readDouble(),
+            version >= VERSION ? in.readDouble() : MAX_SPEED);
     }
 
     private static void writeLimits(DataOutputStream out, Limits limits) throws IOException {
@@ -195,6 +204,7 @@ public final class AdaptiveFlightMemory {
         out.writeDouble(limits.ascent());
         out.writeDouble(limits.descent());
         out.writeDouble(limits.verticalAcceleration());
+        out.writeDouble(limits.total());
     }
 
     private void pruneExpired() {

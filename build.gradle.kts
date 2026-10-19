@@ -43,7 +43,6 @@ dependencies {
 
     // Optional integrations, present at runtime only if the player installed them
     compileOnly(libs.xaero.minimap)
-    compileOnly(libs.xaero.plus)
     compileOnly(libs.baritone)
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")

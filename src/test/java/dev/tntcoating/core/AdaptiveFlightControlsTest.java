@@ -29,7 +29,7 @@ class AdaptiveFlightControlsTest {
                         controller.tick();
                         result = AdaptiveFlightStep.move(controller, new Motion(.01, 0, 0),
                             .01, 0, BODY, new Probe(), tuning[0], tuning[2],
-                            new Controls(false, fraction, 0, false));
+                            TestControls.of(false, fraction, 0, false));
                     }
 
                     assertEquals(maximum, result.adaptiveMaximum(), EPSILON,
@@ -49,10 +49,10 @@ class AdaptiveFlightControlsTest {
         probe.obstacles.add(new AABB(8, 64, -5, 9, 69, 5));
         AdaptiveFlightStep.Result full = AdaptiveFlightStep.move(controller(100, .3),
             new Motion(1, 0, 0), 1, 0, BODY, probe, 64, .25,
-            new Controls(false, 1, 0, false));
+            TestControls.of(false, 1, 0, false));
         AdaptiveFlightStep.Result half = AdaptiveFlightStep.move(controller(100, .3),
             new Motion(1, 0, 0), 1, 0, BODY, probe, 64, .25,
-            new Controls(false, .5, 0, false));
+            TestControls.of(false, .5, 0, false));
 
         assertEquals(OBSTACLE, full.corridor().reason());
         assertEquals(full.adaptiveMaximum(), half.adaptiveMaximum(), EPSILON);
@@ -64,9 +64,9 @@ class AdaptiveFlightControlsTest {
 
     @Test void horizontalDirectionUsesTheEngineScaleIndependentlyOfTheStockSpeed() {
         var low = AdaptiveFlightStep.move(controller(100, .3), new Motion(.003, 0, .004),
-            .005, 0, BODY, new Probe(), 64, .35, new Controls(false, .5, 0, false));
+            .005, 0, BODY, new Probe(), 64, .35, TestControls.of(false, .5, 0, false));
         var high = AdaptiveFlightStep.move(controller(100, .3), new Motion(30, 0, 40),
-            50, 0, BODY, new Probe(), 64, .35, new Controls(false, .5, 0, false));
+            50, 0, BODY, new Probe(), 64, .35, TestControls.of(false, .5, 0, false));
 
         assertMotion(low.motion(), high.motion());
         assertEquals(.75, low.motion().x() / low.motion().z(), EPSILON);
@@ -75,9 +75,9 @@ class AdaptiveFlightControlsTest {
 
     @Test void normalVerticalInputKeepsItsConfiguredSpeed() {
         var up = AdaptiveFlightStep.move(controller(100, .3), new Motion(0, .1, 0),
-            1, .1, BODY, new Probe(), 64, .35, new Controls(false, 1, 1, false));
+            1, .1, BODY, new Probe(), 64, .35, TestControls.of(false, 1, 1, false));
         var down = AdaptiveFlightStep.move(controller(100, .3), new Motion(0, -.1, 0),
-            1, .1, BODY, new Probe(), 64, .35, new Controls(false, 1, -1, false));
+            1, .1, BODY, new Probe(), 64, .35, TestControls.of(false, 1, -1, false));
 
         assertMotion(new Motion(0, .1, 0), up.motion());
         assertMotion(new Motion(0, -.1, 0), down.motion());
@@ -88,14 +88,14 @@ class AdaptiveFlightControlsTest {
             AdaptiveFlightController controller = controller(100, .3);
             var vertical = AdaptiveFlightStep.move(controller, new Motion(0, direction * .1, 0),
                 0, .1, BODY, new Probe(), 64, .35,
-                new Controls(true, 1, direction, false));
+                TestControls.of(true, 1, direction, false));
             assertMotion(new Motion(0, direction * vertical.adaptiveMaximum(), 0), vertical.motion());
             assertTrue(Math.abs(vertical.motion().y()) > .1);
             assertTrue(controller.isBoosting(), "pure vertical Sprint is an active boost");
 
             var diagonal = AdaptiveFlightStep.move(controller(100, .3), new Motion(.1, direction * .1, 0),
                 .1, .1, BODY, new Probe(), 64, .35,
-                new Controls(true, 1, direction, false));
+                TestControls.of(true, 1, direction, false));
             assertEquals(diagonal.adaptiveMaximum(), diagonal.motion().length(), EPSILON);
             assertEquals(diagonal.motion().x(), direction * diagonal.motion().y(), EPSILON);
             assertTrue(Math.abs(diagonal.motion().y()) > .1);
@@ -108,26 +108,26 @@ class AdaptiveFlightControlsTest {
         Motion previous = Motion.ZERO;
         for (double expected : new double[] {.25, .5, .75}) {
             var step = AdaptiveFlightStep.move(controller, new Motion(0, .1, 0),
-                0, .1, BODY, probe, 64, .35, new Controls(true, 1, 1, false));
+                0, .1, BODY, probe, 64, .35, TestControls.of(true, 1, 1, false));
             assertEquals(expected, step.motion().y(), EPSILON);
             assertTrue(difference(previous, step.motion()) <= .25 + EPSILON);
             previous = step.motion();
         }
 
         var reversed = AdaptiveFlightStep.move(controller, new Motion(0, -.1, 0),
-            0, .1, BODY, probe, 64, .35, new Controls(true, 1, -1, false));
+            0, .1, BODY, probe, 64, .35, TestControls.of(true, 1, -1, false));
         assertEquals(.25, reversed.motion().y(), EPSILON);
         assertEquals(.5, difference(previous, reversed.motion()), EPSILON);
 
         var released = AdaptiveFlightStep.move(controller, Motion.ZERO,
-            0, .1, BODY, probe, 64, .35, new Controls(true, 1, 0, false));
+            0, .1, BODY, probe, 64, .35, TestControls.of(true, 1, 0, false));
         assertMotion(Motion.ZERO, released.motion());
         assertFalse(controller.isBoosting());
     }
 
     @Test void sprintDoesNotBoostAutomaticVerticalDriftWithoutAnIntentionalVerticalKey() {
         var step = AdaptiveFlightStep.move(controller(100, .3), new Motion(.1, -.02, 0),
-            .1, .1, BODY, new Probe(), 64, .35, new Controls(true, 1, 0, false));
+            .1, .1, BODY, new Probe(), 64, .35, TestControls.of(true, 1, 0, false));
 
         assertTrue(step.motion().horizontalLength() > 1);
         assertTrue(step.motion().y() < 0);
@@ -138,14 +138,14 @@ class AdaptiveFlightControlsTest {
         AdaptiveFlightController horizontalDisabled = controller(.25, .5);
         horizontalDisabled.accept(new Motion(2, 1, 0));
         var verticalOnly = AdaptiveFlightStep.move(horizontalDisabled, new Motion(2, .1, 0),
-            0, .1, BODY, new Probe(), 64, .35, new Controls(true, 1, 1, false));
+            0, .1, BODY, new Probe(), 64, .35, TestControls.of(true, 1, 1, false));
         assertEquals(0, verticalOnly.motion().horizontalLength(), EPSILON);
         assertTrue(verticalOnly.motion().y() > 0);
 
         AdaptiveFlightController verticalDisabled = controller(.25, .5);
         verticalDisabled.accept(new Motion(2, 1, 0));
         var horizontalOnly = AdaptiveFlightStep.move(verticalDisabled, new Motion(2, .1, 0),
-            2, 0, BODY, new Probe(), 64, .35, new Controls(true, 1, 1, false));
+            2, 0, BODY, new Probe(), 64, .35, TestControls.of(true, 1, 1, false));
         assertEquals(0, horizontalOnly.motion().y(), EPSILON);
         assertTrue(horizontalOnly.motion().horizontalLength() > 0);
 
@@ -155,7 +155,7 @@ class AdaptiveFlightControlsTest {
             Probe probe = new Probe();
             var stopped = AdaptiveFlightStep.move(controller, new Motion(2, .1, 0),
                 zeroPercentage ? 2 : 0, zeroPercentage ? .1 : 0, BODY, probe, 64, .35,
-                new Controls(true, zeroPercentage ? 0 : 1, 1, true));
+                TestControls.of(true, zeroPercentage ? 0 : 1, 1, true));
             assertMotion(Motion.ZERO, stopped.motion());
             assertEquals(Motion.ZERO, controller.output());
             assertNull(stopped.corridor());
@@ -167,7 +167,7 @@ class AdaptiveFlightControlsTest {
     @Test void harmlessMotionBypassesBlockContactButStillChecksLoadedChunks() {
         Probe probe = touchingWall();
         var step = AdaptiveFlightStep.move(controller(.1, .5), new Motion(1, 0, 1),
-            1, 0, BODY, probe, 64, .35, new Controls(false, 1, 0, true));
+            1, 0, BODY, probe, 64, .35, TestControls.of(false, 1, 0, true));
 
         assertTrue(step.safeManeuvering());
         assertTrue(step.motion().x() > 0 && step.motion().z() > 0,
@@ -178,7 +178,7 @@ class AdaptiveFlightControlsTest {
 
         Probe guardedProbe = touchingWall();
         var guarded = AdaptiveFlightStep.move(controller(.1, .5), new Motion(1, 0, 1),
-            1, 0, BODY, guardedProbe, 64, .35, new Controls(false, 1, 0, false));
+            1, 0, BODY, guardedProbe, 64, .35, TestControls.of(false, 1, 0, false));
         assertFalse(guarded.safeManeuvering());
         assertMotion(Motion.ZERO, guarded.motion());
         assertFalse(guardedProbe.boxes.isEmpty());
@@ -204,7 +204,7 @@ class AdaptiveFlightControlsTest {
         AdaptiveFlightController controller = controller(1, .5);
         controller.accept(new Motion(2, 0, 0));
         Probe probe = touchingWall();
-        Controls controls = new Controls(false, 1, 0, true);
+        Controls controls = TestControls.of(false, 1, 0, true);
         Motion requested = new Motion(1, 0, 1);
 
         var stopped = AdaptiveFlightStep.move(controller, requested,
@@ -241,7 +241,7 @@ class AdaptiveFlightControlsTest {
         controller.accept(new Motion(.22, .22, 0));
         Probe probe = new Probe();
         var step = AdaptiveFlightStep.move(controller, new Motion(.01, .05, 0),
-            1, .05, BODY, probe, 64, .35, new Controls(false, .01, 0, true));
+            1, .05, BODY, probe, 64, .35, TestControls.of(false, .01, 0, true));
 
         assertTrue(step.motion().length() < .3);
         assertFalse(step.safeManeuvering(), "the previous combined speed exceeds the harmless threshold");
@@ -256,7 +256,7 @@ class AdaptiveFlightControlsTest {
         for (int tick = 0; tick < 8; tick++) {
             int previousChecks = probe.chunkChecks;
             var step = AdaptiveFlightStep.move(controller, new Motion(1, 0, 0),
-                1, 0, position, probe, 64, .05, new Controls(false, 1, 0, true));
+                1, 0, position, probe, 64, .05, TestControls.of(false, 1, 0, true));
             assertTrue(step.motion().length() <= .3);
             assertTrue(step.safeManeuvering());
             assertEquals(CHUNKS, step.corridor().reason());
@@ -271,7 +271,7 @@ class AdaptiveFlightControlsTest {
     @Test void harmlessCollisionReleaseStillFailsClosedWithoutATerrainProbe() {
         AdaptiveFlightController controller = controller(.1, .5);
         var step = AdaptiveFlightStep.move(controller, new Motion(1, 0, 0),
-            1, 0, BODY, null, 64, .35, new Controls(false, 1, 0, true));
+            1, 0, BODY, null, 64, .35, TestControls.of(false, 1, 0, true));
 
         assertEquals(INVALID, step.corridor().reason());
         assertMotion(Motion.ZERO, step.motion());
@@ -285,7 +285,7 @@ class AdaptiveFlightControlsTest {
                 int previousChecks = probe.chunkChecks;
                 int previousCollisions = probe.boxes.size();
                 var step = AdaptiveFlightStep.move(controller, new Motion(1, 1, 1),
-                    1, 1, BODY, probe, 1000, .35, new Controls(true, 1, 1, true));
+                    1, 1, BODY, probe, 1000, .35, TestControls.of(true, 1, 1, true));
                 assertBoundedScan(probe, previousChecks, previousCollisions, step.safeManeuvering());
             }
         }

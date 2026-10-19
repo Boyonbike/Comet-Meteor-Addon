@@ -15,6 +15,12 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 /** Temporarily exchanges a main-inventory item with a hotbar slot and later reverses the exchange. */
 public final class InventorySlotLoan {
     private static final int WEAPON_DISPLAY_TICKS = 4;
+    /**
+     * Auto Tool keeps its loan while Attack is held or a block is still being broken, and for this many ticks
+     * without either. Automated mining (Baritone, other modules) never holds Attack, and the short gap between
+     * consecutive blocks must not swap the tool away and back.
+     */
+    static final int MINING_IDLE_TICKS = 10;
 
     public enum Owner { AutoTool, AutoWeapon }
 
@@ -27,11 +33,13 @@ public final class InventorySlotLoan {
     private ItemStack displaced = ItemStack.EMPTY;
     private boolean restoreWeapon;
     private int weaponDisplayTicks;
+    private int miningIdleTicks;
 
     private InventorySlotLoan() {}
 
     /** Restore any earlier exchange before a module examines the inventory for its next action. */
-    public boolean prepare(Owner requestedBy) {
+    public boolean prepare() {
+        if (InventoryWeaponAttack.INSTANCE.isPending()) return false;
         return owner == null || restore();
     }
 
@@ -40,6 +48,12 @@ public final class InventorySlotLoan {
      * The normal container SWAP operation preserves the cursor and performs both moves atomically.
      */
     public boolean borrow(Owner requestedBy, int inventorySlot) {
+        return borrow(requestedBy, inventorySlot, () -> {});
+    }
+
+    /** Publish an attack's acknowledgement listener before the swap packet can reach a local server. */
+    public boolean borrow(Owner requestedBy, int inventorySlot, Runnable beforeSwap) {
+        if (InventoryWeaponAttack.INSTANCE.isPending()) return false;
         if (inventorySlot < 9 || inventorySlot >= 36 || mc.player == null || mc.gameMode == null) return false;
 
         if (owner != null && !restore()) return false;
@@ -59,6 +73,8 @@ public final class InventorySlotLoan {
         hotbar = selected;
         borrowed = sourceStack.copy();
         displaced = selectedStack.copy();
+        miningIdleTicks = 0;
+        beforeSwap.run();
         mc.gameMode.handleContainerInput(menu.containerId, menuSlot, selected, ContainerInput.SWAP, mc.player);
         return true;
     }
@@ -66,14 +82,18 @@ public final class InventorySlotLoan {
     public void restoreAfterAttack() {
         if (owner == Owner.AutoWeapon) {
             restoreWeapon = true;
-            // Keep the borrowed weapon selected long enough for the hand renderer and server inventory
-            // processing to observe it. A new attack still restores/re-scores immediately in prepare().
+            // Start the display/restore grace period only after the deferred attack has run.
             weaponDisplayTicks = WEAPON_DISPLAY_TICKS;
         }
     }
 
     public void restore(Owner requestedBy) {
         if (owner == requestedBy) restore();
+    }
+
+    /** A replaced player/world must never restore an old exchange into its new inventory. */
+    public void discard(Owner requestedBy) {
+        if (owner == requestedBy) clear();
     }
 
     /** Returns false only when the player inventory is temporarily unavailable in the current menu. */
@@ -121,8 +141,11 @@ public final class InventorySlotLoan {
     private void onTick(TickEvent.Post event) {
         if (owner == Owner.AutoWeapon && !Modules.get().isActive(AutoWeapon.class)) restore();
         else if (owner == Owner.AutoWeapon && restoreWeapon && weaponDisplayTicks-- <= 0) restore();
-        else if (owner == Owner.AutoTool
-            && (!Modules.get().isActive(AutoTool.class) || mc.options == null || !mc.options.keyAttack.isDown())) restore();
+        else if (owner == Owner.AutoTool) {
+            if (!Modules.get().isActive(AutoTool.class) || mc.options == null) restore();
+            else if (mc.options.keyAttack.isDown() || mc.gameMode != null && mc.gameMode.isDestroying()) miningIdleTicks = 0;
+            else if (++miningIdleTicks >= MINING_IDLE_TICKS) restore();
+        }
     }
 
     @EventHandler
@@ -138,5 +161,6 @@ public final class InventorySlotLoan {
         displaced = ItemStack.EMPTY;
         restoreWeapon = false;
         weaponDisplayTicks = 0;
+        miningIdleTicks = 0;
     }
 }

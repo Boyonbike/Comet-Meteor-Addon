@@ -47,8 +47,8 @@ final class BaritoneElytraBridge implements BaritoneBridge {
     }
 
     @Override
-    public boolean flightActive() {
-        return baritone().getElytraProcess().isActive();
+    public String flightStatus() {
+        return baritone().getElytraProcess().displayName();
     }
 
     @Override

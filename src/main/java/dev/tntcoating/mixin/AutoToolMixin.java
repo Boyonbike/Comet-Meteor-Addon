@@ -28,7 +28,7 @@ public abstract class AutoToolMixin {
     private void comet$addInventorySetting(CallbackInfo ci) {
         comet$useInventory = sgGeneral.add(new BoolSetting.Builder()
             .name("use-inventory")
-            .description("Temporarily pulls the best tool from the main inventory and returns it when mining stops.")
+            .description("Temporarily pulls the best tool from the main inventory and returns it shortly after mining stops.")
             .defaultValue(true)
             .build());
     }
@@ -40,7 +40,7 @@ public abstract class AutoToolMixin {
 
     @Inject(method = "onStartBreakingBlock", at = @At("HEAD"), cancellable = true)
     private void comet$restoreBeforeScoring(StartBreakingBlockEvent event, CallbackInfo ci) {
-        if (!InventorySlotLoan.INSTANCE.prepare(InventorySlotLoan.Owner.AutoTool)) ci.cancel();
+        if (!InventorySlotLoan.INSTANCE.prepare()) ci.cancel();
     }
 
     @Redirect(

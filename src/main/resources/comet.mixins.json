@@ -1,7 +1,8 @@
 {
   "required": true,
   "package": "dev.tntcoating.mixin",
+  "plugin": "dev.tntcoating.compat.CometMixinPlugin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["GameModeInvoker", "EntityArgumentAccessor", "ChatScreenMixin", "CometModuleOrderMixin", "CometModuleSettingsMixin", "MoveEntityPacketAccessor", "FireworkRocketAccessor", "FastUseMixin", "ElytraFlyMixin", "SpeedMixin", "AutoToolMixin", "AutoWeaponMixin", "ScaffoldMixin", "ScaffoldBlockUpdatesMixin", "InventoryTweaksMixin", "TrajectoriesMixin", "TrajectoriesPathMixin", "TrajectoriesWorldUpdatesMixin", "ShulkerIconsMixin", "ShulkerIconRenderStateMixin", "ShulkerIconAtlasMixin", "ShulkerIconOversizedMixin"],
+  "client": ["GameModeInvoker", "EntityArgumentAccessor", "ChatScreenMixin", "ChatFriendHighlightMixin", "CometModuleOrderMixin", "CometModuleSettingsMixin", "MoveEntityPacketAccessor", "FireworkRocketAccessor", "FastUseMixin", "ElytraFlyMixin", "AutoToolMixin", "AutoWeaponMixin", "ScaffoldMixin", "ScaffoldBlockUpdatesMixin", "InventoryTweaksMixin", "TrajectoriesMixin", "TrajectoriesPathMixin", "TrajectoriesWorldUpdatesMixin", "ShulkerIconsMixin", "ShulkerIconRenderStateMixin", "ShulkerIconAtlasMixin", "ShulkerIconOversizedMixin"],
   "injectors": { "defaultRequire": 1 }
 }

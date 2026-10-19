@@ -1,9 +1,6 @@
 package dev.tntcoating.compat;
 
-import dev.tntcoating.core.TrailRoutePath;
 import net.fabricmc.loader.api.FabricLoader;
-
-import java.util.List;
 
 /**
  * Baritone, which is optional. Only {@link BaritoneElytraBridge} refers to Baritone's classes, and {@link #create()} loads
@@ -33,14 +30,11 @@ public interface BaritoneBridge {
      */
     Trip flight();
 
-    /** True while the elytra process is active, including landing before it has a destination. */
-    boolean flightActive();
-
     /** True once the elytra path is calculated and no walking path is still running. */
     boolean readyForTakeoff();
 
-    /** A bounded copy of the calculated elytra path, in travel order, for checking curved flight corridors. */
-    default List<TrailRoutePath.Point> flightPath() { return List.of(); }
+    /** Baritone's own description of what its elytra process is doing, for diagnostics. */
+    String flightStatus();
 
     /** Hands the trip to Baritone's elytra process. Throws {@link IllegalArgumentException} with Baritone's reason when it refuses. */
     void fly(Trip trip);

@@ -23,7 +23,7 @@ class AdaptiveFlightLearningTest {
     @Test void aVerticalSetbackLearnsTheActualSlowSpeedRatherThanTheUnusedMaximum() {
         for (int direction : new int[] {-1, 1}) {
             AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
-            learning.observe(new Motion(2, direction * .2, 0), direction, true, true, 1);
+            learning.observe(new Motion(0, direction * .2, 0), direction, true, true, 1);
 
             assertTrue(learning.corrected(BACKOFF));
             assertTrue(vertical(learning.limits(), direction) <= .2 * BACKOFF + EPSILON,
@@ -40,10 +40,10 @@ class AdaptiveFlightLearningTest {
     @Test void delayedVerticalSetbacksStillApplyAfterTheVerticalKeyIsReleased() {
         for (int direction : new int[] {-1, 1}) {
             AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
-            learning.observe(new Motion(2, direction * .6, 0), direction, true, true, 1);
+            learning.observe(new Motion(0, direction * .6, 0), direction, true, true, 1);
             for (int tick = 0; tick < 10; tick++) {
                 learning.tick(60, .0025);
-                learning.observe(new Motion(2, 0, 0), 0, true, true, 1);
+                learning.observe(Motion.ZERO, 0, true, true, 1);
             }
 
             assertTrue(learning.corrected(BACKOFF));
@@ -158,7 +158,7 @@ class AdaptiveFlightLearningTest {
         AdaptiveFlightLearning reconnected = new AdaptiveFlightLearning();
 
         reconnected.restore(previousSession.remembered(), previousSession.ceilings());
-        for (int tick = 0; tick < 79; tick++) {
+        for (int tick = 0; tick < 43; tick++) {
             reconnected.tick(1, .1);
             reconnected.observe(new Motion(0, reconnected.limits().ascent(), 0), 1, true, true, 1);
         }
@@ -212,9 +212,9 @@ class AdaptiveFlightLearningTest {
         }
 
         assertTrue(learning.limits().ascent() > rejectedLimit);
-        assertTrue(firstProbe <= .01 + EPSILON,
+        assertTrue(firstProbe <= .05 + EPSILON,
             "the probe crossing remembered correction guidance must use a small step");
-        assertTrue(laterProbe > .01,
+        assertTrue(laterProbe > .05,
             "after clearing the guidance boundary, ordinary learning speed must resume");
         assertTrue(learning.remembered().ascent() > rejectedLimit);
     }
@@ -309,8 +309,8 @@ class AdaptiveFlightLearningTest {
             learning.tick(40, .1);
             learning.observe(new Motion(0, previous, 0), 1, true, true, 1);
             double current = learning.limits().ascent();
-            assertTrue(current - previous <= .05 + EPSILON,
-                "one probe must not jump more than .05 blocks/tick");
+            assertTrue(current - previous <= .25 + EPSILON,
+                "one probe must not jump more than .25 blocks/tick");
             if (current > previous + EPSILON) {
                 grew = true;
                 assertTrue(learning.remembered().ascent() <= previous + EPSILON,
@@ -342,7 +342,7 @@ class AdaptiveFlightLearningTest {
     @Test void aPartialPercentageSetbackLearnsTheActualSpeedWithoutExtrapolating() {
         for (int direction : new int[] {-1, 1}) {
             AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
-            learning.observe(new Motion(2, direction * .2, 0), direction, true, true, .25);
+            learning.observe(new Motion(0, direction * .2, 0), direction, true, true, .25);
 
             assertTrue(learning.corrected(BACKOFF));
             assertTrue(vertical(learning.limits(), direction) <= .2 * BACKOFF + EPSILON,

@@ -35,7 +35,8 @@ public final class ShulkerIconPicker extends WindowScreen {
     private final List<Choice> choices;
     private WTable table;
 
-    private record Choice(Item item, List<Item> aliases) {}
+    /** Search text is built once per picker: every alias's display name and registry id, lower-cased. */
+    private record Choice(Item item, List<Item> aliases, String search) {}
 
     public ShulkerIconPicker(GuiTheme theme, Style style, int colour, Consumer<Item> selected) {
         super(theme, style == Style.Normal ? "Select Item Icon" : "Select Solid Icon Shape");
@@ -59,8 +60,7 @@ public final class ShulkerIconPicker extends WindowScreen {
         table.clear();
         String filter = text.trim().toLowerCase(Locale.ROOT);
         for (Choice choice : choices) {
-            if (choice.aliases().stream().noneMatch(item -> Names.get(item).toLowerCase(Locale.ROOT).contains(filter)
-                || BuiltInRegistries.ITEM.getKey(item).toString().contains(filter))) continue;
+            if (!choice.search().contains(filter)) continue;
             Item item = choice.item();
             var row = table.add(theme.horizontalList()).widget();
             var preview = new Preview(() -> new Icon<>(item, style, colour));
@@ -88,7 +88,17 @@ public final class ShulkerIconPicker extends WindowScreen {
             }
             groups.computeIfAbsent(key, ignored -> new ArrayList<>()).add(item);
         }
-        return groups.values().stream().map(items -> new Choice(items.getFirst(), List.copyOf(items))).toList();
+        return groups.values().stream().map(items -> new Choice(items.getFirst(), List.copyOf(items), searchText(items))).toList();
+    }
+
+    private static String searchText(List<Item> items) {
+        StringBuilder text = new StringBuilder();
+        for (Item item : items) {
+            // A separator no filter can contain keeps one alias's text from matching across into the next.
+            text.append(Names.get(item).toLowerCase(Locale.ROOT)).append('\n')
+                .append(BuiltInRegistries.ITEM.getKey(item)).append('\n');
+        }
+        return text.toString();
     }
 
     /** Uses the same silhouette path as inventory overlays, including deferred Meteor widget drawing. */

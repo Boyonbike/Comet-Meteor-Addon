@@ -32,32 +32,6 @@ public final class AdaptiveFlightStep {
     public record Controls(boolean sprintBoost, double maximumFraction, double verticalFraction, int verticalInput,
                            boolean releaseSafeCollisions, ServerGlide.Context glide,
                            AdaptiveFlightMemory.Limits limits, double collisionReleaseSpeed) {
-        public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
-                        boolean releaseSafeCollisions) {
-            this(sprintBoost, maximumFraction, maximumFraction, verticalInput,
-                releaseSafeCollisions, null, null, SAFE_MANEUVER_SPEED);
-        }
-
-        public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
-                        boolean releaseSafeCollisions, ServerGlide.Context glide) {
-            this(sprintBoost, maximumFraction, maximumFraction, verticalInput,
-                releaseSafeCollisions, glide, null, SAFE_MANEUVER_SPEED);
-        }
-
-        public Controls(boolean sprintBoost, double maximumFraction, int verticalInput,
-                        boolean releaseSafeCollisions, ServerGlide.Context glide,
-                        AdaptiveFlightMemory.Limits limits) {
-            this(sprintBoost, maximumFraction, maximumFraction, verticalInput,
-                releaseSafeCollisions, glide, limits, SAFE_MANEUVER_SPEED);
-        }
-
-        public Controls(boolean sprintBoost, double maximumFraction, double verticalFraction, int verticalInput,
-                        boolean releaseSafeCollisions, ServerGlide.Context glide,
-                        AdaptiveFlightMemory.Limits limits) {
-            this(sprintBoost, maximumFraction, verticalFraction, verticalInput,
-                releaseSafeCollisions, glide, limits, SAFE_MANEUVER_SPEED);
-        }
-
         public Controls {
             if (!Double.isFinite(maximumFraction) || maximumFraction < 0 || maximumFraction > 1) {
                 throw new IllegalArgumentException("Horizontal maximum fraction must be in [0, 1].");
@@ -78,11 +52,11 @@ public final class AdaptiveFlightStep {
 
     /** Maximum output in a clear loaded horizon, before a nearer obstacle or chunk reduces it. */
     public static double maximumSpeed(double braking, double lookahead, double margin) {
-        nonnegativeFinite(braking, "Braking");
-        nonnegativeFinite(lookahead, "Lookahead");
-        nonnegativeFinite(margin, "Margin");
+        Finite.requireNonnegative(braking, "Braking");
+        Finite.requireNonnegative(lookahead, "Lookahead");
+        Finite.requireNonnegative(margin, "Margin");
         double clearance = Math.max(0, Math.min(lookahead, FlightCorridor.MAX_DISTANCE) - margin);
-        return braking == 0 ? 0 : Math.min(clearance, brakingSpeed(braking, clearance));
+        return braking == 0 ? 0 : FlightCorridor.safeSpeed(braking, clearance);
     }
 
     /** Manual controls with an engine-scaled maximum and intentional vertical Sprint input. */
@@ -94,16 +68,17 @@ public final class AdaptiveFlightStep {
             lookahead, margin, controls.sprintBoost(), controls);
     }
 
-    public static Result move(AdaptiveFlightController controller, Motion requested,
-                              double horizontalCeiling, double verticalCeiling, AABB box,
-                              FlightCorridor.Probe probe, double lookahead, double margin) {
+    /** Legacy unscaled path, kept package-private for older regression tests; the module always passes Controls. */
+    static Result move(AdaptiveFlightController controller, Motion requested,
+                       double horizontalCeiling, double verticalCeiling, AABB box,
+                       FlightCorridor.Probe probe, double lookahead, double margin) {
         return move(controller, requested, horizontalCeiling, verticalCeiling, box, probe, lookahead, margin, false);
     }
 
-    /** Sprint requests the engine's maximum horizontal speed, retaining acceleration and all adaptive limits. */
-    public static Result move(AdaptiveFlightController controller, Motion requested,
-                              double horizontalCeiling, double verticalCeiling, AABB box,
-                              FlightCorridor.Probe probe, double lookahead, double margin, boolean sprintBoost) {
+    /** Legacy test path: Sprint requests the engine's maximum horizontal speed with all adaptive limits. */
+    static Result move(AdaptiveFlightController controller, Motion requested,
+                       double horizontalCeiling, double verticalCeiling, AABB box,
+                       FlightCorridor.Probe probe, double lookahead, double margin, boolean sprintBoost) {
         return move(controller, requested, horizontalCeiling, verticalCeiling, box, probe,
             lookahead, margin, sprintBoost, null);
     }
@@ -114,19 +89,21 @@ public final class AdaptiveFlightStep {
                                boolean sprintBoost, Controls controls) {
         Objects.requireNonNull(controller, "controller");
         Objects.requireNonNull(requested, "requested");
-        nonnegativeFinite(horizontalCeiling, "Horizontal ceiling");
-        nonnegativeFinite(verticalCeiling, "Vertical ceiling");
-        nonnegativeFinite(lookahead, "Lookahead");
-        nonnegativeFinite(margin, "Margin");
+        Finite.requireNonnegative(horizontalCeiling, "Horizontal ceiling");
+        Finite.requireNonnegative(verticalCeiling, "Vertical ceiling");
+        Finite.requireNonnegative(lookahead, "Lookahead");
+        Finite.requireNonnegative(margin, "Margin");
         double fraction = controls == null ? 1 : controls.maximumFraction();
         double verticalFraction = controls == null ? 1 : controls.verticalFraction();
         double horizonMaximum = maximumSpeed(controller.settings().braking(), lookahead, margin);
         AdaptiveFlightMemory.Limits learned = controls == null ? null : controls.limits();
+        boolean horizontalEnabled = horizontalCeiling > 0;
         boolean verticalEnabled = verticalCeiling > 0;
         Motion previous = controller.output();
         if (controls != null) {
             double maximum = horizonMaximum * fraction;
-            double horizontalMaximum = learned == null ? maximum : Math.min(horizonMaximum, learned.horizontal()) * fraction;
+            double horizontalMaximum = learned == null ? maximum
+                : Math.min(horizonMaximum, Math.min(learned.horizontal(), learned.total())) * fraction;
             double horizontal = requested.horizontalLength();
             if (horizontalCeiling > 0) {
                 horizontalCeiling = horizontalMaximum;
@@ -136,7 +113,8 @@ public final class AdaptiveFlightStep {
             double verticalMaximum = horizonMaximum * verticalFraction;
             if (controls.verticalInput() != 0 && verticalCeiling > 0 && (learned != null || sprintBoost)) {
                 double directionalMaximum = learned == null ? verticalMaximum
-                    : Math.min(horizonMaximum, controls.verticalInput() > 0 ? learned.ascent() : learned.descent())
+                    : Math.min(horizonMaximum, Math.min(learned.total(),
+                        controls.verticalInput() > 0 ? learned.ascent() : learned.descent()))
                         * verticalFraction;
                 requested = new Motion(requested.x(), controls.verticalInput() * directionalMaximum, requested.z());
                 verticalCeiling = directionalMaximum;
@@ -147,6 +125,15 @@ public final class AdaptiveFlightStep {
                 Math.min(verticalCeiling, requested.y())), requested.z());
             if (learned != null) requested = new Motion(requested.x(), Math.max(-learned.descent(),
                 Math.min(learned.ascent(), requested.y())), requested.z());
+            if (learned != null) {
+                // A mixed flight request shares the server's displacement budget. Percentages
+                // remain fractions of attainable speed, including when one axis is released.
+                double activeFraction = Math.max(requested.horizontalLength() > 0 ? fraction : 0,
+                    requested.y() != 0 ? verticalFraction : 0);
+                double totalTarget = learned.total() * activeFraction;
+                double requestedSpeed = requested.length();
+                if (requestedSpeed > totalTarget) requested = requested.scaled(totalTarget / requestedSpeed);
+            }
         } else if (sprintBoost && horizontalCeiling > 0) {
             double horizontal = requested.horizontalLength();
             if (horizontal > 0) {
@@ -163,10 +150,17 @@ public final class AdaptiveFlightStep {
         // existing Y momentum here allows ordinary braking instead of snapping it to stock speed.
         double steppingVertical = learned == null ? verticalCeiling
             : Math.max(verticalCeiling, Math.abs(previous.y()));
-        Motion blended = controller.step(requested, Math.hypot(horizontalCeiling, steppingVertical), sprintBoost,
-            horizonMaximum * controller.speedFactor());
+        double steppingHorizontal = learned == null ? horizontalCeiling
+            : Math.max(horizontalCeiling, previous.horizontalLength());
+        double attainableMaximum = Math.min(horizonMaximum, learned == null ? MAX_HORIZONTAL_SPEED : learned.total())
+            * controller.speedFactor();
+        Motion blended = controller.step(requested, Math.hypot(steppingHorizontal, steppingVertical), sprintBoost,
+            attainableMaximum);
         double horizontal = blended.horizontalLength();
-        double horizontalFactor = horizontal > horizontalCeiling ? horizontalCeiling / horizontal : 1;
+        double horizontalHardCeiling = learned == null ? horizontalCeiling
+            : !horizontalEnabled || fraction == 0 ? 0
+                : Math.min(horizonMaximum, Math.min(learned.horizontal(), learned.total())) * controller.speedFactor();
+        double horizontalFactor = horizontal > horizontalHardCeiling ? horizontalHardCeiling / horizontal : 1;
         double y = Math.max(-verticalCeiling, Math.min(verticalCeiling, blended.y()));
         if (learned != null) {
             boolean slowing = Math.abs(blended.y()) < Math.abs(previous.y()) || blended.y() * previous.y() < 0;
@@ -180,12 +174,13 @@ public final class AdaptiveFlightStep {
         Motion limited = new Motion(blended.x() * horizontalFactor,
             y,
             blended.z() * horizontalFactor);
+        // Retain the shared hard ceiling during turns and existing momentum. Percentages
+        // affect the target above so reducing cruise speed still uses normal braking.
+        if (learned != null && limited.length() > learned.total() * controller.speedFactor())
+            limited = limited.scaled(learned.total() * controller.speedFactor() / limited.length());
         if (learned != null) controller.accept(limited);
         double speed = limited.length();
-        FlightCorridor.Probe chunksOnly = probe == null ? null : new FlightCorridor.Probe() {
-            @Override public boolean loaded(int x, int z) { return probe.loaded(x, z); }
-            @Override public boolean clear(AABB swept) { return true; }
-        };
+        FlightCorridor.Probe chunksOnly = probe == null ? null : FlightCorridor.Probe.chunksOnly(probe);
         ServerGlide.Context glide = controls == null || controller.pauseTicksRemaining() > 0 ? null : controls.glide();
         if (speed == 0) {
             // Hovering still lets the server's glide grow into a nearby wall.
@@ -194,7 +189,7 @@ public final class AdaptiveFlightStep {
             Motion retreat = glideClearance == null ? Motion.ZERO : glideClearance.motion();
             controller.accept(retreat);
             return new Result(retreat, null, false, false,
-                controller.pauseTicksRemaining() > 0 ? 0 : horizonMaximum * controller.speedFactor(), false,
+                controller.pauseTicksRemaining() > 0 ? 0 : attainableMaximum, false,
                 glideClearance != null && glideClearance.limited(), glideClearance == null ? 0 : glideClearance.damage());
         }
 
@@ -212,27 +207,28 @@ public final class AdaptiveFlightStep {
             ? Motion.ZERO : ServerGlide.reach(glide);
         double glideMargin = Math.max(0, (reach.x() * limited.x() + reach.z() * limited.z()) / speed);
         double clearance = Math.max(0, corridor.clearDistance() - margin - glideMargin);
-        double allowed = Math.min(clearance, brakingSpeed(controller.settings().braking(), clearance));
+        double allowed = FlightCorridor.safeSpeed(controller.settings().braking(), clearance);
         // A maximum-speed request can exceed the finite terrain horizon even after
         // backoff. Reduce the attainable ceiling too, so sprint cannot mask corrections.
         if (sprintBoost || controls != null) allowed *= controller.speedFactor();
+        if (learned != null) allowed = Math.min(allowed, learned.total() * controller.speedFactor());
         double adaptiveMaximum = allowed;
         // The requested vector and controller output already observe maximumFraction.
         // Applying it again to this physical cap makes fractional cruise speeds begin
         // braking at the adaptive maximum's stopping distance instead of their own.
         boolean clipped = speed > allowed;
-        Motion actual = clipped ? scale(limited, allowed / speed) : limited;
+        Motion actual = clipped ? limited.scaled(allowed / speed) : limited;
         // Once the guard has slowed flight to the configured close-object speed, allow movement even if
         // the next acceleration step would be too fast. Otherwise .2 -> .35 -> .2 can
         // remain stuck forever at a wall. The live module resolves this vector through Minecraft collision.
         if (mayRelease && !safeManeuvering && corridor.reason() == FlightCorridor.Reason.OBSTACLE
             && within(actual, releaseSpeed)) {
             adaptiveMaximum = Math.min(horizonMaximum, releaseSpeed) * controller.speedFactor();
-            Motion crawl = scale(limited, Math.min(1, adaptiveMaximum * fraction / speed));
+            Motion crawl = limited.scaled(Math.min(1, adaptiveMaximum * fraction / speed));
             FlightCorridor.Result chunks = FlightCorridor.inspect(box,
                 new Vec3(crawl.x(), crawl.y(), crawl.z()), crawl.length() + margin, chunksOnly);
             double distance = Math.max(0, chunks.clearDistance() - margin);
-            actual = distance < crawl.length() ? scale(crawl, distance / crawl.length()) : crawl;
+            actual = distance < crawl.length() ? crawl.scaled(distance / crawl.length()) : crawl;
             // Include the extra short chunk sweep in query counts. Its block predicate is a no-op.
             corridor = new FlightCorridor.Result(corridor.clearDistance(),
                 chunks.reason() == FlightCorridor.Reason.CLEAR ? corridor.reason() : chunks.reason(),
@@ -250,27 +246,8 @@ public final class AdaptiveFlightStep {
             glideClearance != null && glideClearance.limited(), glideClearance == null ? 0 : glideClearance.damage());
     }
 
-    private static double brakingSpeed(double braking, double clearance) {
-        // sqrt(b*b + 2*b*d) - b reserves this tick's travel as well as stopping
-        // distance. This equivalent form avoids cancellation and overflow.
-        double rootBraking = Math.sqrt(braking);
-        double twiceClearance = 2 * clearance;
-        return rootBraking * (twiceClearance
-            / (Math.hypot(rootBraking, Math.sqrt(twiceClearance)) + rootBraking));
-    }
-
-    private static Motion scale(Motion motion, double factor) {
-        return factor == 0 ? Motion.ZERO
-            : new Motion(motion.x() * factor, motion.y() * factor, motion.z() * factor);
-    }
-
     private static boolean within(Motion motion, double maximum) {
         return motion.length() <= maximum + 1e-9;
     }
 
-    private static void nonnegativeFinite(double value, String name) {
-        if (!Double.isFinite(value) || value < 0) {
-            throw new IllegalArgumentException(name + " must be finite and nonnegative.");
-        }
-    }
 }

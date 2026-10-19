@@ -6,6 +6,11 @@ import java.util.function.IntSupplier;
 /** One container transfer at a time, with monotonic deadlines and no worker-thread inventory access. */
 public final class InventoryMoveScheduler<T> {
     public static final int MAX_ACTIONS_PER_TICK = 8;
+    /**
+     * An action handed to a deferred callback (a rotation) that has not completed by then is abandoned, so a callback
+     * that never runs cannot stall the job. A late completion of an abandoned action is ignored.
+     */
+    public static final long IN_FLIGHT_TIMEOUT_NANOS = 1_000_000_000L;
 
     /** Identity is intentional: a reused container id cannot make an old request valid again. */
     public record Context(Object player, Object world, Object screen, Object menu) {
@@ -25,6 +30,7 @@ public final class InventoryMoveScheduler<T> {
     private long readyAt, deadline;
     private T pending;
     private Action<T> inFlight;
+    private long inFlightSince;
     private long budgetTick = Long.MIN_VALUE;
     private int actionsThisTick;
 
@@ -53,6 +59,10 @@ public final class InventoryMoveScheduler<T> {
             budgetTick = clientTick;
             actionsThisTick = 0;
         }
+        if (inFlight != null && now - inFlightSince >= IN_FLIGHT_TIMEOUT_NANOS) {
+            inFlight = null;
+            readyAt = now;
+        }
         if (inFlight != null || actionsThisTick >= MAX_ACTIONS_PER_TICK) return null;
 
         while (next < end) {
@@ -68,6 +78,7 @@ public final class InventoryMoveScheduler<T> {
             }
             if (now - deadline < 0) return null;
             inFlight = new Action<>(generation, next++, pending, steal);
+            inFlightSince = now;
             pending = null;
             actionsThisTick++;
             return inFlight;

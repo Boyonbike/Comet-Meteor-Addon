@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+1#!/usr/bin/env python3
 """Render the real icon shaders offscreen and verify pixel colours (Linux EGL/OpenGL)."""
 
 import ctypes as C
