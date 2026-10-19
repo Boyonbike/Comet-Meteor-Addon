@@ -11,10 +11,13 @@ import dev.tntcoating.core.TntRedstoneSafety;
 import dev.tntcoating.core.BlockCoatSettings;
 import dev.tntcoating.core.LiquidFiller;
 import dev.tntcoating.core.HeldItemPause;
+import dev.tntcoating.core.PassageClearance;
+import dev.tntcoating.core.PassageGeometry;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.InteractEntityEvent;
 import meteordevelopment.meteorclient.events.entity.player.InteractItemEvent;
+import meteordevelopment.meteorclient.events.entity.player.StartBreakingBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.SendMovementPacketsEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
@@ -71,6 +74,7 @@ public final class BlockCoat extends Module {
     public enum AutoSwitch { Sticky, Silent, Normal, Disabled }
     public enum Priority { Nearest, Farthest }
     public enum ServerMode { Adaptive, Conservative, Fast }
+    public enum TunnelDirection { Movement, Facing }
 
     private final SettingGroup general = settings.getDefaultGroup();
     private final SettingGroup tntSaving = settings.createGroup("TNT Saving", false);
@@ -90,14 +94,19 @@ public final class BlockCoat extends Module {
     private final Setting<Integer> serverCap = integer(server, "server-rate-cap", "Maximum adaptive interactions per tick.", 2, 1, 8);
     private final Setting<Integer> pendingCap = integer(server, "max-pending", "Maximum outstanding interactions in Adaptive mode.", 6, 1, 16);
     private final Setting<Boolean> containerSupports = bool(server, "container-supports", "Sneak-use chests and other interactive supports. Disable if the server rejects these placements.", true);
-    private final Setting<Boolean> narrowGaps = bool(server, "narrow-gap-targeting", "Experimental: sample very close to face edges. Leave off for ordinary targeting.", false);
+    private final Setting<Boolean> narrowGaps = bool(server, "narrow-gap-targeting", "Experimental edge-face sampling for gaps around chests and partial blocks. This does not control corridor detection.", false);
     private final Setting<Integer> packetLimit = integer(server, "max-packets-per-second", "Skip placements that would push everything you sent in the last second above this. ViaVersion's default sustained limit is 200.", 150, 40, 800);
     private final Setting<Boolean> extraRotations = bool(server, "extra-rotation-packets", "Allow more than one rotated placement per tick. Each extra one sends its own rotation packet; off places at most one rotated block per tick.", false);
     private final SettingGroup jumping = settings.createGroup("Smart Jump Place");
     private final SettingGroup modes = settings.createGroup("Scaffold and Tunnel");
     private final Setting<Boolean> scaffold = bool(modes, "scaffold", "Build a strip below movement while continuing surface coating. Disabled during flight.", false);
     private final Setting<Integer> scaffoldWidth = integer(modes, "scaffold-width", "Strip width in blocks, centred with a one-block bias for even widths.", 3, 1, 9);
-    private final Setting<Boolean> tunnel = bool(modes, "tunnel-backfill", "Coat only behind your horizontal facing. Smart Jump underfoot placement is exempt; scaffold remains behind-only.", false);
+    private final Setting<Boolean> tunnel = bool(modes, "tunnel-backfill", "Coat only behind the selected movement or facing direction. Smart Jump underfoot placement is exempt; scaffold remains behind-only.", false);
+    private final Setting<TunnelDirection> tunnelDirection = modes.add(new EnumSetting.Builder<TunnelDirection>()
+        .name("tunnel-direction").description("Movement follows your actual travel and input; Facing retains the original look-direction backfill.")
+        .defaultValue(TunnelDirection.Movement).build());
+    private final Setting<Boolean> preserveTightCorridors = bool(modes, "preserve-tight-corridors", "Keep the occupied lane and two blocks ahead open in detected one- or two-wide passages, using facing while stationary, then allow coating behind you.", true);
+    private final Setting<Boolean> respectTntClearance = bool(modes, "respect-manual-tnt-clearance", "Do not immediately replace TNT you deliberately mine as an opening. Release the column after you pass through it or the bounded timeout expires.", true);
     private final Setting<Boolean> flightCoating = bool(modes, "coat-while-flying", "Allow coating during flight or airborne movement outside a jump. Turn off to pause it.", true);
     private final Setting<Boolean> externalFlight = bool(modes, "external-flight-detection", "Manually mark another addon's flight as active (including ground spoofing). Flight coating is controlled separately.", false);
     private final SettingGroup rendering = settings.createGroup("Preview");
@@ -131,6 +140,7 @@ public final class BlockCoat extends Module {
     private final ServerPacer pacer = new ServerPacer();
     private final PacketBudget packetBudget = new PacketBudget();
     private final HeldItemPause heldItemPause = new HeldItemPause();
+    private final PassageClearance passageClearance = new PassageClearance();
     private boolean coatingInteraction;
     private final AtomicInteger sentPackets = new AtomicInteger();
     private int plannedPackets, rotationsPlanned, corrections;
@@ -187,15 +197,20 @@ public final class BlockCoat extends Module {
     private int pauseUntil;
     private float facingYaw;
     private Vec3 travel = new Vec3(0, 0, 1);
+    private Vec3 passageHeading = Vec3.ZERO;
+    private Vec3 laneHeading = new Vec3(0, 0, 1);
+    private boolean hasTravel;
+    private final Set<BlockPos> passageLane = new HashSet<>();
     private final Set<BlockPos> strip = new LinkedHashSet<>();
     private final Set<BlockPos> criticalStrip = new LinkedHashSet<>();
     private long interactionTime = Long.MIN_VALUE;
     private int interactions;
-    private int readyCount, protectedCount, reachCount, coveredCount, planningCount;
+    private int readyCount, protectedCount, reachCount, coveredCount, planningCount, deferredCount;
+    private boolean rayLimited;
     private String status = "Starting";
 
     private record Update(BlockPos pos, boolean matchesBlock, boolean replaceable, PlacementTracker.Attempt<Block> attempt) {}
-    private enum Rejection { None, Occupied, Retry, Redstone, Entity, Protected, Height, NoTerrain, Reach, Covered, Planning }
+    private enum Rejection { None, Occupied, Retry, Redstone, Entity, Protected, Passage, Height, NoTerrain, Reach, Covered, Planning, Deferred }
     private record Validation(Rejection reason, BlockHitResult hit, boolean liquid) {
         boolean valid() { return reason == Rejection.None; }
     }
@@ -226,7 +241,9 @@ public final class BlockCoat extends Module {
         generation++;
         pacer.reset(); packetBudget.reset(); sentPackets.set(0);
         plannedPackets = rotationsPlanned = corrections = 0; packetLimited = false;
-        jumpActive = jumpPlaced = false; pauseUntil = 0; strip.clear(); criticalStrip.clear(); travel = new Vec3(0, 0, 1);
+        jumpActive = jumpPlaced = false; pauseUntil = 0;
+        strip.clear(); criticalStrip.clear(); passageLane.clear(); passageClearance.clear();
+        travel = new Vec3(0, 0, 1); passageHeading = Vec3.ZERO; laneHeading = new Vec3(0, 0, 1); hasTravel = false;
         tracker.clear(); visibilityRetry.clear();
         changed.clear(); searchQueue.clear(); hitCache.clear(); reorder = true;
         candidates.clear(); updates.clear();
@@ -237,7 +254,8 @@ public final class BlockCoat extends Module {
         takeoffCell = jumpPending = null;
         tick = 0; searching = false; rays = 0;
         interactionTime = Long.MIN_VALUE;
-        interactions = readyCount = protectedCount = reachCount = coveredCount = planningCount = 0;
+        interactions = readyCount = protectedCount = reachCount = coveredCount = planningCount = deferredCount = 0;
+        rayLimited = false;
         status = "Starting";
     }
 
@@ -286,8 +304,25 @@ public final class BlockCoat extends Module {
         if (event.toReturn == null) pauseItemUsed(event.hand);
     }
 
+    @EventHandler(priority = -1000)
+    private void onStartBreakingBlock(StartBreakingBlockEvent event) {
+        if (event.isCancelled() || !respectTntClearance.get() || activeBlock != Blocks.TNT
+            || mc.player == null || mc.level == null || mc.options == null || !mc.options.keyAttack.isDown()
+            || !(mc.hitResult instanceof BlockHitResult crosshair) || !crosshair.getBlockPos().equals(event.blockPos)
+            || !loaded(event.blockPos) || !mc.level.getBlockState(event.blockPos).is(Blocks.TNT)
+            || !likelyPassageOpening(event.blockPos)) return;
+        passageClearance.begin(clearanceCell(event.blockPos), mc.player.blockPosition().getY(), tick);
+        // A deliberate removal is not a placement rollback and must never inherit retry state.
+        tracker.abandon(event.blockPos);
+        hitCache.remove(event.blockPos);
+        visibilityRetry.remove(event.blockPos);
+        changed.add(event.blockPos.immutable());
+    }
+
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
+        if (event.oldState.is(Blocks.TNT) && !event.newState.is(Blocks.TNT))
+            passageClearance.removed(clearanceCell(event.pos), tick);
         BlockPos origin = scanOrigin;
         if (origin != null && PlacementGeometry.inCube(event.pos.getX(), event.pos.getY(), event.pos.getZ(),
             origin.getX(), origin.getY(), origin.getZ(), scannedRadius + 1)) changed.add(event.pos.immutable());
@@ -362,7 +397,17 @@ public final class BlockCoat extends Module {
         boolean grounded = mc.player.onGround();
         boolean flying = flying();
         Vec3 delta = lastPosition == null ? Vec3.ZERO : position.subtract(lastPosition);
-        if (delta.horizontalDistanceSqr() > .0001) travel = new Vec3(delta.x, 0, delta.z).normalize();
+        Vec3 intended = intendedMovement();
+        if (delta.horizontalDistanceSqr() > .0001) {
+            travel = new Vec3(delta.x, 0, delta.z).normalize();
+            hasTravel = true;
+        }
+        passageHeading = intended.horizontalDistanceSqr() > .0001 ? intended
+            : delta.horizontalDistanceSqr() > .0001 ? new Vec3(delta.x, 0, delta.z).normalize() : Vec3.ZERO;
+        laneHeading = passageHeading.horizontalDistanceSqr() > .0001 ? passageHeading : facingDirection();
+        rebuildPassageLane(position);
+        passageClearance.observe(position.x, position.z, tick);
+        if (!respectTntClearance.get()) passageClearance.clear();
         boolean started = smartJump.get() && lastGround && !grounded && mc.player.getDeltaMovement().y > .05
             && mc.player.input.keyPresses.jump() && !flying && !mc.player.isInWater();
         if (started) {
@@ -435,7 +480,7 @@ public final class BlockCoat extends Module {
             if (attempts >= wideningLimit) break;
             if (!criticalStrip.contains(target) && attempt(target, false, validate(target, false, null))) attempts++;
         }
-        readyCount = protectedCount = reachCount = coveredCount = planningCount = 0;
+        readyCount = protectedCount = reachCount = coveredCount = planningCount = deferredCount = 0;
         rays = 0; searching = true;
         int checks = Math.min(128, searchQueue.size());
         for (int i = 0; i < checks && attempts < limit && rays < 256; i++) {
@@ -444,10 +489,11 @@ public final class BlockCoat extends Module {
             if (tracker.isPending(target) || visibilityRetry.getOrDefault(target,0) > tick) continue;
             Validation validation = validate(target, false, null);
             if (!validation.valid()) {
-                if (validation.reason == Rejection.Protected || validation.reason == Rejection.Height) protectedCount++;
+                if (validation.reason == Rejection.Protected || validation.reason == Rejection.Passage || validation.reason == Rejection.Height) protectedCount++;
                 if (validation.reason == Rejection.Reach) { reachCount++; visibilityRetry.put(target,tick+3); }
                 if (validation.reason == Rejection.Covered) coveredCount++;
                 if (validation.reason == Rejection.Planning) planningCount++;
+                if (validation.reason == Rejection.Deferred) deferredCount++;
                 if (rejectedPreview.get() && invalidPreview.size() < 128) invalidPreview.add(target);
                 continue;
             }
@@ -464,6 +510,7 @@ public final class BlockCoat extends Module {
             status += " / " + coveredCount + " covered";
             if (planningCount > 0) status += " / calculating blasts";
         }
+        if (deferredCount > 0) status += " / visibility deferred";
     }
 
     private FindItemResult findCoatingBlock() {
@@ -514,7 +561,41 @@ public final class BlockCoat extends Module {
 
     private boolean tunnelTarget(BlockPos target) {
         Vec3 offset = Vec3.atCenterOf(target).subtract(mc.player.position());
-        return tunnel.get() && ModeGeometry.behindFacing(offset.x, offset.z, facingYaw);
+        if (!tunnel.get()) return false;
+        if (tunnelDirection.get() == TunnelDirection.Movement) {
+            Vec3 heading = passageHeading.horizontalDistanceSqr() > .0001 ? passageHeading : hasTravel ? travel : Vec3.ZERO;
+            if (heading.horizontalDistanceSqr() > .0001) return ModeGeometry.behind(offset.x, offset.z, heading.x, heading.z);
+        }
+        return ModeGeometry.behindFacing(offset.x, offset.z, facingYaw);
+    }
+
+    /** Convert physical movement keys into the horizontal world direction Minecraft will travel. */
+    private Vec3 intendedMovement() {
+        if (mc.player == null || mc.player.input == null) return Vec3.ZERO;
+        Input keys = mc.player.input.keyPresses;
+        double forward = (keys.forward() ? 1 : 0) - (keys.backward() ? 1 : 0);
+        double lateral = (keys.left() ? 1 : 0) - (keys.right() ? 1 : 0);
+        if (forward == 0 && lateral == 0) return Vec3.ZERO;
+        double yaw = Math.toRadians(facingYaw);
+        Vec3 movement = new Vec3(-Math.sin(yaw) * forward + Math.cos(yaw) * lateral, 0,
+            Math.cos(yaw) * forward + Math.sin(yaw) * lateral);
+        return movement.normalize();
+    }
+
+    private Vec3 facingDirection() {
+        double yaw = Math.toRadians(facingYaw);
+        return new Vec3(-Math.sin(yaw), 0, Math.cos(yaw));
+    }
+
+    private void rebuildPassageLane(Vec3 position) {
+        passageLane.clear();
+        if (!preserveTightCorridors.get() || flying()) return;
+        int feetY = mc.player.blockPosition().getY();
+        for (PassageGeometry.Cell cell : PassageGeometry.lane(position.x, position.z,
+            laneHeading.x, laneHeading.z, 2)) {
+            passageLane.add(new BlockPos(cell.x(), feetY, cell.z()));
+            passageLane.add(new BlockPos(cell.x(), feetY + 1, cell.z()));
+        }
     }
 
     private boolean paced() { return serverMode.get() != ServerMode.Fast; }
@@ -748,6 +829,52 @@ public final class BlockCoat extends Module {
         return false;
     }
 
+    private static PassageClearance.Cell clearanceCell(BlockPos pos) {
+        return new PassageClearance.Cell(pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    private boolean passageProtected(BlockPos target) {
+        if (respectTntClearance.get() && activeBlock == Blocks.TNT
+            && passageClearance.protects(clearanceCell(target))) return true;
+        return preserveTightCorridors.get() && passageLane.contains(target)
+            && tightCorridorAt(target, target, false, laneHeading);
+    }
+
+    /** A mined TNT block is route intent only when it opens a body-height cell in a narrow passage. */
+    private boolean likelyPassageOpening(BlockPos target) {
+        int feetY = mc.player.blockPosition().getY();
+        if (target.getY() != feetY && target.getY() != feetY + 1) return false;
+        Vec3 toward = Vec3.atCenterOf(target).subtract(mc.player.position()).multiply(1, 0, 1);
+        if (toward.horizontalDistanceSqr() < .01 || toward.horizontalDistanceSqr() > 36) return false;
+        toward = toward.normalize();
+        Vec3 look = mc.player.getLookAngle().multiply(1, 0, 1);
+        if (look.horizontalDistanceSqr() < .0001 || look.normalize().dot(toward) < .55) return false;
+        return tightCorridorAt(target, target, true, toward);
+    }
+
+    private boolean tightCorridorAt(BlockPos centre, BlockPos forcedOpen, boolean forceWholeColumn, Vec3 heading) {
+        if (heading.horizontalDistanceSqr() < .0001) return false;
+        boolean alongX = Math.abs(heading.x) >= Math.abs(heading.z);
+        int lateralX = alongX ? 0 : 1;
+        int lateralZ = alongX ? 1 : 0;
+        int feetY = mc.player.blockPosition().getY();
+        return PassageGeometry.narrowCorridor(offset -> bodyColumnOpen(
+            centre.getX() + lateralX * offset, centre.getZ() + lateralZ * offset,
+            feetY, forcedOpen, forceWholeColumn), 2);
+    }
+
+    private boolean bodyColumnOpen(int x, int z, int feetY, BlockPos forcedOpen, boolean forceWholeColumn) {
+        for (int y = feetY; y <= feetY + 1; y++) {
+            BlockPos pos = new BlockPos(x, y, z);
+            if (forcedOpen != null && forcedOpen.getX() == x && forcedOpen.getZ() == z
+                && (forceWholeColumn || forcedOpen.getY() == y)) continue;
+            if (!loaded(pos) || mc.level.isOutsideBuildHeight(pos)
+                || !mc.level.getWorldBorder().isWithinBounds(pos)
+                || !mc.level.getBlockState(pos).getCollisionShape(mc.level, pos).isEmpty()) return false;
+        }
+        return true;
+    }
+
     /** Filler can also use blast-resistant supports; ordinary coating still needs eligible terrain. */
     private boolean usableSupport(BlockPos pos, BlockState state, boolean liquid) {
         return loaded(pos) && !mc.level.isOutsideBuildHeight(pos)
@@ -777,7 +904,7 @@ public final class BlockCoat extends Module {
                 for (var sample : PlacementGeometry.faceSamples(bounds, axis, face.getAxisDirection().getStep(),
                     new PlacementGeometry.Point(eye.x, eye.y, eye.z), narrowGaps.get())) {
                     BlockHitResult hit = new BlockHitResult(new Vec3(sample.x(), sample.y(), sample.z()), face, support, false);
-                    if (searching && rays >= 256) return null;
+                    if (searching && rays >= 256) { rayLimited = true; return null; }
                     if (visibleHit(target, hit, liquid)) return hit;
                 }
             }
@@ -795,7 +922,10 @@ public final class BlockCoat extends Module {
         if (eye.distanceToSqr(hit.getLocation()) > maxReach * maxReach) return false;
         Direction face = hit.getDirection();
         Vec3 inside = hit.getLocation().add(-face.getStepX() * .001, -face.getStepY() * .001, -face.getStepZ() * .001);
-        if (searching) { if (rays >= 256) return false; rays++; }
+        if (searching) {
+            if (rays >= 256) { rayLimited = true; return false; }
+            rays++;
+        }
         BlockHitResult ray = mc.level.clip(new ClipContext(eye, inside, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, mc.player));
         return ray.getType() == HitResult.Type.BLOCK && ray.getBlockPos().equals(hit.getBlockPos())
             && ray.getDirection() == face && ray.getLocation().distanceToSqr(hit.getLocation()) < .0004;
@@ -810,6 +940,7 @@ public final class BlockCoat extends Module {
         if (!CoatingRules.tunnelAllows(tunnel.get(), underfoot, tunnelTarget(target))) return reject(Rejection.Protected);
         boolean liquid = !underfoot && liquidTarget(target);
         if ((!liquid && !replaceable(target)) || !inRadius(target)) return reject(Rejection.Occupied);
+        if (!underfoot && passageProtected(target)) return reject(Rejection.Passage);
         if (tracker.retryBlocked(target, tick)) return reject(Rejection.Retry);
         // Unpowered circuits can react to placement; re-read the whole buffer on deferred sends too.
         if (!TntRedstoneSafety.canPlace(activeBlock == Blocks.TNT, target, mc.level::isOutsideBuildHeight,
@@ -835,6 +966,7 @@ public final class BlockCoat extends Module {
             if (blastLimited) return reject(Rejection.Planning);
         }
         BlockHitResult hit;
+        rayLimited = false;
         if (preferred != null) hit = visibleHit(target, preferred, liquid) ? preferred : null;
         else {
             BlockHitResult cached = hitCache.get(target);
@@ -842,7 +974,7 @@ public final class BlockCoat extends Module {
             hit = cached != null && !clickable(cached) && visibleHit(target, cached, liquid) ? cached : supportHit(target, liquid);
             if (hit != null) hitCache.put(target, hit); else hitCache.remove(target);
         }
-        return hit == null ? reject(Rejection.Reach) : new Validation(Rejection.None, hit, liquid);
+        return hit == null ? reject(rayLimited ? Rejection.Deferred : Rejection.Reach) : new Validation(Rejection.None, hit, liquid);
     }
 
     private boolean validateForSend(BlockPos target, boolean underfoot, BlockHitResult hit, boolean liquid) {

@@ -1,5 +1,8 @@
 # Changelog
 
+- **Block Coat corridor safety:** preserve the moving player's lane and two blocks ahead in detected one- and two-wide passages, while allowing coating behind and preserving the other lane where available. Recheck the lane before deferred rotated interactions and leave open-area coating unchanged.
+- **Block Coat manual clearance:** detect direct body-height TNT mining in narrow passages, remove deliberately cleared TNT from rollback/retry tracking, and keep both body cells clear until the player traverses the opening or a bounded timeout expires.
+- **Block Coat movement backfill:** make movement/input direction the default tunnel reference with the original facing direction available as an option. Treat visibility-ray exhaustion as deferred work rather than an unreachable target.
 - **Auto Totem removal:** remove Comet's Auto Totem optimization, mixin, tests and duplicate Comet-menu entry. Meteor's original Auto Totem remains unchanged in Combat.
 - **Comet upgrade navigation:** add a direct **Settings** button for every separate Comet upgrade linked from Elytra Fly, Storage ESP, Fast Use and Waypoints. Stock modules upgraded in place remain shared entries in both their original category and Comet.
 - **Module removal:** remove Stash-Hunter ElytraFly, its optional Stash-Hunter mixins and bridge, its settings links, and the Stash-Hunter suggestion from the packaged metadata.

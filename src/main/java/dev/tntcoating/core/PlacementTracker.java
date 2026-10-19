@@ -61,6 +61,18 @@ public final class PlacementTracker<P, B> {
     /** Release a reservation that will not be sent. */
     public void cancel(P pos, Attempt<B> attempt) { pending.remove(pos, attempt); }
 
+    /**
+     * Forget a position the user deliberately changed. Unlike a rejected or rolled-back placement,
+     * an abandoned position must not retain a watch, retry backoff or unconfirmed client prediction.
+     */
+    public void abandon(P pos) {
+        pending.remove(pos);
+        unconfirmed.remove(pos);
+        watched.remove(pos);
+        retryAfter.remove(pos);
+        failures.remove(pos);
+    }
+
     public void markSent(P pos, Attempt<B> attempt, int tick) {
         attempt.sentTick = tick;
         watched.put(pos, tick + WATCH_TICKS);

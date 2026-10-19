@@ -113,4 +113,17 @@ class PlacementTrackerTest {
         tracker.cancel(1, old);
         assertTrue(tracker.current(1, current));
     }
+    @Test void deliberateAbandonmentClearsEveryRetryAndWatchState() {
+        var attempt = send(1, 0);
+        tracker.update(1, true, false, attempt, 2, 3);
+        tracker.update(1, false, true, null, 4, 3);
+        assertTrue(tracker.retryBlocked(1, 5));
+        tracker.abandon(1);
+        assertFalse(tracker.isPending(1));
+        assertFalse(tracker.unconfirmed(1));
+        assertFalse(tracker.retryBlocked(1, 5));
+        assertFalse(tracker.concerns(1, null));
+        tracker.expire(100, 20, 3, pos -> true);
+        assertFalse(events.contains("ready 1"));
+    }
 }
