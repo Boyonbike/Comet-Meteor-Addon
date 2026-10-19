@@ -2,16 +2,16 @@
 
 Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
-- **Flight:** **adaptive-elytra-fly**, **baritone-elytra**, **elytra-replace**, **elytra-log**.
-- **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **shulker-icons**, **trajectories**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**.
-- **Building:** **scaffold**, **block-coat**, **smart-sponge**, **safe-fast-use**.
-- **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**.
+- **Flight and movement:** **adaptive-elytra-fly**, **baritone-elytra**, **elytra-replace**, **elytra-log**, **phase**, **angle-calculator**.
+- **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **shulker-icons**, **no-hurt-cam**, **trajectories**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**.
+- **Building:** **scaffold**, **block-coat**, **smart-sponge**, **safe-fast-use**, **anti-spawn-set**.
+- **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**, **auto-replenish**.
 - **Diagnostics:** **home-packet-log**.
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine** and **player-speed**. See [HUD elements](#hud-elements).
 
 Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Area Spiral Search and Trail Hunter have been removed. The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.23.9.jar`.
 
-**Scaffold**, **Trajectories**, **Auto Tool**, **Auto Weapon** and **Inventory Tweaks** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
+**Scaffold**, **Trajectories**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
 **Newer Meteor builds.** Before applying an upgrade to a Meteor module, Comet checks that the installed Meteor still has every method, field and code location the upgrade attaches to. If a Meteor build has changed one, that upgrade alone is skipped: the stock module keeps working, it is not listed under Comet, and chat names the skipped upgrades when you join a world (details are in the log). Adaptive Elytra Fly refuses to start if its Elytra Fly hook was skipped. Builds older than 42 are rejected by Fabric with a clear message.
 
@@ -27,6 +27,29 @@ Expand **Comet**, then left-click an upgrade to toggle it or use its **Settings*
 Right-click a Comet module to open its settings, then click a section header or arrow to expand its dropdown. Setting sections start collapsed; saved section states are respected when loading a configuration. Adaptive Elytra Fly also has a **Flight Diagnostics** dropdown, and Fast Storage ESP puts **Clear Opened Containers** under **Actions**. The **Comet** sections added to Meteor's Scaffold and Trajectories also start collapsed.
 
 Version history is in [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.6.1? See [Upgrading](#upgrading-from-061).
+
+## Bephax movement and player features
+
+- **no-hurt-cam** removes the camera tilt and shake when damaged. Its **disable-hurt-cam** setting defaults on.
+- **angle-calculator** continuously aims your yaw at the centre of the configured **to** block, using its X/Z coordinates. **level-pitch** defaults on and keeps pitch at zero. Riding also turns the vehicle. This controls your view; it does not move you automatically.
+- **anti-spawn-set** blocks outgoing bed and respawn-anchor interactions. **block-beds**, **block-anchors** and **notify** default on. Like Bephax, this blocks every interaction with those blocks, including sleeping, anchor charging and explosive use in other dimensions.
+- **phase** includes **Pearl**, **Clip**, **Normal**, **Sand** and **Climb** modes. Server acceptance depends on the server's movement checks.
+  - **Pearl** (default) aims away from your current block centre and throws downwards at **pitch** (83° by default), then disables itself. It turns over several ticks; **instant-rotation** aims immediately. **swap-alternative** enables temporary main-inventory pearl swaps; with it off, pearls must be in the hotbar or offhand. Your selected slot and displaced item are restored after the throw. Close screens first; item use, active Comet tool/weapon loans, riding, swimming, gliding and pearl cooldowns prevent the throw. Disabling or changing modes cancels queued throws.
+  - **attack** optionally clears nearby item frames and scaffolding at your feet. **self-fill** optionally places a resistant hotbar block beside you before throwing. Both default off; **swing** defaults on.
+  - **Clip** makes one small move toward a corner of your current block while grounded, then disables itself.
+  - **Normal** applies **auto-clip** on activation using **blocks** (0.003), then allows forward movement at **distance** (0.2) while sneaking inside blocks.
+  - **Sand** removes collision and uses Jump/Sneak for vertical movement. **Climb** removes collision while against a wall and uses Jump/Sneak to climb. Disabling or leaving Sand restores the previous physics state.
+
+## Advanced Auto Replenish
+
+Comet upgrades Meteor's existing **auto-replenish** in place. Its Player and Comet entries share one toggle, keybind and configuration. Existing **min-count**, **delay**, **offhand**, **unstackable**, **same-enchants**, **search-hotbar** and **excluded-items** settings remain in use, including Meteor's Auto Totem offhand lock.
+
+- **stack-preference** chooses **SmallStacks** (default), **FullStacks** or **FirstMatch** across eligible inventory stacks. **smart-refill** waits until a remaining stack has one item; empty tracked slots can still be restored.
+- **pause-on-use** defaults on. **max-refills-per-tick** defaults to 1 and allows up to 5 transfers per refill tick, subject to Meteor's existing delay.
+- **refill-all-stackable** defaults on. Turn it off to select categories: blocks, food, tools, weapons, projectiles, ender pearls, potions, totems, golden apples and fireworks. Tools and weapons default off. Tools always keep their exact item/material; replacing broken or consumed unstackable items also requires Meteor's **unstackable** setting.
+- **respect-custom-names** defaults on and requires the same custom name when replacing an emptied slot. Partly filled stacks always require matching item components, including names, enchantments and potion data, so incompatible stacks are never swapped over remaining items. **same-enchants** and **excluded-items** still apply.
+
+Transfers use Meteor's targeted inventory clicks without opening the inventory. Bephax's shift-click and delayed-click queue are replaced by direct transfers to the intended slot, so an earlier empty hotbar slot cannot redirect a refill. Transfers pause for open containers, carried cursor items and Comet's temporary tool/weapon loans. Manual screen changes reset tracked slots through Meteor's original lifecycle. These features have automated build and compatibility coverage; in-game movement, camera effects and server inventory acceptance still need verification.
 
 ## Shulker Icons
 

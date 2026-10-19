@@ -6,7 +6,7 @@
   "authors": [
     "Boyonabike"
   ],
-  "description": "Comet by Boyonabike: adaptive Vanilla elytra movement with terrain pacing and correction recovery, Baritone elytra trips, elytra replacement and low-elytra logout, cached shader storage ESP, shulker content icons, bounded trajectory simulation, Meteor waypoints on Xaero's maps and look-to-delete waypoints, an interactive chat HUD for player commands, homes and teleport timers, TNT surface coating with jump placement, scaffold strips and tunnel backfill, Smart Sponge, fast item use without opening newly placed shulkers, inventory-aware Auto Tool and Auto Weapon, optimized Scaffold placement, client-thread container transfers, movable engine and speed HUD elements, and player teleport packet logging.",
+  "description": "Comet by Boyonabike: adaptive Vanilla elytra movement with terrain pacing and correction recovery, Baritone elytra trips, elytra replacement and low-elytra logout, cached shader storage ESP, shulker content icons, bounded trajectory simulation, Meteor waypoints on Xaero's maps and look-to-delete waypoints, an interactive chat HUD for player commands, homes and teleport timers, TNT surface coating with jump placement, scaffold strips and tunnel backfill, Smart Sponge, fast item use without opening newly placed shulkers, inventory-aware Auto Tool and Auto Weapon, optimized Scaffold placement, client-thread container transfers, movable engine and speed HUD elements, player teleport packet logging, no hurt camera, five-mode phasing, coordinate angle locking, blocked spawn-point interactions, and advanced stock Auto Replenish controls.",
   "environment": "client",
   "license": "CC0-1.0",
   "entrypoints": {

@@ -4,6 +4,10 @@ import dev.tntcoating.compat.MeteorUpgrades;
 import dev.tntcoating.core.InventorySlotLoan;
 import dev.tntcoating.core.InventoryWeaponAttack;
 import dev.tntcoating.modules.AdaptiveElytraFly;
+import dev.tntcoating.modules.AngleCalculator;
+import dev.tntcoating.modules.AntiSpawnSet;
+import dev.tntcoating.modules.NoHurtCam;
+import dev.tntcoating.modules.Phase;
 import dev.tntcoating.modules.BaritoneElytra;
 import dev.tntcoating.modules.BlockCoat;
 import dev.tntcoating.modules.ChatTools;
@@ -36,6 +40,7 @@ import meteordevelopment.meteorclient.systems.modules.combat.AutoWeapon;
 import meteordevelopment.meteorclient.systems.modules.misc.InventoryTweaks;
 import meteordevelopment.meteorclient.systems.modules.movement.Scaffold;
 import meteordevelopment.meteorclient.systems.modules.player.AutoTool;
+import meteordevelopment.meteorclient.systems.modules.player.AutoReplenish;
 import meteordevelopment.meteorclient.systems.modules.render.Trajectories;
 import net.minecraft.world.item.Items;
 
@@ -63,9 +68,12 @@ public final class TntCoatingAddon extends MeteorAddon {
         ordered.add(new BaritoneElytra());
         ordered.add(new ElytraReplace());
         ordered.add(new ElytraLog());
+        ordered.add(new Phase());
+        ordered.add(new AngleCalculator());
         // Rendering, storage discovery and waypoints.
         ordered.add(new FastStorageESP());
         ordered.add(new ShulkerIcons());
+        ordered.add(new NoHurtCam());
         upgraded(ordered, modules.get(Trajectories.class), "TrajectoriesMixin");
         ordered.add(new XaeroWaypoints());
         ordered.add(new WaypointDelete());
@@ -75,10 +83,12 @@ public final class TntCoatingAddon extends MeteorAddon {
         ordered.add(new BlockCoat());
         ordered.add(new SmartSponge());
         ordered.add(new SafeFastUse());
+        ordered.add(new AntiSpawnSet());
         // Combat and inventory.
         upgraded(ordered, modules.get(AutoTool.class), "AutoToolMixin");
         upgraded(ordered, modules.get(AutoWeapon.class), "AutoWeaponMixin");
         upgraded(ordered, modules.get(InventoryTweaks.class), "InventoryTweaksMixin");
+        upgraded(ordered, modules.get(AutoReplenish.class), "AutoReplenishMixin");
         // Diagnostics.
         ordered.add(new HomePacketLog());
         orderedModules = List.copyOf(ordered);

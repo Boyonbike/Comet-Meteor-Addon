@@ -41,6 +41,22 @@ class MeteorUpgradeCheckTest {
         assertTrue(problems.stream().anyMatch(problem -> problem.contains("onTick")), problems.toString());
     }
 
+    @Test void hurtCameraAndPhaseHooksFitThePinnedMinecraftBuild() throws Exception {
+        for (String name : List.of("NoHurtCamMixin", "PhasePlayerMixin")) {
+            ClassNode mixin = read("dev/tntcoating/mixin/" + name);
+            assertNotNull(mixin);
+            assertEquals(List.of(), MeteorUpgradeCheck.problems(mixin, MeteorUpgradeCheckTest::read), name);
+        }
+    }
+
+    @Test void replenishUpgradeFallsBackIfMeteorChangesItsSlotTracking() throws Exception {
+        String name = "meteordevelopment/meteorclient/systems/modules/player/AutoReplenish";
+        ClassNode replenish = read(name);
+        replenish.fields.removeIf(field -> field.name.equals("items"));
+        var problems = MeteorUpgradeCheck.problems(read("dev/tntcoating/mixin/AutoReplenishMixin"), withReplacement(name, replenish));
+        assertTrue(problems.stream().anyMatch(problem -> problem.contains("items")), problems.toString());
+    }
+
     @Test void aChangedConstantIsReported() throws Exception {
         ClassNode weapon = read(AUTO_WEAPON);
         MethodNode best = weapon.methods.stream().filter(method -> method.name.equals("getBestWeapon")).findFirst().orElseThrow();
