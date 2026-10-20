@@ -137,6 +137,16 @@ class AdaptiveFlightEngineTest {
         }
     }
 
+    @Test void climbingWhileBoostingNeverTakesTotalSpeedPastTheChosenMaximum() {
+        AdaptiveFlightEngine.Settings capped = boosting(10, 10); // a 200 b/s maximum, the 6b6t-safe speed
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(capped);
+        for (int tick = 0; tick < 600; tick++) {
+            Motion motion = fly(engine, capped, true, tick > 300);
+            assertTrue(motion.length() <= 10 + EPSILON, "tick " + tick + ": " + motion.length() * 20 + " b/s");
+            if (tick > 320) assertTrue(motion.y() > 2, "still climbing, by trading some horizontal speed");
+        }
+    }
+
     @Test void aBoostMaximumAboveTheServerLimitIsHeldToItInThreeDimensions() {
         AdaptiveFlightEngine.Settings tooFast = boosting(24, ServerMoveLimit.SINGLE);
         AdaptiveFlightEngine engine = new AdaptiveFlightEngine(tooFast);

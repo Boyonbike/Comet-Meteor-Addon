@@ -112,45 +112,45 @@ public final class AdaptiveElytraFly extends Module {
         .description("Horizontal cruise maximum as a percentage of the adaptive engine's attainable speed. 100% uses its full output; see Flight Diagnostics for blocks/second.")
         .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
     private final Setting<Double> sprintMaximum = general.add(new DoubleSetting.Builder().name("sprint-max-speed")
-        .description("Horizontal Sprint maximum: a percentage of boost-max-speed with unlimited-boost on, otherwise of the adaptive engine's attainable speed.")
+        .description("Horizontal Sprint maximum: a percentage of boost-max-bps with unlimited-boost on, otherwise of the adaptive engine's attainable speed.")
         .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(sprintBoost::get).build());
-    private final Setting<Double> verticalMaxSpeed = general.add(new DoubleSetting.Builder().name("vertical-max-speed")
-        .description("Fastest climb/descent in blocks per tick (3 is 60 b/s). Vertical percentages and the vertical boost ramp are of this.")
-        .defaultValue(3).range(.05, 10).sliderRange(.1, 6).decimalPlaces(2).build());
+    private final Setting<Double> verticalMaxSpeed = general.add(new DoubleSetting.Builder().name("vertical-max-bps")
+        .description("Fastest climb/descent in blocks per second. Vertical percentages and the vertical boost ramp are of this.")
+        .defaultValue(60).range(1, 200).sliderRange(2, 120).decimalPlaces(1).build());
     private final Setting<Double> verticalCruiseMaximum = general.add(new DoubleSetting.Builder().name("vertical-cruise-max-speed")
-        .description("Jump/Sneak cruise maximum as a percentage of vertical-max-speed.")
+        .description("Jump/Sneak cruise maximum as a percentage of vertical-max-bps.")
         .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
     private final Setting<Double> verticalSprintMaximum = general.add(new DoubleSetting.Builder().name("vertical-sprint-max-speed")
-        .description("Sprint + Jump/Sneak maximum as a percentage of vertical-max-speed.")
+        .description("Sprint + Jump/Sneak maximum as a percentage of vertical-max-bps.")
         .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(sprintBoost::get).build());
     private final Setting<Double> verticalAcceleration = general.add(new DoubleSetting.Builder().name("vertical-acceleration")
         .description("Minimum vertical velocity change per tick; vertical-ramp-step speeds it up when far below the target. Vertical braking uses up to twice this, more from fast climbs and dives (mirroring vertical-ramp-step).")
         .defaultValue(.05).range(.005, .5).sliderRange(.005, .15).decimalPlaces(3).build());
     private final Setting<Double> verticalRampStep = general.add(new DoubleSetting.Builder().name("vertical-ramp-step")
-        .description("How fast climb/descent speeds up, in blocks per tick squared at rest, tapering to zero at vertical-max-speed (like VolytraFly's acceleration curve). Zero keeps vertical-acceleration only.")
+        .description("How fast climb/descent speeds up, in blocks per tick squared at rest, tapering to zero at vertical-max-bps (like VolytraFly's acceleration curve). Zero keeps vertical-acceleration only.")
         .defaultValue(.5).range(0, 5).sliderRange(0, 2).decimalPlaces(2).build());
     private final Setting<Boolean> unlimitedBoost = boost.add(new BoolSetting.Builder().name("unlimited-boost")
         .description("Holding Sprint flies VolytraFly's speed ramp instead of the adaptive engine maximum. Terrain, chunk and server-glide guards still apply. Off restores adaptive Sprint.")
         .defaultValue(true).visible(sprintBoost::get).build());
     private final Setting<Boolean> overdrive = boost.add(new BoolSetting.Builder().name("overdrive")
-        .description("Boost to the most a vanilla server accepts per tick instead of boost-max-speed: 340 b/s (17 blocks per tick), or 480 b/s with split-moves. Any boost above 245 b/s is set back whenever two move packets reach the server in the same tick (lag or ping jitter), so 340 b/s rubber-bands no more often than 300 b/s.")
+        .description("Boost to the most a server accepts in one packet per tick instead of boost-max-bps: 340 b/s, or 390 b/s with split-moves. Like anything over 200 b/s, it is set back whenever ping jitter or lag bunches your packets on 6b6t.")
         .defaultValue(false).visible(this::boostVisible).build());
     private final Setting<Boolean> splitMoves = boost.add(new BoolSetting.Builder().name("split-moves")
-        .description("Experimental: while boosting above 200 b/s, also report a half-step position each tick. A vanilla server then allows twice the distance per tick (480 b/s with overdrive) and stops setting back 300-340 b/s when two ticks of packets arrive together. An anticheat that counts movement packets may set you back or kick you instead.")
+        .description("Experimental: while boosting above 200 b/s, also report a half-step position each tick. Paper (6b6t) allows more distance in a tick with more packets, so up to 390 b/s survives two ticks of packets arriving together; three arriving together (a lag spike) are set back at any speed. An anticheat that counts movement packets may object.")
         .defaultValue(false).visible(this::boostVisible).build());
-    private final Setting<Double> boostMaxSpeed = boost.add(new DoubleSetting.Builder().name("boost-max-speed")
-        .description("Top horizontal boost speed in blocks per tick with overdrive off (14.999 is VolytraFly's 300 b/s). Boost's total 3D speed never exceeds what a vanilla server accepts per move packet: 17 blocks per tick.")
-        .defaultValue(14.999).range(.1, 24).sliderRange(1, 17).decimalPlaces(3)
+    private final Setting<Double> boostMaxSpeed = boost.add(new DoubleSetting.Builder().name("boost-max-bps")
+        .description("Fastest boost in blocks per second, horizontal and vertical combined, so climbing or diving never takes you past it. 6b6t (Paper) sets back anything over 200 b/s whenever ping jitter or lag bunches your packets; at 200 or below that does not happen.")
+        .defaultValue(300).range(2, 390).sliderRange(20, 340).decimalPlaces(1)
         .visible(() -> boostVisible() && !overdrive.get()).build());
-    private final Setting<Double> boostStartSpeed = boost.add(new DoubleSetting.Builder().name("boost-start-speed")
-        .description("Horizontal speed boost starts at, in blocks per tick, when slower (2.999 is 60 b/s).")
-        .defaultValue(2.999).range(0, 64).sliderRange(0, 10).decimalPlaces(3).visible(this::boostVisible).build());
+    private final Setting<Double> boostStartSpeed = boost.add(new DoubleSetting.Builder().name("boost-start-bps")
+        .description("Horizontal speed boost starts at, in blocks per second, when slower.")
+        .defaultValue(60).range(0, 390).sliderRange(0, 200).decimalPlaces(1).visible(this::boostVisible).build());
     private final Setting<Double> boostRampStep = boost.add(new DoubleSetting.Builder().name("boost-ramp-step")
-        .description("Horizontal boost acceleration in blocks per tick squared at rest, tapering to zero at boost-max-speed.")
+        .description("Horizontal boost acceleration in blocks per tick squared at rest, tapering to zero at boost-max-bps.")
         .defaultValue(.3).range(.01, 5).sliderRange(.05, 2).decimalPlaces(2).visible(this::boostVisible).build());
-    private final Setting<Double> boostVerticalStartSpeed = boost.add(new DoubleSetting.Builder().name("boost-vertical-start-speed")
-        .description("Climb/descent speed boost starts at, in blocks per tick, when slower. The vertical boost then follows vertical-ramp-step up to vertical-max-speed.")
-        .defaultValue(1.5).range(0, 10).sliderRange(0, 6).decimalPlaces(2).visible(this::boostVisible).build());
+    private final Setting<Double> boostVerticalStartSpeed = boost.add(new DoubleSetting.Builder().name("boost-vertical-start-bps")
+        .description("Climb/descent speed boost starts at, in blocks per second, when slower. The vertical boost then follows vertical-ramp-step up to vertical-max-bps.")
+        .defaultValue(30).range(0, 200).sliderRange(0, 120).decimalPlaces(1).visible(this::boostVisible).build());
     private final Setting<Integer> boostRewindTicks = boost.add(new IntSetting.Builder().name("boost-rewind-ticks")
         .description("A server setback rewinds the boost ramp by this many ticks of acceleration instead of restarting it, and flight keeps its momentum (15 loses under 1% near top speed).")
         .defaultValue(15).range(0, 200).sliderRange(0, 60).visible(this::boostVisible).build());
@@ -175,9 +175,9 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Boolean> safeManeuvering = terrain.add(new BoolSetting.Builder().name("safe-maneuvering")
         .description("Resolve close-object movement with Minecraft collision, including after braking for a wall. Keeps unloaded-chunk protection.")
         .defaultValue(true).build());
-    private final Setting<Double> closeObjectSpeed = terrain.add(new DoubleSetting.Builder().name("close-object-speed")
-        .description("Maximum movement speed near an object, in blocks per tick. Press Sprint there to override it until clear.")
-        .defaultValue(.6).range(.1, 4).sliderRange(.1, 2).decimalPlaces(2).visible(safeManeuvering::get).build());
+    private final Setting<Double> closeObjectSpeed = terrain.add(new DoubleSetting.Builder().name("close-object-bps")
+        .description("Maximum movement speed near an object, in blocks per second. Press Sprint there to override it until clear.")
+        .defaultValue(12).range(2, 80).sliderRange(2, 40).decimalPlaces(1).visible(safeManeuvering::get).build());
     private final Setting<Boolean> serverGlideGuard = terrain.add(new BoolSetting.Builder().name("server-glide-guard")
         .description("Keep walls out of reach of the server's own elytra glide. A vanilla server keeps simulating a normal glide from your reported position every tick, and that hidden speed, not your visible speed, deals fly-into-wall damage.")
         .defaultValue(true).build());
@@ -722,12 +722,12 @@ public final class AdaptiveElytraFly extends Module {
     /** The engine's settings from this module's and Meteor Elytra Fly's; Meteor's stock speeds only gate axes. */
     private AdaptiveFlightEngine.Settings engineSettings(ElytraFly fly) {
         return new AdaptiveFlightEngine.Settings(acceleration.get(), braking.get(), adaptiveTurnRate.get(),
-            cruiseMaximum.get(), sprintMaximum.get(), verticalMaxSpeed.get(), verticalCruiseMaximum.get(),
+            cruiseMaximum.get(), sprintMaximum.get(), verticalMaxSpeed.get() / 20, verticalCruiseMaximum.get(),
             verticalSprintMaximum.get(), verticalAcceleration.get(), verticalRampStep.get(),
-            boostVisible(), boostTop(), boostStartSpeed.get(), boostRampStep.get(),
-            boostVerticalStartSpeed.get(), boostRewindTicks.get(), boostSetbackHold.get(), serverMoveLimit(),
+            boostVisible(), boostTop(), boostStartSpeed.get() / 20, boostRampStep.get(),
+            boostVerticalStartSpeed.get() / 20, boostRewindTicks.get(), boostSetbackHold.get(), boostCeiling(),
             lookahead.get(), margin.get(),
-            safeManeuvering.get(), closeObjectSpeed.get(),
+            safeManeuvering.get(), closeObjectSpeed.get() / 20,
             fly == null ? 0 : fly.horizontalSpeed.get(), fly == null ? 0 : fly.verticalSpeed.get(),
             fly == null ? 0 : fly.fallMultiplier.get());
     }
@@ -742,11 +742,11 @@ public final class AdaptiveElytraFly extends Module {
 
     private boolean boostVisible() { return sprintBoost.get() && unlimitedBoost.get(); }
 
-    /** The most a vanilla server accepts per tick in total, which boost never exceeds. */
+    /** The most a server accepts per tick in total, in blocks per tick. */
     private double serverMoveLimit() { return ServerMoveLimit.of(boostVisible() && splitMoves.get()); }
 
-    // Below this, one packet a tick is comfortably within what a server accepts even when two ticks bunch together.
-    private static final double SPLIT_MOVE_DISTANCE = 10;
+    /** Boost's total 3D speed in blocks per tick: the selected top speed, never past the server's limit. */
+    private double boostCeiling() { return Math.min(serverMoveLimit(), boostTop() * sprintMaximum.get() / 100); }
 
     /**
      * Called by the mixin just before vanilla reports this tick's position: while boosting fast, report the halfway
@@ -756,15 +756,15 @@ public final class AdaptiveElytraFly extends Module {
         if (!isActive() || !boostVisible() || !splitMoves.get() || !controlling || !engine.boostActive()
             || mc.player == null || mc.getConnection() == null || !mc.player.isFallFlying()) return;
         LocalPlayerAccessor reported = (LocalPlayerAccessor) mc.player;
-        Vec3 last = new Vec3(reported.comet$xLast(), reported.comet$yLast(), reported.comet$zLast());
-        Vec3 current = mc.player.position();
-        if (current.distanceToSqr(last) <= SPLIT_MOVE_DISTANCE * SPLIT_MOVE_DISTANCE) return;
-        mc.getConnection().send(new ServerboundMovePlayerPacket.Pos(last.add(current).scale(.5), false,
+        // After a correction vanilla's last reported position is from before it, so no halfway point is sent then.
+        Vec3 half = ServerMoveLimit.halfStep(new Vec3(reported.comet$xLast(), reported.comet$yLast(),
+            reported.comet$zLast()), mc.player.position(), engine.output().length());
+        if (half != null) mc.getConnection().send(new ServerboundMovePlayerPacket.Pos(half, false,
             mc.player.horizontalCollision));
     }
 
-    /** The horizontal boost ramp's top speed: the server's per-tick limit with overdrive, otherwise boost-max-speed. */
-    private double boostTop() { return overdrive.get() ? serverMoveLimit() : boostMaxSpeed.get(); }
+    /** The horizontal boost ramp's top speed in blocks per tick: the server's limit with overdrive, otherwise boost-max-bps. */
+    private double boostTop() { return overdrive.get() ? serverMoveLimit() : boostMaxSpeed.get() / 20; }
 
     /** The physical Sprint key, including a rebound mouse button, while Minecraft is focused with no screen open. */
     private boolean sprintKeyDown() {
@@ -868,8 +868,8 @@ public final class AdaptiveElytraFly extends Module {
                 "Horizontal max %.1f b/s | cruise %.1f (%.1f%%) | %s %.1f (%.1f%%) | vertical cruise/Sprint %.1f/%.1f b/s",
                 maximum * 20, maximum * cruiseMaximum.get() / 5, cruiseMaximum.get(),
                 boostVisible() ? "unlimited boost" : "Sprint", sprint, sprintMaximum.get(),
-                verticalMaxSpeed.get() * verticalCruiseMaximum.get() / 5,
-                verticalMaxSpeed.get() * verticalSprintMaximum.get() / 5));
+                verticalMaxSpeed.get() * verticalCruiseMaximum.get() / 100,
+                verticalMaxSpeed.get() * verticalSprintMaximum.get() / 100));
         }
         if (boostLabel != null) boostLabel.set(boostLine());
         if (countsLabel != null) countsLabel.set("Setbacks " + (setbacks - diagnosticSetbackBase)
