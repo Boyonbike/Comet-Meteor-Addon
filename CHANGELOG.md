@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.25.0
+
+- **Removed Phase:** the **phase** module (Pearl, Clip, Normal, Sand and Climb modes) and its push-out hook are gone.
+- **Removed the Trajectories upgrade:** Comet no longer changes Meteor's **Trajectories**. It is stock Meteor again, is no longer listed under Comet, and its **Comet** settings (**optimize-trajectories**, **remote-trajectory-range**, **trajectory-steps-per-frame**) are gone.
+- **Removed Elytra Replace:** the **elytra-replace** module and its Elytra Fly dropdown link are gone. Meteor's Elytra Fly has its own **elytra-replace** and **replace-durability** options for swaps while it is on. **Elytra Log** now counts a spare only when it has more than Elytra Log's own **durability** left, which is what it already did whenever Elytra Replace was off.
+- **Consistent settings menus:** every Comet module description now reads the same way ("Shows…", "Coats…"), toggle descriptions read as instructions, and keybind descriptions start with "Key that…". Fast Storage ESP colours describe what they colour instead of repeating the setting name, and **opened-color** explains that zero opacity keeps the normal colour. Server Pacing is now the last group in Block Coat, and Performance the last in Fast Storage ESP, after the feature groups. No setting or group was renamed, so saved configurations load unchanged.
+- **No Hurt Cam:** removed its **disable-hurt-cam** setting, which only repeated the module toggle. The module removes the hurt camera whenever it is on.
+- **Docs:** README and mod description updated for the removed modules; dropped the stale XaeroPlus dependency note.
+
 ## 0.24.6
 
 - **Adaptive Elytra Fly maneuver mode:** moving horizontally, climbing or descending and turning all at once now holds total 3D speed to **maneuver-max-bps** (default 200 b/s; **maneuver-mode**, on by default), to cut rubber-banding in combined maneuvers. The cap lasts half a second after you stop turning, then boost speeds up again from it along its normal curve. Climbing or turning on its own is never capped, and all fifteen recorded scripted flights reproduce exactly.

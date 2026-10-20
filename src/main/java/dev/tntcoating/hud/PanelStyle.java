@@ -27,7 +27,7 @@ final class PanelStyle {
             .defaultValue(new SettingColor(238, 238, 238)).build());
         accentColor = general.add(new ColorSetting.Builder().name("accent-color").description("Colour of the title and side bar.")
             .defaultValue(new SettingColor(85, 170, 255)).build());
-        shadow = general.add(new BoolSetting.Builder().name("shadow").description("Text shadow.").defaultValue(true).build());
+        shadow = general.add(new BoolSetting.Builder().name("shadow").description("Draw a shadow behind the text.").defaultValue(true).build());
         SettingGroup look = settings.createGroup("Background and Scale");
         background = look.add(new BoolSetting.Builder().name("background").description("Draw the panel background and side bar.")
             .defaultValue(true).build());
@@ -35,7 +35,7 @@ final class PanelStyle {
             .defaultValue(new SettingColor(0, 0, 0, 176)).visible(background::get).build());
         customScale = look.add(new BoolSetting.Builder().name("custom-scale").description("Use a scale other than the HUD's text scale.")
             .defaultValue(false).build());
-        scale = look.add(new DoubleSetting.Builder().name("scale").description("Custom text scale.")
+        scale = look.add(new DoubleSetting.Builder().name("scale").description("Text scale used while custom-scale is on.")
             .defaultValue(1).min(0.5).sliderRange(0.5, 3).visible(customScale::get).build());
     }
 

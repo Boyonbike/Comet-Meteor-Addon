@@ -32,11 +32,11 @@ public final class WaypointDelete extends Module {
     // last highlighted, it is no longer showing details, so it is not deleted.
     private static final double XAERO_MAX_ANGLE = Math.toRadians(10);
     private final SettingGroup general = settings.getDefaultGroup();
-    private final Setting<Keybind> key = general.add(new KeybindSetting.Builder().name("delete-key").description("Deletes the Meteor or Xaero waypoint whose name and distance are showing because you are looking at it.").defaultValue(Keybind.fromButton(GLFW.GLFW_MOUSE_BUTTON_MIDDLE)).build());
+    private final Setting<Keybind> key = general.add(new KeybindSetting.Builder().name("delete-key").description("Key or mouse button that deletes the Meteor or Xaero waypoint whose name and distance are showing because you are looking at it.").defaultValue(Keybind.fromButton(GLFW.GLFW_MOUSE_BUTTON_MIDDLE)).build());
     private XaeroBridge xaero;
     private boolean xaeroChecked;
 
-    public WaypointDelete() { super(TntCoatingAddon.CATEGORY, "waypoint-delete", "Delete the Meteor or Xaero waypoint you are looking at with a key or mouse button."); }
+    public WaypointDelete() { super(TntCoatingAddon.CATEGORY, "waypoint-delete", "Deletes the Meteor or Xaero waypoint you are looking at with a key or mouse button."); }
 
     @Override public void onActivate() { xaero = null; xaeroChecked = false; }
 

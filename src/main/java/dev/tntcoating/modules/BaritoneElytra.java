@@ -67,7 +67,7 @@ public final class BaritoneElytra extends Module {
     private int chestplateSlot = -1;
     private boolean resumeElytraFly;
 
-    public BaritoneElytra() { super(TntCoatingAddon.CATEGORY, "baritone-elytra", "Baritone flies long #goto trips with an elytra and fireworks, then walks the rest."); }
+    public BaritoneElytra() { super(TntCoatingAddon.CATEGORY, "baritone-elytra", "Flies long Baritone #goto trips with an elytra and fireworks, then walks the rest."); }
 
     @Override public String getInfoString() {
         if (trip == null || mc.player == null) return null;

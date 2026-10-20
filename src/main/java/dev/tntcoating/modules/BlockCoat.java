@@ -80,7 +80,13 @@ public final class BlockCoat extends Module {
     public enum TunnelDirection { Movement, Facing }
 
     private final SettingGroup general = settings.getDefaultGroup();
+    // TNT Saving stays at the top; server pacing is advanced, so it comes last.
     private final SettingGroup tntSaving = settings.createGroup("TNT Saving", false);
+    private final SettingGroup liquids = settings.createGroup("Liquid Filler");
+    private final SettingGroup modes = settings.createGroup("Scaffold and Tunnel");
+    private final SettingGroup jumping = settings.createGroup("Smart Jump Place");
+    private final SettingGroup rendering = settings.createGroup("Preview");
+    private final SettingGroup server = settings.createGroup("Server Pacing");
     private final Setting<Block> coatingBlock = general.add(new BlockSetting.Builder()
         .name("coating-block").description("Block used for coating, scaffold and jump placement.")
         .defaultValue(Blocks.TNT)
@@ -89,10 +95,8 @@ public final class BlockCoat extends Module {
     private Block activeBlock = Blocks.TNT;
     private final Setting<Boolean> conservativeTnt = bool(tntSaving, "conservative-tnt", "Save TNT by skipping surface placements whose terrain is already covered by an estimated blast. Jump, scaffold and isolated-source filling are unchanged.", false);
     private boolean activeConservativeTnt;
-    private final SettingGroup liquids = settings.createGroup("Liquid Filler");
     private final Setting<Boolean> liquidFiller = bool(liquids, "liquid-filler", "Replace isolated water source blocks with TNT in normal and conservative TNT modes. Skips sources touching another source on any of their six faces; flowing neighbours are allowed. Requires coating-block TNT.", true);
     private boolean activeLiquidFiller;
-    private final SettingGroup server = settings.createGroup("Server Pacing");
     private final Setting<ServerMode> serverMode = server.add(new EnumSetting.Builder<ServerMode>().name("server-mode").description("Adaptive learns from confirmations; Conservative limits to one interaction per tick; Fast uses the configured batch limit.").defaultValue(ServerMode.Adaptive).build());
     private final Setting<Integer> serverCap = integer(server, "server-rate-cap", "Maximum adaptive interactions per tick.", 2, 1, 8);
     private final Setting<Integer> pendingCap = integer(server, "max-pending", "Maximum outstanding interactions in Adaptive mode.", 6, 1, 16);
@@ -100,8 +104,6 @@ public final class BlockCoat extends Module {
     private final Setting<Boolean> narrowGaps = bool(server, "narrow-gap-targeting", "Experimental edge-face sampling for gaps around chests and partial blocks. This does not control corridor detection.", false);
     private final Setting<Integer> packetLimit = integer(server, "max-packets-per-second", "Skip placements that would push everything you sent in the last second above this. ViaVersion's default sustained limit is 200.", 150, 40, 800);
     private final Setting<Boolean> extraRotations = bool(server, "extra-rotation-packets", "Allow more than one rotated placement per tick. Each extra one sends its own rotation packet; off places at most one rotated block per tick.", false);
-    private final SettingGroup jumping = settings.createGroup("Smart Jump Place");
-    private final SettingGroup modes = settings.createGroup("Scaffold and Tunnel");
     private final Setting<Boolean> scaffold = bool(modes, "scaffold", "Build a strip below movement while continuing surface coating. Disabled during flight.", false);
     private final Setting<Integer> scaffoldWidth = integer(modes, "scaffold-width", "Strip width in blocks, centred with a one-block bias for even widths.", 3, 1, 9);
     private final Setting<Boolean> tunnel = bool(modes, "tunnel-backfill", "Coat only behind the selected movement or facing direction. Smart Jump underfoot placement is exempt; scaffold remains behind-only.", false);
@@ -112,7 +114,6 @@ public final class BlockCoat extends Module {
     private final Setting<Boolean> respectTntClearance = bool(modes, "respect-manual-tnt-clearance", "Do not immediately replace TNT you deliberately mine as an opening. Release the column after you pass through it or the bounded timeout expires.", true);
     private final Setting<Boolean> flightCoating = bool(modes, "coat-while-flying", "Allow coating during flight or airborne movement outside a jump. Turn off to pause it.", true);
     private final Setting<Boolean> externalFlight = bool(modes, "external-flight-detection", "Manually mark another addon's flight as active (including ground spoofing). Flight coating is controlled separately.", false);
-    private final SettingGroup rendering = settings.createGroup("Preview");
 
     private final Setting<Integer> radius = integer(general, "radius", "Cube half-size: radius 5 scans an 11 x 11 x 11 block cube.", 5, 1, 8);
     private final Setting<Integer> perTick = integer(general, "blocks-per-tick", "Maximum surrounding placement attempts per tick.", 8, 1, 32);
@@ -219,7 +220,7 @@ public final class BlockCoat extends Module {
     }
 
     public BlockCoat() {
-        super(TntCoatingAddon.CATEGORY, "block-coat", "Comet by Boyonabike: configurable block coating, priority jump placement, scaffold strips and tunnel coating.");
+        super(TntCoatingAddon.CATEGORY, "block-coat", "Coats exposed terrain with blocks, with priority jump placement, scaffold strips and tunnel backfill.");
     }
 
     private Setting<Boolean> bool(SettingGroup group, String name, String description, boolean value) {

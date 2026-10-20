@@ -12,10 +12,13 @@ import meteordevelopment.meteorclient.systems.modules.misc.AutoReconnect;
 import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFlightModes;
 import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFly;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.protocol.common.ClientboundDisconnectPacket;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
 
 public final class ElytraLog extends Module {
     private final SettingGroup general = settings.getDefaultGroup();
@@ -30,22 +33,17 @@ public final class ElytraLog extends Module {
 
     @EventHandler private void onTick(TickEvent.Pre event) {
         if (mc.player == null || !flying()) return;
-        int worn = ElytraReplace.remaining(mc.player.getItemBySlot(EquipmentSlot.CHEST));
-        int[] spares = ElytraReplace.spares(mc.player.getInventory());
-        if (ElytraReplacement.stranded(worn, spares, durability.get(), spareThreshold())) {
+        int worn = remaining(mc.player.getItemBySlot(EquipmentSlot.CHEST));
+        int[] spares = spares(mc.player.getInventory());
+        // A spare only saves the flight if you can put it on before reaching the threshold yourself.
+        if (ElytraReplacement.stranded(worn, spares, durability.get(), durability.get())) {
             logOut(worn);
             return;
         }
         boolean close = warningMargin.get() > 0
-            && ElytraReplacement.stranded(worn, spares, durability.get() + warningMargin.get(), spareThreshold());
+            && ElytraReplacement.stranded(worn, spares, durability.get() + warningMargin.get(), durability.get());
         if (close && !warned) warning("Your elytra has %d durability left and there's no spare; Elytra Log logs you out at %d.", worn, durability.get());
         warned = close;
-    }
-
-    /** A spare only saves the flight if something puts it on: elytra-replace when it's on, otherwise you. */
-    private int spareThreshold() {
-        ElytraReplace replace = Modules.get().get(ElytraReplace.class);
-        return replace.isActive() ? replace.threshold() : durability.get();
     }
 
     /** ElytraFly's Packet mode flies without the client counting the player as gliding. */
@@ -66,5 +64,23 @@ public final class ElytraLog extends Module {
         // Turned off so it doesn't log you out again the moment you glide down after rejoining.
         toggle();
         mc.player.connection.handleDisconnect(new ClientboundDisconnectPacket(reason));
+    }
+
+    /** Remaining durability of each hotbar and main inventory slot's glider, -1 for a slot without one. */
+    static int[] spares(Inventory inventory) {
+        int[] spares = new int[Inventory.INVENTORY_SIZE];
+        for (int i = 0; i < spares.length; i++) spares[i] = remaining(inventory.getItem(i));
+        return spares;
+    }
+
+    /** Whether this item lets its wearer glide: the vanilla elytra, or any item with the glider component. */
+    public static boolean isGlider(ItemStack stack) {
+        return !stack.isEmpty() && stack.has(DataComponents.GLIDER);
+    }
+
+    /** Remaining durability of a glider, otherwise -1. A glider that cannot be damaged never wears out. */
+    static int remaining(ItemStack stack) {
+        if (!isGlider(stack)) return -1;
+        return stack.isDamageableItem() ? stack.getMaxDamage() - stack.getDamageValue() : Integer.MAX_VALUE;
     }
 }

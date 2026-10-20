@@ -359,14 +359,14 @@ public final class AdaptiveElytraFly extends Module {
             || mc.player.isInLava() || mc.player.isPassenger() || mc.player.getAbilities().flying
             || mc.player.hasEffect(MobEffects.LEVITATION)) return;
         ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
-        if (ElytraReplace.remaining(chest) > 1) return;
+        if (ElytraLog.remaining(chest) > 1) return;
         swapChest(true);
     }
 
     private void smartLandingSwap(ElytraFly fly) {
         if (!canSmartSwap(fly) || !mc.player.onGround()) return;
         ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
-        if (chest.isEmpty() || ElytraReplace.isGlider(chest)) swapChest(false);
+        if (chest.isEmpty() || ElytraLog.isGlider(chest)) swapChest(false);
     }
 
     private boolean canSmartSwap(ElytraFly fly) {
@@ -386,7 +386,7 @@ public final class AdaptiveElytraFly extends Module {
         for (int i = 0; i <= Inventory.INVENTORY_SIZE; i++) {
             int slot = i == Inventory.INVENTORY_SIZE ? Inventory.SLOT_OFFHAND : i;
             ItemStack stack = inventory.getItem(slot);
-            if (stack.isEmpty() || ElytraReplace.isGlider(stack) != glider || !chestSlot.mayPlace(stack)
+            if (stack.isEmpty() || ElytraLog.isGlider(stack) != glider || !chestSlot.mayPlace(stack)
                 || EnchantmentHelper.has(stack, EnchantmentEffectComponents.PREVENT_ARMOR_CHANGE)) continue;
             double[] armor = new double[2];
             if (!glider) stack.forEachModifier(EquipmentSlot.CHEST, (attribute, modifier) -> {
@@ -407,7 +407,7 @@ public final class AdaptiveElytraFly extends Module {
 
     private void observeBoostDelay() {
         if (mc.player != null) boostDelay.observe(clientTicks,
-            ElytraReplace.isGlider(mc.player.getItemBySlot(EquipmentSlot.CHEST)), mc.player.isFallFlying());
+            ElytraLog.isGlider(mc.player.getItemBySlot(EquipmentSlot.CHEST)), mc.player.isFallFlying());
     }
 
     /** Follows the glide velocity the server keeps for this player, which client movement never changes. */
@@ -520,7 +520,7 @@ public final class AdaptiveElytraFly extends Module {
     private boolean eligible(ElytraFly fly) {
         return mc.player != null && mc.level != null && fly != null && fly.isActive()
             && fly.flightMode.get() == ElytraFlightModes.Vanilla && mc.player.isFallFlying()
-            && ElytraReplace.isGlider(mc.player.getItemBySlot(EquipmentSlot.CHEST))
+            && ElytraLog.isGlider(mc.player.getItemBySlot(EquipmentSlot.CHEST))
             && !mc.player.isInLava() && !(mc.player.isInWater() && fly.stopInWater.get())
             && !Modules.get().isActive(Freecam.class);
     }

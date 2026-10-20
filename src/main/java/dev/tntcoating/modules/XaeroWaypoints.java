@@ -30,7 +30,7 @@ public final class XaeroWaypoints extends Module {
     private int ticks;
     private String status;
 
-    public XaeroWaypoints() { super(TntCoatingAddon.CATEGORY, "xaero-waypoints", "Show Meteor waypoints on Xaero's minimap and world map."); }
+    public XaeroWaypoints() { super(TntCoatingAddon.CATEGORY, "xaero-waypoints", "Shows Meteor waypoints on Xaero's minimap and world map."); }
 
     @Override public String getInfoString() { return status; }
     @Override public void onActivate() { dirty = true; status = null; }

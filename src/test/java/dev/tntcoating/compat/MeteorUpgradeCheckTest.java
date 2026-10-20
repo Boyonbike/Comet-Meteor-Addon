@@ -30,8 +30,8 @@ class MeteorUpgradeCheckTest {
             checked++;
             assertEquals(List.of(), MeteorUpgradeCheck.problems(node, MeteorUpgradeCheckTest::read), mixin);
         }
-        // Elytra Fly, Auto Tool/Weapon, Scaffold, Inventory Tweaks, Trajectories (and its Path), module order and settings links.
-        assertTrue(checked >= 9, "only " + checked + " Meteor mixins were checked");
+        // Elytra Fly, Auto Tool/Weapon, Scaffold, Inventory Tweaks, module order and settings links.
+        assertTrue(checked >= 8, "only " + checked + " Meteor mixins were checked");
     }
 
     @Test void aRemovedTargetMethodIsReported() throws Exception {
@@ -42,7 +42,7 @@ class MeteorUpgradeCheckTest {
     }
 
     @Test void minecraftHooksFitThePinnedMinecraftBuild() throws Exception {
-        for (String name : List.of("NoHurtCamMixin", "PhasePlayerMixin", "SmartElytraSwapMixin")) {
+        for (String name : List.of("NoHurtCamMixin", "SmartElytraSwapMixin")) {
             ClassNode mixin = read("dev/tntcoating/mixin/" + name);
             assertNotNull(mixin);
             assertEquals(List.of(), MeteorUpgradeCheck.problems(mixin, MeteorUpgradeCheckTest::read), name);
@@ -88,11 +88,10 @@ class MeteorUpgradeCheckTest {
 
     @Test void minecraftTargetsAreLeftToMixin() throws Exception {
         assertFalse(MeteorUpgradeCheck.targetsMeteor(read("dev/tntcoating/mixin/ShulkerIconsMixin")));
-        assertTrue(MeteorUpgradeCheck.targetsMeteor(read("dev/tntcoating/mixin/TrajectoriesPathMixin")));
+        assertTrue(MeteorUpgradeCheck.targetsMeteor(read("dev/tntcoating/mixin/ScaffoldMixin")));
     }
 
-    @Test void trajectoryMixinsAreGroupedSoNeitherAppliesAlone() {
-        assertEquals(List.of("TrajectoriesMixin", "TrajectoriesPathMixin"), MeteorUpgrades.group("TrajectoriesPathMixin"));
+    @Test void anUngroupedMixinAppliesAlone() {
         assertEquals(List.of("ScaffoldMixin"), MeteorUpgrades.group("ScaffoldMixin"));
     }
 

@@ -28,7 +28,7 @@ public abstract class AutoToolMixin {
     private void comet$addInventorySetting(CallbackInfo ci) {
         comet$useInventory = sgGeneral.add(new BoolSetting.Builder()
             .name("use-inventory")
-            .description("Temporarily pulls the best tool from the main inventory and returns it shortly after mining stops.")
+            .description("Temporarily pull the best tool from the main inventory and return it shortly after mining stops.")
             .defaultValue(true)
             .build());
     }

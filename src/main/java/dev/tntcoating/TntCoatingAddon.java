@@ -7,13 +7,11 @@ import dev.tntcoating.modules.AdaptiveElytraFly;
 import dev.tntcoating.modules.AngleCalculator;
 import dev.tntcoating.modules.AntiSpawnSet;
 import dev.tntcoating.modules.NoHurtCam;
-import dev.tntcoating.modules.Phase;
 import dev.tntcoating.modules.BaritoneElytra;
 import dev.tntcoating.modules.BlockCoat;
 import dev.tntcoating.modules.ChatTools;
 import dev.tntcoating.modules.DubCounter;
 import dev.tntcoating.modules.ElytraLog;
-import dev.tntcoating.modules.ElytraReplace;
 import dev.tntcoating.modules.HomePacketLog;
 import dev.tntcoating.modules.FastStorageESP;
 import dev.tntcoating.modules.SafeFastUse;
@@ -42,7 +40,6 @@ import meteordevelopment.meteorclient.systems.modules.misc.InventoryTweaks;
 import meteordevelopment.meteorclient.systems.modules.movement.Scaffold;
 import meteordevelopment.meteorclient.systems.modules.player.AutoTool;
 import meteordevelopment.meteorclient.systems.modules.player.AutoReplenish;
-import meteordevelopment.meteorclient.systems.modules.render.Trajectories;
 import net.minecraft.world.item.Items;
 
 public final class TntCoatingAddon extends MeteorAddon {
@@ -67,16 +64,13 @@ public final class TntCoatingAddon extends MeteorAddon {
         // Flight and flight safety.
         ordered.add(new AdaptiveElytraFly());
         ordered.add(new BaritoneElytra());
-        ordered.add(new ElytraReplace());
         ordered.add(new ElytraLog());
-        ordered.add(new Phase());
         ordered.add(new AngleCalculator());
         // Rendering, storage discovery and waypoints.
         ordered.add(new FastStorageESP());
         ordered.add(new DubCounter());
         ordered.add(new ShulkerIcons());
         ordered.add(new NoHurtCam());
-        upgraded(ordered, modules.get(Trajectories.class), "TrajectoriesMixin");
         ordered.add(new XaeroWaypoints());
         ordered.add(new WaypointDelete());
         ordered.add(new ChatTools());

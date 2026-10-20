@@ -12,7 +12,7 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 /** Shared menu links from original module settings to their Comet upgrades. */
 public final class CometModuleSettings {
     private static final Map<String, List<String>> UPGRADES = Map.of(
-        "elytra-fly", List.of("adaptive-elytra-fly", "baritone-elytra", "elytra-replace", "elytra-log"),
+        "elytra-fly", List.of("adaptive-elytra-fly", "baritone-elytra", "elytra-log"),
         "storage-esp", List.of("fast-storage-esp"),
         "fast-use", List.of("safe-fast-use"),
         "waypoints", List.of("xaero-waypoints", "waypoint-delete")

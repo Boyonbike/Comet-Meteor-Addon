@@ -38,7 +38,7 @@ public abstract class AutoWeaponMixin {
     private void comet$addInventorySetting(CallbackInfo ci) {
         comet$useInventory = sgGeneral.add(new BoolSetting.Builder()
             .name("use-inventory")
-            .description("Temporarily pulls the best weapon from the main inventory and returns it after attacking.")
+            .description("Temporarily pull the best weapon from the main inventory and return it after attacking.")
             .defaultValue(true)
             .build());
         comet$minimumGain = sgGeneral.add(new DoubleSetting.Builder()

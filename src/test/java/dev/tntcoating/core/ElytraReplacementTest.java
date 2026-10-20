@@ -31,8 +31,8 @@ class ElytraReplacementTest {
         assertTrue(ElytraReplacement.stranded(20, new int[] {-1, -1}, 20, 20));
         assertFalse(ElytraReplacement.stranded(21, new int[] {-1, -1}, 20, 20));
     }
-    @Test void aSpareThatWillBeSwappedInIsNotStranded() {
-        // elytra-replace at 10 swaps the 15 in later, even though 15 is under the log-out threshold.
+    @Test void aSpareAboveTheLogOutThresholdIsNotStrandedWithinTheWarningMargin() {
+        // Warning at 20 with a log-out at 10: the 15 can still be put on before logging out.
         assertFalse(ElytraReplacement.stranded(20, new int[] {-1, 15}, 20, 10));
     }
     @Test void sparesAtOrBelowTheSpareThresholdDoNotCount() {

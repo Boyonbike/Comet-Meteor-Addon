@@ -75,11 +75,11 @@ public final class ChatTools extends Module {
     private static final int FRIEND_REFRESH_TICKS = 20;
     private final SettingGroup general = settings.getDefaultGroup();
     private final Setting<Boolean> autoDetect = general.add(new BoolSetting.Builder().name("auto-detect")
-        .description("Adds commands from the server command tree whose next argument accepts a player name.").defaultValue(true).build());
+        .description("Add commands from the server's command tree whose next argument accepts a player name.").defaultValue(true).build());
     private final Setting<Boolean> highlightFriendNames = general.add(new BoolSetting.Builder().name("highlight-friends")
-        .description("Highlights whole Meteor friend names in chat using Meteor's friend colour.").defaultValue(true).build());
+        .description("Highlight whole Meteor friend names in chat using Meteor's friend colour.").defaultValue(true).build());
     private final Setting<Boolean> runOnClick = general.add(new BoolSetting.Builder().name("run-complete-commands")
-        .description("Runs complete player commands immediately. Off fills the Chat Tools input for confirmation.").defaultValue(false).build());
+        .description("Run complete player commands immediately. Off fills the Chat Tools input for confirmation.").defaultValue(false).build());
     private final Setting<List<String>> configured = general.add(new StringListSetting.Builder().name("command-options")
         .description("Extra choices: 'Label | /command {player}'. A trailing space leaves the command open for more text. %player% also works.")
         .defaultValue("Message | /msg {player} ", "Whisper | /w {player} ", "Teleport Request | /tpa {player}").build());
@@ -104,7 +104,7 @@ public final class ChatTools extends Module {
         .defaultValue().visible(() -> false).build());
     private final SettingGroup messaging = settings.createGroup("Messages");
     private final Setting<Keybind> openPopupKey = messaging.add(new KeybindSetting.Builder().name("open-popup-key")
-        .description("Opens the Chat Tools window: messages, friends, homes and teleports.")
+        .description("Key that opens the Chat Tools window: messages, friends, homes and teleports.")
         .defaultValue(Keybind.fromKey(org.lwjgl.glfw.GLFW.GLFW_KEY_Y)).action(this::openPopupFromKey).build());
     private final Setting<Boolean> hideMessages = messaging.add(new BoolSetting.Builder().name("hide-private-messages")
         .description("Hide recognised private messages from normal chat after capturing them in the popup.").defaultValue(false).build());
@@ -143,7 +143,7 @@ public final class ChatTools extends Module {
     private ChatSavedCooldowns.Saved saved = ChatSavedCooldowns.Saved.NONE;
 
     public ChatTools() {
-        super(TntCoatingAddon.CATEGORY, "chat-tools", "Messages, friends, homes, teleport requests and server settings in one window.");
+        super(TntCoatingAddon.CATEGORY, "chat-tools", "Gathers messages, friends, homes, teleport requests and server settings in one window.");
     }
 
     public ChatMessages messages() { checkSession(); return messages; }

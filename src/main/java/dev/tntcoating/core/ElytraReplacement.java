@@ -1,6 +1,6 @@
 package dev.tntcoating.core;
 
-/** When to swap out a worn elytra and which spare to swap in. Durability here is what is left, not the damage taken. */
+/** When a worn elytra is nearly broken and whether a spare can still replace it. Durability here is what is left, not the damage taken. */
 public final class ElytraReplacement {
     private ElytraReplacement() {}
 

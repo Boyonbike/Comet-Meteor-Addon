@@ -1,44 +1,38 @@
-# Comet by Boyonabike — 0.24.1
+# Comet by Boyonabike — 0.25.0
 
 Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
-- **Flight and movement:** **adaptive-elytra-fly**, **baritone-elytra**, **elytra-replace**, **elytra-log**, **phase**, **angle-calculator**.
-- **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **trajectories**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**.
+- **Flight and movement:** **adaptive-elytra-fly**, **baritone-elytra**, **elytra-log**, **angle-calculator**.
+- **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**.
 - **Building:** **scaffold**, **block-coat**, **smart-sponge**, **safe-fast-use**, **anti-spawn-set**.
 - **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**, **auto-replenish**.
 - **Diagnostics:** **home-packet-log**.
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown** and **dub-counter**. See [HUD elements](#hud-elements).
 
-Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Area Spiral Search and Trail Hunter have been removed. The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.24.1.jar`.
+Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.0.jar`.
 
-**Scaffold**, **Trajectories**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
-
-**Newer Meteor builds.** Before applying an upgrade to a Meteor module, Comet checks that the installed Meteor still has every method, field and code location the upgrade attaches to. If a Meteor build has changed one, that upgrade alone is skipped: the stock module keeps working, it is not listed under Comet, and chat names the skipped upgrades when you join a world (details are in the log). Adaptive Elytra Fly refuses to start if its Elytra Fly hook was skipped. Builds older than 42 are rejected by Fabric with a clear message.
+**Scaffold**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
 | Original module | Comet upgrades in its dropdown |
 | --- | --- |
-| Elytra Fly | Adaptive Elytra Fly, Baritone Elytra, Elytra Replace, Elytra Log |
+| Elytra Fly | Adaptive Elytra Fly, Baritone Elytra, Elytra Log |
 | Storage ESP | Fast Storage ESP |
 | Fast Use | Safe Fast Use |
 | Waypoints | Xaero Waypoints, Waypoint Delete |
 
 Expand **Comet**, then left-click an upgrade to toggle it or use its **Settings** button to open the full settings directly. Right-clicking the upgrade still works too. These links use the same module instances as the Comet category, so changes apply from either location.
 
-Right-click a Comet module to open its settings, then click a section header or arrow to expand its dropdown. Setting sections start collapsed; saved section states are respected when loading a configuration. Adaptive Elytra Fly also has a **Flight Diagnostics** dropdown, and Fast Storage ESP puts **Clear Opened Containers** under **Actions**. The **Comet** sections added to Meteor's Scaffold and Trajectories also start collapsed.
+Right-click a Comet module to open its settings, then click a section header or arrow to expand its dropdown. Setting sections start collapsed; saved section states are respected when loading a configuration. Adaptive Elytra Fly also has a **Flight Diagnostics** dropdown, and Fast Storage ESP puts **Clear Opened Containers** under **Actions**. The **Comet** section added to Meteor's Scaffold also starts collapsed.
+
+**Newer Meteor builds.** Before applying an upgrade to a Meteor module, Comet checks that the installed Meteor still has every method, field and code location the upgrade attaches to. If a Meteor build has changed one, that upgrade alone is skipped: the stock module keeps working, it is not listed under Comet, and chat names the skipped upgrades when you join a world (details are in the log). Adaptive Elytra Fly refuses to start if its Elytra Fly hook was skipped. Builds older than 42 are rejected by Fabric with a clear message.
 
 Version history is in [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.6.1? See [Upgrading](#upgrading-from-061).
 
-## Bephax movement and player features
+## Bephax ports
 
-- **no-hurt-cam** removes the camera tilt and shake when damaged. Its **disable-hurt-cam** setting defaults on.
+- **no-hurt-cam** removes the camera tilt and shake when damaged while it is on.
 - **angle-calculator** continuously aims your yaw at the centre of the configured **to** block, using its X/Z coordinates. **level-pitch** defaults on and keeps pitch at zero. Riding also turns the vehicle. This controls your view; it does not move you automatically.
 - **anti-spawn-set** blocks outgoing bed and respawn-anchor interactions. **block-beds**, **block-anchors** and **notify** default on. Like Bephax, this blocks every interaction with those blocks, including sleeping, anchor charging and explosive use in other dimensions.
-- **phase** includes **Pearl**, **Clip**, **Normal**, **Sand** and **Climb** modes. Server acceptance depends on the server's movement checks.
-  - **Pearl** (default) aims away from your current block centre and throws downwards at **pitch** (83° by default), then disables itself. It turns over several ticks; **instant-rotation** aims immediately. **swap-alternative** enables temporary main-inventory pearl swaps; with it off, pearls must be in the hotbar or offhand. Your selected slot and displaced item are restored after the throw. Close screens first; item use, active Comet tool/weapon loans, riding, swimming, gliding and pearl cooldowns prevent the throw. Disabling or changing modes cancels queued throws.
-  - **attack** optionally clears nearby item frames and scaffolding at your feet. **self-fill** optionally places a resistant hotbar block beside you before throwing. Both default off; **swing** defaults on.
-  - **Clip** makes one small move toward a corner of your current block while grounded, then disables itself.
-  - **Normal** applies **auto-clip** on activation using **blocks** (0.003), then allows forward movement at **distance** (0.2) while sneaking inside blocks.
-  - **Sand** removes collision and uses Jump/Sneak for vertical movement. **Climb** removes collision while against a wall and uses Jump/Sneak to climb. Disabling or leaving Sand restores the previous physics state.
 
 ## Advanced Auto Replenish
 
@@ -80,18 +74,6 @@ The module gains a **Comet** setting group:
 - **confirmation-retries** defaults on. Repeated attempts at an unconfirmed/rejected position wait 2, 4, then at most 8 ticks. Positions near the predicted player feet retry after 1, then at most 2 ticks. New bridge cells never wait for another cell. Applied server block updates release successful attempts; client prediction alone does not count as confirmation. Disable this setting to retain Meteor's attempt timing.
 
 Retry history is bounded and clears on module/world changes. Live server testing is still needed for placement acceptance, rejected-block recovery, tower behaviour and actual frame/packet improvements.
-
-## Trajectories optimization
-
-Use Meteor's existing **Render → Trajectories**. Comet retains Meteor's projectile simulator, item filters, multishot and rendering settings. Unchanged predictions can be reused within the same client tick; changed aim, origin, item components, charge, movement or collision state requires a new prediction. Cached paths restart their drawing origin each frame, and fired projectiles retain an interpolated start.
-
-The module gains a **Comet** setting group:
-
-- **optimize-trajectories** defaults on. Turn it off to return to Meteor's original rendering/simulation behaviour.
-- **remote-trajectory-range** defaults to **128** blocks, adjustable from **8–512**. Applies to other players and fired projectiles; your own held item is always included.
-- **trajectory-steps-per-frame** defaults to **8,000**, adjustable from **128–64,000**. This bounds actual simulator steps across all paths, including when Meteor's **simulation-steps** is set to zero. Your held prediction gets priority; remaining work is shared between remote entities with a rotating starting order. Multishot shares its allowance between its three paths.
-
-When the budget is tight, paths can be shorter or temporarily omitted. A stale collision result is hidden if there is no budget to refresh it. The budget limits simulation steps, not milliseconds or drawing cost; enabling position boxes and displaying many paths still increases rendering work. Actual FPS and visual behaviour need an in-game check.
 
 ## Inventory Tweaks transfers
 
@@ -322,23 +304,12 @@ Baritone's own elytra settings still apply; change them with `#set` or in Meteor
 - `elytraAllowAboveRoof` (default off) keeps Nether flights below Y 128.
 - `elytraPredictTerrain` (default off) only helps if you know the server's Nether seed.
 
-## Elytra Replace
-
-A separate module, **elytra-replace**. Once the elytra you're wearing has **durability** or less left (default 10), it is swapped for the elytra in your inventory with the most durability left. The worn one goes into that elytra's slot. It works mid-flight too: the chest slot always holds an elytra during the swap, so you keep gliding. Chat shows each swap.
-
-- Only a worn glider (the elytra, or any item with the glider component) is replaced; a chestplate is left alone, and a glider that cannot be damaged is never due. Spares can be in the hotbar or main inventory, not the offhand. A hotbar spare is swapped with one click, as pressing its number over the chest slot does; a main-inventory spare uses Meteor's three-click move.
-- A spare needs more than **durability** left to be swapped in. If there is none, chat warns once for that elytra.
-- It waits while a chest or other container is open, or while you're holding an item on the cursor, and swaps once that clears.
-- For Baritone elytra flights, keep **durability** above Baritone's `elytraMinimumDurability` (default 5). The swap then happens before Baritone lands early to save the elytra.
-- Meteor's ElytraFly has its own **elytra-replace** option, but it only works while ElytraFly is on, and **baritone-elytra** turns ElytraFly off during flights. This module works with or without ElytraFly.
-
-The module list shows how many spare elytras have more than **durability** left.
-
 ## Elytra Log
 
 A separate module, **elytra-log**. While you're flying, once the elytra you're wearing has **durability** or less left (default 20) and there's no spare elytra in your inventory, it logs you out. What's left is what you glide down with after logging back in, about one point per second of gliding.
 
-- A spare counts only if it will be put on. With **elytra-replace** on, that's a spare with more than elytra-replace's **durability** left: elytra-replace swaps it in when it's due, so you stay online. With elytra-replace off, a spare needs more than this module's **durability**, and you swap it yourself. Like elytra-replace, it looks at the hotbar and main inventory, not the offhand.
+- A spare counts only if it has more than **durability** left, so you can swap it on before being logged out. It looks at the hotbar and main inventory, not the offhand. Any item with the glider component counts as an elytra, and one that cannot be damaged never wears out.
+- Comet no longer swaps elytras for you. Meteor's Elytra Fly has its own **elytra-replace** and **replace-durability** options, which work while Elytra Fly is on.
 - It only acts while you're gliding, or in the air with ElytraFly's Packet mode. Standing or walking with a worn-out elytra doesn't log you out.
 - **warning-margin** (default 10, 0 disables) warns in chat once when the worn elytra is within that much durability of logging you out with no spare.
 - After logging you out it turns itself off, so opening the elytra after you rejoin doesn't log you out again. It also turns off Meteor's AutoReconnect, which would put you straight back in the air.
@@ -392,7 +363,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.24.1.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies. XaeroPlus (`2.36.6+fabric-26.1.2`) is also compile-only from Modrinth; none is bundled.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.0.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
 
 Automated tests cover:
 
@@ -411,9 +382,9 @@ Automated tests cover:
 - dub counting: whole and half dubs, up to the largest chest count
 - waypoint mirroring: dimensions, opposite-dimension scaling, hidden waypoints, colour matching and change detection
 - Baritone elytra hand-off: when a trip is flown or walked, take-off timing and retries, and what happens after a flight ends
-- elytra replacement: when the worn elytra is due, which spare is swapped in, and when there is none left and Elytra Log logs out
+- Elytra Log: when the worn elytra is due and whether a spare can still replace it
 - adaptive ElytraFly: recorded flight feel (fifteen scripted flights under defaults and the user's saved settings must reproduce their per-tick movement and boost ramps exactly), setbacks that only rewind boost, overdrive and the shared 3D server limit; adaptive cruise/Sprint speed caps, boost caps that stop the fixed curve, maneuver mode's 3D cap (only when climbing and turning together, and re-ramping from the cap afterwards), Sprint acceleration and vertical boost, smooth vertical release/reversal; low-speed wall manoeuvring and recovery after guarding, preserved steering, reversals and unloaded-chunk protection; bounded swept-body terrain checks, negative coordinates, blended turns and floor touchdown
 
-The release builds and its automated tests pass against Meteor 26.1.2-42. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), mid-flight elytra swaps and Elytra Log's logout.
+The release builds and its automated tests pass against Meteor 26.1.2-42. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), and Elytra Log's logout.
 
 Source follows the official Meteor addon template and API, under the included CC0 license.

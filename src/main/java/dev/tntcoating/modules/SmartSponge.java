@@ -82,7 +82,7 @@ public final class SmartSponge extends Module {
     private record Spot(BlockPos pos, int score, double distance) {}
 
     public SmartSponge() {
-        super(TntCoatingAddon.CATEGORY, "smart-sponge", "Choose reachable sponge placements to absorb connected water and waterlogged blocks.");
+        super(TntCoatingAddon.CATEGORY, "smart-sponge", "Chooses reachable sponge placements that absorb connected water and waterlogged blocks.");
     }
 
     public boolean blocksCoating() {

@@ -53,13 +53,13 @@ public abstract class ScaffoldMixin extends Module implements ScaffoldPlacementF
         SettingGroup group = settings.createGroup("Comet", false);
         comet$stickySwitch = group.add(new BoolSetting.Builder()
             .name("sticky-switch")
-            .description("Keeps the selected block slot after placement, reducing held-item swap packets.")
+            .description("Keep the selected block slot after placement, reducing held-item swap packets.")
             .defaultValue(false)
             .visible(autoSwitch::get)
             .build());
         comet$confirmationRetries = group.add(new BoolSetting.Builder()
             .name("confirmation-retries")
-            .description("Paces repeated attempts at unconfirmed or rejected cells; new bridge cells place immediately.")
+            .description("Pace repeated attempts at unconfirmed or rejected cells; new bridge cells place immediately.")
             .defaultValue(true)
             .build());
     }

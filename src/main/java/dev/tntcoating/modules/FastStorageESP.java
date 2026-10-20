@@ -68,9 +68,9 @@ public final class FastStorageESP extends Module {
     private int count;
 
     private final SettingGroup general = settings.getDefaultGroup();
-    private final SettingGroup performance = settings.createGroup("Performance");
     private final SettingGroup colors = settings.createGroup("Colors");
     private final SettingGroup openedRendering = settings.createGroup("Opened Rendering");
+    private final SettingGroup performance = settings.createGroup("Performance");
 
     private final Setting<List<BlockEntityType<?>>> storageBlocks = general.add(new StorageBlockListSetting.Builder()
         .name("storage-blocks").description("Storage blocks to highlight with the shader.")
@@ -97,23 +97,23 @@ public final class FastStorageESP extends Module {
         .name("rebuild-budget-ms").description("Time per frame spent preparing changed storage models. Lower values spread loading over more frames.")
         .defaultValue(2).range(0.25, 10).sliderRange(0.25, 5).build());
 
-    private final Setting<SettingColor> chest = colorSetting(colors, "chest", new SettingColor(255, 160, 0));
-    private final Setting<SettingColor> trappedChest = colorSetting(colors, "trapped-chest", new SettingColor(255, 0, 0));
-    private final Setting<SettingColor> barrel = colorSetting(colors, "barrel", new SettingColor(255, 160, 0));
-    private final Setting<SettingColor> shulker = colorSetting(colors, "shulker", new SettingColor(255, 160, 0));
-    private final Setting<SettingColor> enderChest = colorSetting(colors, "ender-chest", new SettingColor(120, 0, 255));
-    private final Setting<SettingColor> other = colorSetting(colors, "other", new SettingColor(140, 140, 140));
+    private final Setting<SettingColor> chest = colorSetting(colors, "chest", "chests", new SettingColor(255, 160, 0));
+    private final Setting<SettingColor> trappedChest = colorSetting(colors, "trapped-chest", "trapped chests", new SettingColor(255, 0, 0));
+    private final Setting<SettingColor> barrel = colorSetting(colors, "barrel", "barrels", new SettingColor(255, 160, 0));
+    private final Setting<SettingColor> shulker = colorSetting(colors, "shulker", "shulker boxes", new SettingColor(255, 160, 0));
+    private final Setting<SettingColor> enderChest = colorSetting(colors, "ender-chest", "ender chests", new SettingColor(120, 0, 255));
+    private final Setting<SettingColor> other = colorSetting(colors, "other", "other storage blocks", new SettingColor(140, 140, 140));
     private final Setting<Boolean> hideOpened = openedRendering.add(new BoolSetting.Builder()
         .name("hide-opened").description("Hide containers you have interacted with in this world and dimension.")
         .defaultValue(false).onChanged(value -> refreshRequested = true).build());
-    private final Setting<SettingColor> openedColor = colorSetting(openedRendering, "opened-color", new SettingColor(203, 90, 203, 0));
+    private final Setting<SettingColor> openedColor = colorSetting(openedRendering, "opened-color", "containers you have opened; zero opacity keeps their normal colour", new SettingColor(203, 90, 203, 0));
 
     public FastStorageESP() {
-        super(TntCoatingAddon.CATEGORY, "fast-storage-esp", "Shader storage outlines with cached models and GPU buffers for large stashes.");
+        super(TntCoatingAddon.CATEGORY, "fast-storage-esp", "Highlights storage with shader outlines, using cached models and GPU buffers for large stashes.");
     }
 
-    private Setting<SettingColor> colorSetting(SettingGroup group, String name, SettingColor initial) {
-        return group.add(new ColorSetting.Builder().name(name).description("Shader color for " + name + ".")
+    private Setting<SettingColor> colorSetting(SettingGroup group, String name, String target, SettingColor initial) {
+        return group.add(new ColorSetting.Builder().name(name).description("Shader colour for " + target + ".")
             .defaultValue(initial).onChanged(value -> refreshRequested = true).build());
     }
 

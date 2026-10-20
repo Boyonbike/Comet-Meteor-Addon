@@ -16,11 +16,11 @@ import net.minecraft.world.level.block.state.BlockState;
 public class AntiSpawnSet extends Module {
    private final SettingGroup sgGeneral = this.settings.getDefaultGroup();
    private final Setting<Boolean> blockBeds = this.sgGeneral
-      .add(new Builder().name("block-beds").description("Prevents setting spawn on beds.").defaultValue(true).build());
+      .add(new Builder().name("block-beds").description("Stop beds from setting your spawn point.").defaultValue(true).build());
    private final Setting<Boolean> blockAnchors = this.sgGeneral
-      .add(new Builder().name("block-anchors").description("Prevents setting spawn on respawn anchors.").defaultValue(true).build());
+      .add(new Builder().name("block-anchors").description("Stop respawn anchors from setting your spawn point.").defaultValue(true).build());
    private final Setting<Boolean> notify = this.sgGeneral
-      .add(new Builder().name("notify").description("Sends a chat message when a spawn set attempt is blocked.").defaultValue(true).build());
+      .add(new Builder().name("notify").description("Say in chat when a spawn point change is blocked.").defaultValue(true).build());
 
    public AntiSpawnSet() {
       super(TntCoatingAddon.CATEGORY, "anti-spawn-set", "Prevents setting your spawn point on beds or respawn anchors.");

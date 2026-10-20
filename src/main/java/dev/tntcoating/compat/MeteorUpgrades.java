@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class MeteorUpgrades {
     /** Mixins that only work together: if one cannot apply, none of them is applied. */
-    private static final List<List<String>> GROUPS = List.of(List.of("TrajectoriesMixin", "TrajectoriesPathMixin"));
+    private static final List<List<String>> GROUPS = List.of();
     private static final Map<String, String> DISABLED = new ConcurrentHashMap<>();
 
     private MeteorUpgrades() {}
