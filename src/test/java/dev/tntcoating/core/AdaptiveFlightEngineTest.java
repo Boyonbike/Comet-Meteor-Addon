@@ -42,9 +42,14 @@ class AdaptiveFlightEngineTest {
                 Motion before = engine.output();
                 double ramp = engine.horizontalBoost();
                 engine.setback(false);
-                assertEquals(before, engine.output(), "momentum is kept");
-                assertEquals(BoostRamp.rewind(ramp, DEFAULTS.boostRampStep(), DEFAULTS.boostTop(),
-                    DEFAULTS.boostStart(), DEFAULTS.rewindTicks()), engine.horizontalBoost(), EPSILON);
+                double rewound = BoostRamp.rewind(ramp, DEFAULTS.boostRampStep(), DEFAULTS.boostTop(),
+                    DEFAULTS.boostStart(), DEFAULTS.rewindTicks());
+                assertEquals(rewound, engine.horizontalBoost(), EPSILON);
+                Motion after = engine.output();
+                assertEquals(Math.min(before.horizontalLength(), rewound), after.horizontalLength(), EPSILON,
+                    "momentum is kept at the rewound speed");
+                assertEquals(before.y(), after.y(), EPSILON, "and on the same heading");
+                assertEquals(0, before.x() * after.z() - before.z() * after.x(), EPSILON);
             }
             fly(engine, true);
             slowest = Math.min(slowest, engine.horizontalBoost());
@@ -62,9 +67,24 @@ class AdaptiveFlightEngineTest {
         double rewound = engine.horizontalBoost();
         Motion first = fly(engine, true);
         assertEquals(rewound, engine.horizontalBoost(), EPSILON, "the ramp holds for boost-setback-hold");
-        assertTrue(first.horizontalLength() < before, "the first move after a setback slows instead of accelerating");
+        assertTrue(rewound < before - .5, "the rewind is a real slowdown: " + rewound * 20 + " from " + before * 20);
+        // Braking down from the rejected speed instead (0.24.3) repeated it and pinned every boost start on 6b6t.
+        assertEquals(rewound, first.horizontalLength(), EPSILON, "the first move after a setback flies the rewound speed");
         fly(engine, true);
         assertTrue(engine.horizontalBoost() > rewound, "then the ramp climbs again");
+    }
+
+    @Test void aSetbackDuringTheManeuverCapStillFliesTheRewoundSpeed() {
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(DEFAULTS);
+        for (int tick = 0; tick < 1000; tick++) fly(engine, DEFAULTS, true, false, 0);
+        float yaw = 0;
+        // A sharp turn lowers the ramp to the cap while momentum is still braking down to it.
+        fly(engine, DEFAULTS, true, false, yaw += 6);
+        assertTrue(engine.output().horizontalLength() > engine.horizontalBoost() + .5, "still braking to the cap");
+        engine.setback(false);
+        double rewound = engine.horizontalBoost();
+        Motion first = fly(engine, DEFAULTS, true, false, yaw);
+        assertEquals(rewound, first.horizontalLength(), EPSILON);
     }
 
     @Test void aHardServerLimitSettlesBoostJustBelowItWithoutAnyLearnedCap() {

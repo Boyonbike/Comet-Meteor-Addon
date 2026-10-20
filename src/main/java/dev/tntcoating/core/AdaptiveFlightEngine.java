@@ -173,7 +173,8 @@ public final class AdaptiveFlightEngine {
 
     /**
      * A server position correction. A setback keeps momentum, rewinds each boost ramp by its rewind ticks and holds
-     * it there briefly, as VolytraFly does; a teleport elsewhere (such as a command) stops the flight.
+     * it there briefly, as VolytraFly does; a teleport elsewhere (such as a command) stops the flight. Boosted
+     * horizontal momentum drops to the rewound ramp at once, so the next move is the slower one the rewind chose.
      */
     public void setback(boolean teleport) {
         if (teleport) {
@@ -186,6 +187,14 @@ public final class AdaptiveFlightEngine {
         }
         horizontalRamp.corrected();
         verticalRamp.corrected();
+        // Boosted speed above a lowered ramp brakes down to it gradually (for the manoeuvre cap). After a setback
+        // that would repeat nearly the rejected speed from the corrected spot, set back again and pin the flight.
+        Motion output = controller.output();
+        double horizontal = output.horizontalLength();
+        if (horizontalRamp.engaged() && horizontal > horizontalRamp.speed()) {
+            double scale = horizontalRamp.speed() / horizontal;
+            controller.accept(new Motion(output.x() * scale, output.y(), output.z() * scale));
+        }
     }
 
     /** Stock flight takes over: stop controlled movement and release both ramps. */

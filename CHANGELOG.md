@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.24.5
+
+- **Adaptive Elytra Fly boost works again after a setback:** since 0.24.3, a setback's rewind no longer slowed the next move. Boost braked down from the rejected speed instead (74 b/s became 66, where 0.24.1 flew 60), so the server rejected that move too, every setback pinned the flight and boost restarted from 60 b/s forever: rubber-banding the moment you pressed boost. A setback now drops boosted speed straight to the rewound ramp, as in 0.24.1; the maneuver cap still brakes gradually. This, not the server near the base, was the 0.24.3 and 0.24.4 storm.
+
 ## 0.24.4
 
 - **Adaptive Elytra Fly speeds all in blocks per second:** **cruise-max-bps** (41), **sprint-max-bps** (118, unlimited boost off) and **vertical-cruise-bps** (21) replace the cruise, Sprint and vertical cruise percentages; Sprint and boost climbs use **vertical-max-bps**, so **vertical-sprint-max-speed** is gone. With unlimited boost on, Sprint flies **boost-max-bps**. New settings start from their defaults.
