@@ -13,6 +13,7 @@ import dev.tntcoating.core.ServerGlide;
 import dev.tntcoating.core.ServerMoveLimit;
 import dev.tntcoating.core.SmartElytraSwap;
 import dev.tntcoating.mixin.FireworkRocketAccessor;
+import dev.tntcoating.mixin.LocalPlayerAccessor;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -131,7 +132,10 @@ public final class AdaptiveElytraFly extends Module {
         .description("Holding Sprint flies VolytraFly's speed ramp instead of the adaptive engine maximum. Terrain, chunk and server-glide guards still apply. Off restores adaptive Sprint.")
         .defaultValue(true).visible(sprintBoost::get).build());
     private final Setting<Boolean> overdrive = boost.add(new BoolSetting.Builder().name("overdrive")
-        .description("Boost to 340 b/s (17 blocks per tick), the most a vanilla server accepts in one move packet, instead of boost-max-speed. Any boost above 245 b/s is set back whenever two move packets reach the server in the same tick (lag or ping jitter), so 340 b/s rubber-bands no more often than 300 b/s.")
+        .description("Boost to the most a vanilla server accepts per tick instead of boost-max-speed: 340 b/s (17 blocks per tick), or 480 b/s with split-moves. Any boost above 245 b/s is set back whenever two move packets reach the server in the same tick (lag or ping jitter), so 340 b/s rubber-bands no more often than 300 b/s.")
+        .defaultValue(false).visible(this::boostVisible).build());
+    private final Setting<Boolean> splitMoves = boost.add(new BoolSetting.Builder().name("split-moves")
+        .description("Experimental: while boosting above 200 b/s, also report a half-step position each tick. A vanilla server then allows twice the distance per tick (480 b/s with overdrive) and stops setting back 300-340 b/s when two ticks of packets arrive together. An anticheat that counts movement packets may set you back or kick you instead.")
         .defaultValue(false).visible(this::boostVisible).build());
     private final Setting<Double> boostMaxSpeed = boost.add(new DoubleSetting.Builder().name("boost-max-speed")
         .description("Top horizontal boost speed in blocks per tick with overdrive off (14.999 is VolytraFly's 300 b/s). Boost's total 3D speed never exceeds what a vanilla server accepts per move packet: 17 blocks per tick.")
@@ -563,6 +567,7 @@ public final class AdaptiveElytraFly extends Module {
         record.addProperty("chunkAheadLoaded", chunkAheadLoaded(position, output));
         record.addProperty("flyIntoUnloadedChunks", flyIntoUnloadedChunks.get());
         record.addProperty("overdrive", overdrive.get());
+        record.addProperty("splitMoves", splitMoves.get());
         record.addProperty("boostTop", boostTop() * 20);
         setbackLog.append(record);
     }
@@ -640,7 +645,25 @@ public final class AdaptiveElytraFly extends Module {
     private boolean boostVisible() { return sprintBoost.get() && unlimitedBoost.get(); }
 
     /** The most a vanilla server accepts per tick in total, which boost never exceeds. */
-    private double serverMoveLimit() { return ServerMoveLimit.SINGLE; }
+    private double serverMoveLimit() { return ServerMoveLimit.of(boostVisible() && splitMoves.get()); }
+
+    // Below this, one packet a tick is comfortably within what a server accepts even when two ticks bunch together.
+    private static final double SPLIT_MOVE_DISTANCE = 10;
+
+    /**
+     * Called by the mixin just before vanilla reports this tick's position: while boosting fast, report the halfway
+     * point first, so each packet covers half the tick's distance against the server's doubled allowance.
+     */
+    public void sendSplitMove() {
+        if (!isActive() || !boostVisible() || !splitMoves.get() || !controlling || !engine.boostActive()
+            || mc.player == null || mc.getConnection() == null || !mc.player.isFallFlying()) return;
+        LocalPlayerAccessor reported = (LocalPlayerAccessor) mc.player;
+        Vec3 last = new Vec3(reported.comet$xLast(), reported.comet$yLast(), reported.comet$zLast());
+        Vec3 current = mc.player.position();
+        if (current.distanceToSqr(last) <= SPLIT_MOVE_DISTANCE * SPLIT_MOVE_DISTANCE) return;
+        mc.getConnection().send(new ServerboundMovePlayerPacket.Pos(last.add(current).scale(.5), false,
+            mc.player.horizontalCollision));
+    }
 
     /** The horizontal boost ramp's top speed: the server's per-tick limit with overdrive, otherwise boost-max-speed. */
     private double boostTop() { return overdrive.get() ? serverMoveLimit() : boostMaxSpeed.get(); }
@@ -729,7 +752,8 @@ public final class AdaptiveElytraFly extends Module {
         String toggle = boostKeyMode.get() != BoostKeyMode.Toggle ? "" : boostToggled ? " (on)" : " (off)";
         return String.format(Locale.ROOT, "Boost%s: H %.0f/%.0f | V %.0f/%.0f b/s%s", toggle,
             engine.horizontalBoost() * 20, engine.horizontalBoostCeiling() * 20,
-            engine.verticalBoost() * 20, engine.verticalBoostCeiling() * 20, overdrive.get() ? " | overdrive" : "");
+            engine.verticalBoost() * 20, engine.verticalBoostCeiling() * 20,
+            (overdrive.get() ? " | overdrive" : "") + (splitMoves.get() ? " | split" : ""));
     }
 
     private void updateStatus() {
