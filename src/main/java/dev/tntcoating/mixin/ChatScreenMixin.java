@@ -1,7 +1,6 @@
 package dev.tntcoating.mixin;
 
 import dev.tntcoating.modules.ChatTools;
-import dev.tntcoating.gui.ChatToolsHud;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -10,30 +9,23 @@ import java.util.Map;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.gui.ActiveTextCollector;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.CommandSuggestions;
-import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.gui.TextAlignment;
 import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.util.FormattedCharSequence;
-import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(net.minecraft.client.gui.screens.ChatScreen.class)
 public abstract class ChatScreenMixin {
     @Shadow private ChatComponent.DisplayMode displayMode;
-    @Shadow protected EditBox input;
     @Shadow private CommandSuggestions commandSuggestions;
-    @Unique private final ChatToolsHud comet$hud = new ChatToolsHud();
 
     @Unique private ChatTools comet$tools() {
         if (Modules.get() == null) return null;
@@ -41,31 +33,11 @@ public abstract class ChatScreenMixin {
         return tools != null && tools.isActive() ? tools : null;
     }
 
-    @Inject(method = "extractRenderState", at = @At("RETURN"))
-    private void comet$renderHud(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta, CallbackInfo ci) {
-        ChatTools tools = comet$tools();
-        if (tools != null) comet$hud.render(graphics, mouseX, mouseY, tools, input::setValue);
-    }
-
-    @Inject(method = "mouseScrolled", at = @At("HEAD"), cancellable = true)
-    private void comet$scrollHud(double x, double y, double horizontal, double vertical, CallbackInfoReturnable<Boolean> cir) {
-        if (comet$tools() != null && comet$hud.scroll(x, y, vertical != 0 ? vertical : horizontal)) cir.setReturnValue(true);
-    }
-
-    @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
-    private void comet$backHud(KeyEvent event, CallbackInfoReturnable<Boolean> cir) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE && !commandSuggestions.isVisible() && comet$tools() != null && comet$hud.back()) cir.setReturnValue(true);
-    }
-
     @Inject(method = "mouseClicked", at = @At("HEAD"), cancellable = true)
     private void comet$chatTools(MouseButtonEvent event, boolean doubled,
                                  CallbackInfoReturnable<Boolean> cir) {
         ChatTools tools = comet$tools();
         if (tools == null) return;
-        if (comet$hud.click(event.x(), event.y(), event.button())) {
-            cir.setReturnValue(true);
-            return;
-        }
         if (event.button() != 0) return;
         if (commandSuggestions.isVisible()) return;
 
@@ -77,7 +49,7 @@ public abstract class ChatScreenMixin {
         Style style = finder.result();
         String player = tools.playerFor(style);
         if (player != null) {
-            comet$hud.selectPlayer(player, tools);
+            tools.openPopup(player);
             cir.setReturnValue(true);
         }
     }

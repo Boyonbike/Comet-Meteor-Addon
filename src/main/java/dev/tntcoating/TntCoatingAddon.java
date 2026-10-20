@@ -11,6 +11,7 @@ import dev.tntcoating.modules.Phase;
 import dev.tntcoating.modules.BaritoneElytra;
 import dev.tntcoating.modules.BlockCoat;
 import dev.tntcoating.modules.ChatTools;
+import dev.tntcoating.modules.DubCounter;
 import dev.tntcoating.modules.ElytraLog;
 import dev.tntcoating.modules.ElytraReplace;
 import dev.tntcoating.modules.HomePacketLog;
@@ -72,6 +73,7 @@ public final class TntCoatingAddon extends MeteorAddon {
         ordered.add(new AngleCalculator());
         // Rendering, storage discovery and waypoints.
         ordered.add(new FastStorageESP());
+        ordered.add(new DubCounter());
         ordered.add(new ShulkerIcons());
         ordered.add(new NoHurtCam());
         upgraded(ordered, modules.get(Trajectories.class), "TrajectoriesMixin");

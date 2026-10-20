@@ -12,7 +12,12 @@ import dev.tntcoating.core.ChatSender;
 import dev.tntcoating.core.ChatTeleportState;
 import dev.tntcoating.core.ChatTpaRequests;
 import dev.tntcoating.core.ChatFriendHighlight;
-import dev.tntcoating.gui.ChatToolsHud;
+import dev.tntcoating.core.ChatMessages;
+import dev.tntcoating.core.ChatHomeFavorites;
+import dev.tntcoating.core.ChatSavedCooldowns;
+import dev.tntcoating.core.ChatRecentPlayers;
+import dev.tntcoating.core.ChatCountdowns;
+import dev.tntcoating.gui.ChatToolsScreen;
 import dev.tntcoating.mixin.EntityArgumentAccessor;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,7 +29,11 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.regex.Pattern;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.events.render.Render2DEvent;
+import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
+import meteordevelopment.meteorclient.events.game.GameLeftEvent;
+import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.mixin.MinecraftServerAccessor;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.meteorclient.settings.BoolSetting;
@@ -32,17 +41,22 @@ import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.settings.StringListSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.KeybindSetting;
+import meteordevelopment.meteorclient.settings.StringSetting;
+import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.friends.Friends;
+import meteordevelopment.meteorclient.systems.friends.Friend;
 import meteordevelopment.meteorclient.systems.config.Config;
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
-import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.commands.arguments.GameProfileArgument;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.Style;
+import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundCommandSuggestionsPacket;
 import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
@@ -51,8 +65,10 @@ import net.minecraft.network.protocol.game.ServerboundCommandSuggestionPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandSignedPacket;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.storage.LevelResource;
 
 public final class ChatTools extends Module {
+    private static final SystemToast.SystemToastId DM_TOAST = new SystemToast.SystemToastId(5_000);
     private static final Pattern HOME_CLICK = Pattern.compile("^/(?:[a-z0-9_.-]+:)?home\\s+\\S+\\s*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern USERNAME = Pattern.compile("[A-Za-z0-9_]{1,16}");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
@@ -63,22 +79,58 @@ public final class ChatTools extends Module {
     private final Setting<Boolean> highlightFriendNames = general.add(new BoolSetting.Builder().name("highlight-friends")
         .description("Highlights whole Meteor friend names in chat using Meteor's friend colour.").defaultValue(true).build());
     private final Setting<Boolean> runOnClick = general.add(new BoolSetting.Builder().name("run-complete-commands")
-        .description("Runs commands that need no more arguments immediately. Off opens every choice in chat for confirmation.").defaultValue(false).build());
+        .description("Runs complete player commands immediately. Off fills the Chat Tools input for confirmation.").defaultValue(false).build());
     private final Setting<List<String>> configured = general.add(new StringListSetting.Builder().name("command-options")
         .description("Extra choices: 'Label | /command {player}'. A trailing space leaves the command open for more text. %player% also works.")
         .defaultValue("Message | /msg {player} ", "Whisper | /w {player} ", "Teleport Request | /tpa {player}").build());
     private final Setting<List<String>> configuredHomes = general.add(new StringListSetting.Builder().name("homes")
         .description("Extra home names for servers that do not provide /home tab suggestions or clickable /homes output.")
         .defaultValue().build());
+    private final Setting<List<String>> savedFavorites = general.add(new StringListSetting.Builder().name("favorite-homes")
+        .description("Saved home favourites for each server and account. Managed from the Chat Tools Homes tab.")
+        .defaultValue().visible(() -> false).build());
     private final Setting<Integer> requestTimeout = general.add(new IntSetting.Builder().name("tpa-request-timeout")
         .description("Seconds to retain incoming requests when the server does not report their expiry.")
         .defaultValue(120).range(5, 3600).sliderRange(30, 300).build());
+    private final SettingGroup cooldownSettings = settings.createGroup("Teleport Cooldowns");
+    private final Setting<Integer> homeCooldown = cooldownSettings.add(new IntSetting.Builder().name("home-cooldown-seconds")
+        .description("Estimated cooldown after a successful home teleport until the server reports one. Learned and manual lengths in the Chat Tools window replace it. Zero disables the fallback.")
+        .defaultValue(30).range(0, 3600).sliderRange(0, 300).onChanged(ignored -> refreshCooldowns()).build());
+    private final Setting<Integer> tpaCooldown = cooldownSettings.add(new IntSetting.Builder().name("tp-cooldown-seconds")
+        .description("Estimated cooldown after a successful player teleport until the server reports one. Learned and manual lengths in the Chat Tools window replace it. Zero disables the fallback.")
+        .defaultValue(30).range(0, 3600).sliderRange(0, 300).onChanged(ignored -> refreshCooldowns()).build());
+    private final Setting<List<String>> savedCooldowns = cooldownSettings.add(new StringListSetting.Builder().name("saved-cooldowns")
+        .description("Cooldown lengths for each server and account: learned from server replies or set manually in the Chat Tools window.")
+        .defaultValue().visible(() -> false).build());
+    private final SettingGroup messaging = settings.createGroup("Messages");
+    private final Setting<Keybind> openPopupKey = messaging.add(new KeybindSetting.Builder().name("open-popup-key")
+        .description("Opens the Chat Tools window: messages, friends, homes and teleports.")
+        .defaultValue(Keybind.fromKey(org.lwjgl.glfw.GLFW.GLFW_KEY_Y)).action(this::openPopupFromKey).build());
+    private final Setting<Boolean> hideMessages = messaging.add(new BoolSetting.Builder().name("hide-private-messages")
+        .description("Hide recognised private messages from normal chat after capturing them in the popup.").defaultValue(false).build());
+    private final Setting<Boolean> messageToasts = messaging.add(new BoolSetting.Builder().name("dm-toasts")
+        .description("Notify you when a private message arrives outside the conversation you are reading.").defaultValue(true).build());
+    private final Setting<String> messageCommand = messaging.add(new StringSetting.Builder().name("message-command")
+        .description("Command used by DM windows; {player} is replaced by the recipient.")
+        .defaultValue("/msg {player}").build());
+    private final Setting<List<String>> incomingPatterns = messaging.add(new StringListSetting.Builder().name("incoming-dm-patterns")
+        .description("Extra full-line regexes: group 1 is the username, group 2 is the message.")
+        .defaultValue().onChanged(ignored -> refreshMessagePatterns()).build());
+    private final Setting<List<String>> outgoingPatterns = messaging.add(new StringListSetting.Builder().name("outgoing-dm-patterns")
+        .description("Extra full-line regexes for server echoes: group 1 username, group 2 message.")
+        .defaultValue().onChanged(ignored -> refreshMessagePatterns()).build());
 
+    private final ChatMessages messages = new ChatMessages();
+    private final ChatRecentPlayers recentPlayers = new ChatRecentPlayers();
+    private String replyPlayer;
+    private final List<String> hotspotDetails = new ArrayList<>();
+    private long hotspotReadingUntil;
+    private ChatToolsScreen popup;
     private final ChatTeleportState teleports = new ChatTeleportState();
     private final ChatTpaRequests incomingRequests = new ChatTpaRequests();
     private final List<String> discoveredHomes = new ArrayList<>();
     private final List<String> suggestedHomes = new ArrayList<>();
-    private ClientPacketListener session;
+    private Connection session;
     private volatile int homeRequest;
     private int nextHomeRequest = -1_400_000_000;
     private long homeRequestedAt;
@@ -87,9 +139,150 @@ public final class ChatTools extends Module {
     private Set<String> friendNames = Set.of();
     private int friendColor;
     private int friendRefreshTicks;
+    private String savedKey;
+    private ChatSavedCooldowns.Saved saved = ChatSavedCooldowns.Saved.NONE;
 
     public ChatTools() {
-        super(TntCoatingAddon.CATEGORY, "chat-tools", "An interactive chat HUD for player commands, homes and teleport countdowns.");
+        super(TntCoatingAddon.CATEGORY, "chat-tools", "Messages, friends, homes, teleport requests and server settings in one window.");
+    }
+
+    public ChatMessages messages() { checkSession(); return messages; }
+
+    private void refreshMessagePatterns() {
+        if (messages != null && incomingPatterns != null && outgoingPatterns != null)
+            messages.patterns(incomingPatterns.get(), outgoingPatterns.get());
+    }
+
+    private void refreshCooldowns() {
+        if (teleports != null && homeCooldown != null && tpaCooldown != null) teleports.cooldowns(homeCooldown.get(), tpaCooldown.get());
+    }
+
+    private void openPopupFromKey() {
+        if (mc.screen == null) openPopup(null);
+    }
+
+    public void openPopup(String player) {
+        if (!isActive() || mc.player == null || mc.getConnection() == null) return;
+        checkSession();
+        if (popup == null) popup = new ChatToolsScreen(this);
+        if (mc.screen != popup) {
+            popup.returnTo(mc.screen);
+            mc.setScreen(popup);
+        }
+        if (player != null && ChatMessages.validName(player)) popup.openConversation(player);
+    }
+
+    @Override public WWidget getWidget(GuiTheme theme) {
+        var button = theme.button("Open Chat Tools");
+        button.action = () -> openPopup(null);
+        return button;
+    }
+
+    public boolean isFriend(String player) { return Friends.get() != null && Friends.get().get(player) != null; }
+
+    public void toggleFriend(String player) {
+        if (!ChatMessages.validName(player) || isSelf(player) || Friends.get() == null) return;
+        Friend friend = Friends.get().get(player);
+        if (friend != null) Friends.get().remove(friend);
+        else {
+            PlayerInfo info = mc.getConnection() == null ? null : mc.getConnection().getPlayerInfoIgnoreCase(player);
+            Friends.get().add(new Friend(player, info == null ? null : info.getProfile().id()));
+        }
+        refreshFriendHighlights();
+    }
+
+    public void rememberPlayer(String player) { if (!isSelf(player)) recentPlayers.touch(player); }
+    public List<String> recentPlayers() { checkSession(); return recentPlayers.names(); }
+    public List<String> onlinePlayers() {
+        if (mc.getConnection() == null) return List.of();
+        return mc.getConnection().getOnlinePlayers().stream().map(info -> info.getProfile().name())
+            .filter(name -> ChatMessages.validName(name) && !isSelf(name))
+            .sorted(String.CASE_INSENSITIVE_ORDER).toList();
+    }
+    public List<String> friends() {
+        List<String> names = new ArrayList<>();
+        if (Friends.get() != null) for (Friend friend : Friends.get()) {
+            if (ChatMessages.validName(friend.getName()) && !isSelf(friend.getName())) names.add(friend.getName());
+        }
+        names.sort(String.CASE_INSENSITIVE_ORDER);
+        return List.copyOf(names);
+    }
+    public String replyPlayer() { return replyPlayer; }
+    public void requestTeleport(String player) {
+        if (!ChatMessages.validName(player) || isSelf(player)) return;
+        rememberPlayer(player);
+        send("/tpa " + player);
+    }
+    public List<String> countdowns() { return ChatCountdowns.lines(timers(), requests(), now()); }
+
+    private String homeServerKey() {
+        String server = mc.getCurrentServer() != null ? mc.getCurrentServer().ip.toLowerCase(Locale.ROOT)
+            : mc.getSingleplayerServer() != null ? "local:" + ((MinecraftServerAccessor) (Object) mc.getSingleplayerServer())
+                .meteor$getStorageSource().getLevelPath(LevelResource.ROOT).toAbsolutePath().normalize() : "local";
+        return server + "/" + (mc.player == null ? "" : mc.player.getGameProfile().id());
+    }
+    public List<String> favoriteHomes() { return ChatHomeFavorites.names(savedFavorites.get(), homeServerKey()); }
+    public boolean favoriteHome(String home) { return favoriteHomes().stream().anyMatch(name -> name.equalsIgnoreCase(home)); }
+    public void toggleFavoriteHome(String home) { savedFavorites.set(ChatHomeFavorites.toggle(savedFavorites.get(), homeServerKey(), home)); }
+    public List<String> hotspotDetails() { return List.copyOf(hotspotDetails); }
+    public void refreshHotspot() {
+        if (now() < hotspotReadingUntil) return;
+        hotspotDetails.clear();
+        hotspotReadingUntil = now() + 3_000;
+        send("/hotspot info");
+    }
+
+    public boolean onlineContact(String player) { return online(player); }
+    public int friendColor() { return 0xff000000 | friendColor; }
+    public boolean friendHighlighting() { return highlightFriendNames.get(); }
+    public void toggleFriendHighlighting() { highlightFriendNames.set(!highlightFriendNames.get()); refreshFriendHighlights(); }
+    public boolean messageNotifications() { return messageToasts.get(); }
+    public void toggleMessageNotifications() { messageToasts.set(!messageToasts.get()); }
+    public boolean hidingMessages() { return hideMessages.get(); }
+    public void toggleHidingMessages() { hideMessages.set(!hideMessages.get()); }
+
+    /** The length used after a confirmed teleport on this server/account, and where each candidate comes from. */
+    public record CooldownLength(Long manual, Long learned, long fallback) {
+        public long effective() { return manual != null ? manual : learned != null ? learned : fallback; }
+    }
+    public CooldownLength cooldownLength(ChatTeleportState.Kind kind) {
+        checkSession();
+        syncSavedCooldowns();
+        return new CooldownLength(teleports.manual().get(kind), teleports.learned().get(kind),
+            (kind == ChatTeleportState.Kind.Home ? homeCooldown : tpaCooldown).get() * 1_000L);
+    }
+    /** Pins a cooldown length for this server and account, or with null goes back to the learned one. */
+    public void manualCooldown(ChatTeleportState.Kind kind, Long millis) {
+        checkSession();
+        syncSavedCooldowns();
+        teleports.manual(kind, millis, now());
+        syncSavedCooldowns();
+    }
+
+    /** Outgoing DMs enter history only when the server echoes them, so rejected sends never look delivered. */
+    public boolean sendPrivate(String player, String text) {
+        if (!ChatMessages.validName(player) || text.isBlank() || text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0) return false;
+        String template = messageCommand.get().strip();
+        if (!template.contains("{player}") || template.indexOf('\n') >= 0 || template.indexOf('\r') >= 0) return false;
+        String command = template.replace("{player}", player) + " " + text;
+        if (withoutSlash(command).length() > 256 || mc.getConnection() == null) return false;
+        send(command);
+        return true;
+    }
+
+    @EventHandler private void onMessage(ReceiveMessageEvent event) {
+        if (mc.player == null || mc.getConnection() == null) return;
+        checkSession();
+        ChatMessages.Message message = messages.parse(event.getMessage().getString(), mc.player.getGameProfile().name(), now());
+        if (message == null) return;
+        rememberPlayer(message.player());
+        if (message.incoming()) replyPlayer = message.player();
+        boolean read = mc.screen == popup && popup != null && popup.reading(message.player());
+        messages.add(message, read);
+        if (message.incoming() && !read && messageToasts.get())
+            SystemToast.addOrUpdate(mc.getToastManager(), DM_TOAST,
+                Component.literal("Message from " + message.player()), Component.literal("Open Chat Tools to reply."));
+        if (hideMessages.get()) event.cancel();
     }
 
     public String playerFor(Style style) {
@@ -108,18 +301,19 @@ public final class ChatTools extends Module {
 
     public List<String> homes() {
         checkSession();
-        return ChatHomeNames.merge(suggestedHomes, discoveredHomes, configuredHomes.get());
+        return ChatHomeNames.merge(suggestedHomes, discoveredHomes, configuredHomes.get(), favoriteHomes());
     }
 
     public boolean loadingHomes() { return homeRequest != 0 && now() - homeRequestedAt < 5_000; }
 
     public void refreshHomes() {
         checkSession();
-        if (session == null || loadingHomes()) return;
+        var listener = mc.getConnection();
+        if (listener == null || loadingHomes()) return;
         homeRequest = nextHomeRequest--;
         homeRequestedAt = now();
         // Use a private transaction ID so opening Homes never replaces chat's tab-completion future.
-        session.send(new ServerboundCommandSuggestionPacket(homeRequest, "/home "));
+        listener.send(new ServerboundCommandSuggestionPacket(homeRequest, "/home "));
     }
 
     public List<ChatTeleportState.Timer> timers() {
@@ -185,8 +379,9 @@ public final class ChatTools extends Module {
         return "/tpacancel";
     }
 
-    @Override public void onActivate() { resetSession(); friendRefreshTicks = 0; refreshFriendHighlights(); }
+    @Override public void onActivate() { resetSession(); refreshMessagePatterns(); refreshCooldowns(); friendRefreshTicks = 0; refreshFriendHighlights(); }
     @Override public void onDeactivate() {
+        if (popup != null && mc.screen == popup) popup.onClose();
         resetSession();
         friendNames = Set.of();
         if (mc.gui != null) mc.gui.getChat().rescaleChat();
@@ -198,6 +393,15 @@ public final class ChatTools extends Module {
             friendRefreshTicks = 0;
             refreshFriendHighlights();
         }
+    }
+
+    /**
+     * Meteor also reports leaving when a network moves the player to another of its servers, which is how 6b6t
+     * completes many teleports. Conversations and timers survive that; a new connection still starts a new session.
+     */
+    @EventHandler private void onGameLeft(GameLeftEvent event) {
+        teleports.transferred(now());
+        syncSavedCooldowns();
     }
 
     private void refreshFriendHighlights() {
@@ -212,25 +416,29 @@ public final class ChatTools extends Module {
         if (mc.gui != null) mc.gui.getChat().rescaleChat();
     }
 
-    @EventHandler private void onRender(Render2DEvent event) {
-        if (mc.player == null || mc.level == null || mc.screen != null || mc.options.hideGui) return;
-        ChatToolsHud.renderClosedStatus(event.graphics, timers(), requests());
-    }
-
     private void resetSession() {
+        if (popup != null && mc.screen == popup) mc.setScreen(null);
+        messages.clear();
+        recentPlayers.clear();
+        replyPlayer = null;
+        hotspotDetails.clear();
+        hotspotReadingUntil = 0;
+        popup = null;
         session = null;
         homeRequest = 0;
         discoveredHomes.clear();
         suggestedHomes.clear();
         teleports.clear();
+        savedKey = null;
         incomingRequests.clear();
         pendingHomeEdit = null;
     }
 
     private void checkSession() {
-        if (session == mc.getConnection()) return;
+        var listener = mc.getConnection();
+        if (listener == null || listener.getConnection() == session) return;
         resetSession();
-        session = mc.getConnection();
+        session = listener.getConnection();
     }
 
     @EventHandler private void onSent(PacketEvent.Sent event) {
@@ -240,6 +448,10 @@ public final class ChatTools extends Module {
         mc.execute(() -> {
             if (!isActive() || mc.getConnection() == null || event.connection != mc.getConnection().getConnection()) return;
             checkSession();
+            String[] parts = WHITESPACE.split(command.strip());
+            String verb = parts[0].substring(parts[0].lastIndexOf(':') + 1).toLowerCase(Locale.ROOT);
+            if (parts.length > 1 && Set.of("msg", "w", "whisper", "tell", "tpa", "tpahere").contains(verb)) rememberPlayer(parts[1]);
+            syncSavedCooldowns();
             teleports.sent(command, now());
             incomingRequests.sent(command, now());
             ChatHomeEdit edit = ChatHomeEdit.parse(command);
@@ -265,9 +477,18 @@ public final class ChatTools extends Module {
                 if (!isActive() || mc.getConnection() == null || event.connection != mc.getConnection().getConnection()) return;
                 checkSession();
                 String text = packet.content().getString();
+                // Whispers, including echoes to offline recipients, must never change server command state.
+                String self = mc.player == null ? null : mc.player.getGameProfile().name();
+                if (messages.parse(text, self, now()) != null) return;
                 // Another player's chat must never move timers, requests or homes, even if it imitates a server reply.
                 if (ChatSender.fromPlayer(text, this::online)) return;
+                if (now() < hotspotReadingUntil || text.toLowerCase(Locale.ROOT).contains("hotspot")) {
+                    hotspotDetails.add(ChatSender.plain(text));
+                    if (hotspotDetails.size() > 12) hotspotDetails.removeFirst();
+                }
+                syncSavedCooldowns();
                 teleports.message(text, now());
+                syncSavedCooldowns();
                 collectRequests(packet.content());
                 confirmHomeEdit(text);
                 collectHomes(packet.content());
@@ -277,7 +498,9 @@ public final class ChatTools extends Module {
             mc.execute(() -> {
                 if (!isActive() || mc.getConnection() == null || event.connection != mc.getConnection().getConnection()) return;
                 checkSession();
+                syncSavedCooldowns();
                 teleports.message(packet.text().getString(), now());
+                syncSavedCooldowns();
             });
         }
     }
@@ -291,21 +514,46 @@ public final class ChatTools extends Module {
             return Optional.empty();
         }, Style.EMPTY);
         String self = mc.player == null ? null : mc.player.getGameProfile().name();
+        var before = incomingRequests.pending(now());
         incomingRequests.message(message.getString(), commands, self, now(), requestTimeout.get());
+        for (var request : incomingRequests.pending(now())) if (!before.contains(request)) rememberPlayer(request.player());
+    }
+
+    /**
+     * Loads this server/account's learned and manual cooldowns into a fresh session and saves changes, so the first
+     * teleport of a session already uses the real cooldown instead of the fallback estimate.
+     */
+    private void syncSavedCooldowns() {
+        if (mc.player == null) return;
+        String key = homeServerKey();
+        if (!key.equals(savedKey)) {
+            savedKey = key;
+            saved = ChatSavedCooldowns.read(savedCooldowns.get(), key);
+            teleports.learned(saved.learned());
+            teleports.manual(saved.manual());
+        }
+        var current = new ChatSavedCooldowns.Saved(teleports.learned(), teleports.manual());
+        if (current.equals(saved)) return;
+        saved = current;
+        savedCooldowns.set(ChatSavedCooldowns.write(savedCooldowns.get(), key, current));
     }
 
     private void confirmHomeEdit(String message) {
         if (pendingHomeEdit == null || now() > homeEditExpires || !pendingHomeEdit.confirmedBy(message)) return;
         ChatHomeEdit edit = pendingHomeEdit;
         pendingHomeEdit = null;
+        savedFavorites.set(ChatHomeFavorites.edit(savedFavorites.get(), homeServerKey(), edit));
         List<String> updatedDiscovered = edit.apply(discoveredHomes);
         List<String> updatedSuggested = edit.apply(suggestedHomes);
         discoveredHomes.clear();
         discoveredHomes.addAll(updatedDiscovered);
         suggestedHomes.clear();
         suggestedHomes.addAll(updatedSuggested);
-        List<String> configured = edit.apply(configuredHomes.get());
-        if (!configured.equals(configuredHomes.get())) configuredHomes.set(configured);
+        // New server homes belong to this connection, not the global fallback names shared by all servers.
+        if (edit.oldName() != null) {
+            List<String> configured = edit.apply(configuredHomes.get());
+            if (!configured.equals(configuredHomes.get())) configuredHomes.set(configured);
+        }
         if (edit.newName() != null) addHome(edit.newName());
         // A reply to an earlier suggestion request must not resurrect the old name.
         homeRequest = 0;

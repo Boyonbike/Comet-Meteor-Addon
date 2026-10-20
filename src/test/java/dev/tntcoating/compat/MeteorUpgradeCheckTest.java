@@ -41,8 +41,8 @@ class MeteorUpgradeCheckTest {
         assertTrue(problems.stream().anyMatch(problem -> problem.contains("onTick")), problems.toString());
     }
 
-    @Test void hurtCameraAndPhaseHooksFitThePinnedMinecraftBuild() throws Exception {
-        for (String name : List.of("NoHurtCamMixin", "PhasePlayerMixin")) {
+    @Test void minecraftHooksFitThePinnedMinecraftBuild() throws Exception {
+        for (String name : List.of("NoHurtCamMixin", "PhasePlayerMixin", "SmartElytraSwapMixin")) {
             ClassNode mixin = read("dev/tntcoating/mixin/" + name);
             assertNotNull(mixin);
             assertEquals(List.of(), MeteorUpgradeCheck.problems(mixin, MeteorUpgradeCheckTest::read), name);

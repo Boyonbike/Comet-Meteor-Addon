@@ -2,7 +2,6 @@ package dev.tntcoating.core;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -30,7 +29,7 @@ final class ChatToolsStateTest {
         var state = new ChatTeleportState();
         state.sent("tpa Alice", 1_000);
         state.message("Teleport request sent. This request expires after 2 minutes.", 1_010);
-        assertEquals("TPA Alice: request 120s", state.timers(1_010).getFirst().label(1_010));
+        assertEquals("TPA Alice: request 2m", state.timers(1_010).getFirst().label(1_010));
         state.message("Teleport request accepted", 2_000);
         assertEquals(ChatTeleportState.Phase.Waiting, state.timers(2_000).getFirst().phase());
         state.message("Teleporting in 3 seconds", 2_010);
@@ -66,7 +65,7 @@ final class ChatToolsStateTest {
         state.sent("home base", 0);
         state.message("You have been teleported home", 10);
         state.message("Home cooldown: 30 seconds", 20);
-        assertEquals("Home CD 30s", state.timers(20).getFirst().summary(20));
+        assertEquals("Cooldown 30s", state.timers(20).getFirst().status(20));
         state.sent("tpa Alice", 30);
         state.message("You can't teleport for another 10 seconds", 40);
         assertEquals(ChatTeleportState.Phase.Cooldown, state.timers(40).getLast().phase());
@@ -76,7 +75,7 @@ final class ChatToolsStateTest {
         var state = new ChatTeleportState();
         state.sent("home a_very_long_home_name", 0);
         state.message("Teleporting in 5 seconds", 10);
-        assertEquals("Home 5s", state.timers(10).getFirst().summary(10));
+        assertEquals("Teleporting in 5s", state.timers(10).getFirst().status(10));
     }
 
     @Test void ignoresUnrelatedDurationsAndCommandsAndDoesNotRetainAcrossSessions() {
@@ -117,46 +116,6 @@ final class ChatToolsStateTest {
         assertTrue(ChatHomeNames.fromMessage("Homes: none.").isEmpty());
     }
 
-    @Test void everyOptionIsReachableAndEveryPageFitsEvenWithLongLabels() {
-        for (int available : List.of(1, 12, 70, 200, 800)) {
-            var pages = ChatHudPages.pack(List.of(40, 500, 10, 80, 120, 25), available);
-            List<Integer> indices = new ArrayList<>();
-            for (var page : pages) {
-                int width = page.stream().mapToInt(ChatHudPages.Item::width).sum() + Math.max(0, page.size() - 1) * 2;
-                assertTrue(width <= available);
-                page.forEach(item -> indices.add(item.index()));
-            }
-            assertEquals(List.of(0, 1, 2, 3, 4, 5), indices);
-        }
-        assertEquals(List.of(List.of()), ChatHudPages.pack(List.of(), 100));
-    }
-
-    @Test void hudMatchesChatBackgroundRatherThanWindowWidth() {
-        assertEquals(new ChatHudBounds(0, 332, 203), ChatHudBounds.of(320, 1, 960, 240));
-        assertEquals(new ChatHudBounds(0, 186, 203), ChatHudBounds.of(180, 0.5, 960, 240));
-        assertEquals(320, ChatHudBounds.of(320, 1, 320, 240).right());
-        assertEquals(52, ChatHudBounds.of(40, 1, 960, 240).width());
-        assertEquals(342, ChatHudBounds.of(320, 1, 960, 240, 10).width());
-        assertEquals(331, ChatHudBounds.of(320, 0.5, 960, 240, 10).width());
-    }
-
-    @Test void narrowChatKeepsEveryCompactControlInsideItsEdges() {
-        for (int chatWidth : List.of(40, 100, 180, 320)) for (double scale : List.of(0.25, 0.5, 0.75, 1.0)) {
-            var bounds = ChatHudBounds.of(chatWidth, scale, 960, 240);
-            int available = bounds.width() - 26; // 1px margins, 24px navigation.
-            var pages = ChatHudPages.pack(List.of(25, 38, 60, 40, 120, 40), available);
-            List<Integer> indices = new ArrayList<>();
-            for (var page : pages) {
-                int rowWidth = page.stream().mapToInt(ChatHudPages.Item::width).sum() + (page.size() - 1) * 2;
-                assertTrue(rowWidth <= available);
-                page.forEach(item -> indices.add(item.index()));
-            }
-            assertEquals(List.of(0, 1, 2, 3, 4, 5), indices);
-            assertTrue(bounds.top() >= 200 && bounds.top() + 25 <= 240,
-                "Two closed-chat timers must fit below the messages.");
-        }
-    }
-
     @Test void successfulHomeEditsUpdateNamesWithoutChangingOtherHomes() {
         var rename = ChatHomeEdit.parse("/homerename Base new_base");
         assertNotNull(rename);
@@ -169,6 +128,32 @@ final class ChatToolsStateTest {
         assertTrue(delete.confirmedBy("Successfully deleted home Base."));
         assertFalse(delete.confirmedBy("Home not found; nothing was deleted."));
         assertEquals(List.of("Farm"), delete.apply(List.of("base", "Farm")));
+    }
+
+    @Test void settingAHomeAddsItAfterACreationReplyAndPreservesOtherHomes() {
+        var create = ChatHomeEdit.parse("/sethome Base");
+        assertNotNull(create);
+        assertNull(create.oldName());
+        assertEquals("Base", create.newName());
+        assertEquals(List.of("Farm", "Base"), create.apply(List.of("Farm")));
+        assertEquals(List.of("base", "Farm"), create.apply(List.of("base", "Farm")));
+        for (String reply : List.of("Home Base has been set.", "Home set to current location.",
+            "Home 'Base' created.", "You have set your home to your current location.", "Successfully created home Base.",
+            "§aYour home was saved.", "Home Base has successfully been set.")) {
+            assertTrue(create.confirmedBy(reply), reply);
+        }
+        for (String reply : List.of("Home could not be set.", "You cannot set any more homes.",
+            "Error: home already exists.", "Home base was renamed.", "Home Base deleted.",
+            "Use /sethome to set your home.", "Your home must be set before teleporting.",
+            "Your home can be set with /sethome.", "Home coordinates: 50 70 30")) {
+            assertFalse(create.confirmedBy(reply), reply);
+        }
+        assertNotNull(ChatHomeEdit.parse("essentials:sethome 基地"));
+    }
+
+    @Test void malformedSetHomeCommandsCannotCreateCachedHomes() {
+        for (String command : List.of("sethome", "sethome ", "sethome base other", "sethome /spawn", "sethome ..", "sethome base;spawn"))
+            assertNull(ChatHomeEdit.parse(command), command);
     }
 
     @Test void incompleteOrUnrelatedCommandsCannotChangeCachedHomes() {

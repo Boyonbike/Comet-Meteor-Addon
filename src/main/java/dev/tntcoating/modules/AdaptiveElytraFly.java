@@ -11,9 +11,11 @@ import dev.tntcoating.core.BoostRamp;
 import dev.tntcoating.core.Finite;
 import dev.tntcoating.core.FlightCorridor;
 import dev.tntcoating.core.ServerGlide;
+import dev.tntcoating.core.SmartElytraSwap;
 import dev.tntcoating.mixin.FireworkRocketAccessor;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -48,6 +50,8 @@ import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraF
 import meteordevelopment.meteorclient.systems.modules.render.Freecam;
 import meteordevelopment.meteorclient.utils.misc.input.Input;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
@@ -62,12 +66,17 @@ import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.Fireworks;
+import net.minecraft.world.item.enchantment.EnchantmentEffectComponents;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -87,6 +96,9 @@ public final class AdaptiveElytraFly extends Module {
     private final SettingGroup boost = settings.createGroup("Unlimited Boost");
     private final SettingGroup terrain = settings.createGroup("Terrain");
     private final SettingGroup recovery = settings.createGroup("Correction Recovery");
+    private final Setting<Boolean> smartElytraSwap = general.add(new BoolSetting.Builder().name("smart-elytra-swap")
+        .description("Wear a chestplate on the ground. Press Jump again in the air to equip an elytra from your inventory and start flying in the same attempt.")
+        .defaultValue(true).build());
     private final Setting<Double> acceleration = general.add(new DoubleSetting.Builder().name("acceleration")
         .description("Velocity change per tick while accelerating, in blocks per tick squared. Adaptive turn assistance handles high-speed heading changes separately.")
         .defaultValue(0.15).range(0.01, 2).sliderRange(0.01, 0.5).build());
@@ -341,6 +353,7 @@ public final class AdaptiveElytraFly extends Module {
         playerId = mc.player == null ? Integer.MIN_VALUE : mc.player.getId();
         chunkChecks = collisionChecks = 0;
         ElytraFly fly = Modules.get().get(ElytraFly.class);
+        smartLandingSwap(fly);
         if (!eligible(fly)) suspend(reason(fly));
         consumeCorrections();
         learning.tick(recoveryDelay.get(), recoveryRate.get());
@@ -353,6 +366,7 @@ public final class AdaptiveElytraFly extends Module {
     /** The server ticks its own glide from the position this tick reported, with the rotation it received. */
     @EventHandler private void onPostTick(TickEvent.Post event) {
         LocalPlayer p = mc.player;
+        smartLandingSwap(Modules.get().get(ElytraFly.class));
         if (controlling && p != null) lastControlledPosition = p.position();
         if (serverGlide == null || p == null || mc.level == null || !p.isFallFlying()) return;
         ServerGlide.Tick tick = ServerGlide.tick(glideContext(p, sentRotation ? sentPitch : p.getXRot(),
@@ -360,6 +374,58 @@ public final class AdaptiveElytraFly extends Module {
         serverGlide = tick.velocity();
         if (tick.damage() > 0) glideHits++;
         if (pendingRocketTicks > 0) pendingRocketTicks--;
+    }
+
+    /** Runs at vanilla's actual Jump-to-glide check, so holding Jump or ordinary jumps never equip wings. */
+    public void prepareSmartTakeoff() {
+        if (!canSmartSwap(Modules.get().get(ElytraFly.class)) || mc.screen != null || !mc.isWindowActive()
+            || mc.player.onGround() || mc.player.isFallFlying() || mc.player.isInWater()
+            || mc.player.isInLava() || mc.player.isPassenger() || mc.player.getAbilities().flying
+            || mc.player.hasEffect(MobEffects.LEVITATION)) return;
+        ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
+        if (ElytraReplace.remaining(chest) > 1) return;
+        swapChest(true);
+    }
+
+    private void smartLandingSwap(ElytraFly fly) {
+        if (!canSmartSwap(fly) || !mc.player.onGround()) return;
+        ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
+        if (chest.isEmpty() || ElytraReplace.isGlider(chest)) swapChest(false);
+    }
+
+    private boolean canSmartSwap(ElytraFly fly) {
+        return isActive() && smartElytraSwap.get() && mc.player != null && mc.level != null && mc.gameMode != null
+            && mc.player.isAlive() && !mc.player.isSpectator() && fly != null && fly.isActive()
+            && fly.flightMode.get() == ElytraFlightModes.Vanilla && !Modules.get().isActive(Freecam.class)
+            && mc.player.containerMenu == mc.player.inventoryMenu
+            && mc.player.inventoryMenu.getCarried().isEmpty();
+    }
+
+    private void swapChest(boolean glider) {
+        // Slot permissions also cover a worn Curse of Binding item; never pick it up and strand it on the cursor.
+        var chestSlot = mc.player.inventoryMenu.getSlot(6);
+        if (!chestSlot.mayPickup(mc.player)) return;
+        var inventory = mc.player.getInventory();
+        List<SmartElytraSwap.Candidate> candidates = new ArrayList<>();
+        for (int i = 0; i <= Inventory.INVENTORY_SIZE; i++) {
+            int slot = i == Inventory.INVENTORY_SIZE ? Inventory.SLOT_OFFHAND : i;
+            ItemStack stack = inventory.getItem(slot);
+            if (stack.isEmpty() || ElytraReplace.isGlider(stack) != glider || !chestSlot.mayPlace(stack)
+                || EnchantmentHelper.has(stack, EnchantmentEffectComponents.PREVENT_ARMOR_CHANGE)) continue;
+            double[] armor = new double[2];
+            if (!glider) stack.forEachModifier(EquipmentSlot.CHEST, (attribute, modifier) -> {
+                if (attribute.equals(Attributes.ARMOR)) armor[0] += modifier.amount();
+                else if (attribute.equals(Attributes.ARMOR_TOUGHNESS)) armor[1] += modifier.amount();
+            });
+            int remaining = stack.isDamageableItem() ? stack.getMaxDamage() - stack.getDamageValue() : Integer.MAX_VALUE;
+            candidates.add(new SmartElytraSwap.Candidate(slot, glider, remaining, armor[0], armor[1]));
+        }
+        int slot = SmartElytraSwap.best(candidates, glider);
+        if (slot < 0) return;
+        if (SlotUtils.isHotbar(slot) || slot == Inventory.SLOT_OFFHAND) {
+            // A single click exchanges both items, even with a completely full inventory.
+            mc.gameMode.handleContainerInput(mc.player.inventoryMenu.containerId, 6, slot, ContainerInput.SWAP, mc.player);
+        } else InvUtils.move().from(slot).toArmor(2);
     }
 
     /** Follows the glide velocity the server keeps for this player, which client movement never changes. */
