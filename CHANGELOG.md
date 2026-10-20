@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.24.4
+
+- **Adaptive Elytra Fly speeds all in blocks per second:** **cruise-max-bps** (41), **sprint-max-bps** (118, unlimited boost off) and **vertical-cruise-bps** (21) replace the cruise, Sprint and vertical cruise percentages; Sprint and boost climbs use **vertical-max-bps**, so **vertical-sprint-max-speed** is gone. With unlimited boost on, Sprint flies **boost-max-bps**. New settings start from their defaults.
+- **Server TPS in the setback log and HUD:** setbacks near the user's base (x −1100, z −6800) rejected boost at 65 b/s in both 0.24.1 and 0.24.3 while boost reached 220–270 b/s elsewhere, and the engine's boost output is identical in both versions. A slow server adds up several packets in one tick, so the log now records server TPS to confirm it.
+
 ## 0.24.3
 
 - **Adaptive Elytra Fly maneuver cap:** new **slow-when-maneuvering** (on) and **maneuver-max-bps** (200). Climbing, diving or a sharp turn (4° or more in a tick) brakes boost to 200 b/s in total, the most 6b6t accepts when packets bunch, taking the speed from horizontal flight so the climb is kept; boost ramps back half a second after you fly straight and level. Straight flight keeps the full boost-max-bps. Recorded feel deliberately changed for the boosted turn and boosted climb scenarios only.

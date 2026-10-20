@@ -49,6 +49,7 @@ import meteordevelopment.meteorclient.systems.modules.render.Freecam;
 import meteordevelopment.meteorclient.utils.misc.input.Input;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
+import meteordevelopment.meteorclient.utils.world.TickRate;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.PlayerInfo;
@@ -99,7 +100,7 @@ public final class AdaptiveElytraFly extends Module {
         .description("Heading assistance in degrees per tick. Rises with speed to double at the adaptive engine's maximum, so fast turns stop sliding sideways, and fades out at low speed, where steering keeps its precise momentum feel. Zero restores momentum steering.")
         .defaultValue(15).range(0, 45).sliderRange(0, 45).build());
     private final Setting<Boolean> sprintBoost = general.add(new BoolSetting.Builder().name("sprint-boost")
-        .description("Hold your Sprint key to boost horizontal movement and deliberate climb/descent. With unlimited-boost on, Sprint drives the unlimited boost ramp; otherwise it raises the adaptive engine to sprint-max-speed.")
+        .description("Hold your Sprint key to boost horizontal movement and deliberate climb/descent. With unlimited-boost on, Sprint drives the unlimited boost ramp; otherwise it raises the adaptive engine to sprint-max-bps.")
         .defaultValue(true).build());
     private final Setting<BoostKeyMode> boostKeyMode = general.add(new EnumSetting.Builder<BoostKeyMode>()
         .name("boost-key-mode")
@@ -108,21 +109,19 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Boolean> toggleOffWhenIdle = general.add(new BoolSetting.Builder().name("toggle-off-when-idle")
         .description("In Toggle mode, turn boost off once you stop pressing every movement key (WASD, Jump, Sneak), unless Meteor's Auto Walk, Elytra Fly autopilot, Baritone or Baritone Elytra is moving you.")
         .defaultValue(true).visible(() -> sprintBoost.get() && boostKeyMode.get() == BoostKeyMode.Toggle).build());
-    private final Setting<Double> cruiseMaximum = general.add(new DoubleSetting.Builder().name("cruise-max-speed")
-        .description("Horizontal cruise maximum as a percentage of the adaptive engine's attainable speed. 100% uses its full output; see Flight Diagnostics for blocks/second.")
-        .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
-    private final Setting<Double> sprintMaximum = general.add(new DoubleSetting.Builder().name("sprint-max-speed")
-        .description("Horizontal Sprint maximum: a percentage of boost-max-bps with unlimited-boost on, otherwise of the adaptive engine's attainable speed.")
-        .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(sprintBoost::get).build());
+    private final Setting<Double> cruiseMaximum = general.add(new DoubleSetting.Builder().name("cruise-max-bps")
+        .description("Cruise speed in blocks per second, up to the adaptive engine's maximum (about 118 b/s with the default braking and lookahead; Flight Diagnostics shows it).")
+        .defaultValue(41).range(0, 390).sliderRange(5, 120).decimalPlaces(1).build());
+    private final Setting<Double> sprintMaximum = general.add(new DoubleSetting.Builder().name("sprint-max-bps")
+        .description("Sprint speed in blocks per second with unlimited-boost off, up to the adaptive engine's maximum. With unlimited boost on, boost-max-bps is the Sprint speed.")
+        .defaultValue(118).range(0, 390).sliderRange(5, 120).decimalPlaces(1)
+        .visible(() -> sprintBoost.get() && !boostVisible()).build());
     private final Setting<Double> verticalMaxSpeed = general.add(new DoubleSetting.Builder().name("vertical-max-bps")
-        .description("Fastest climb/descent in blocks per second. Vertical percentages and the vertical boost ramp are of this.")
+        .description("Fastest climb/descent in blocks per second, used with Sprint or boost. The vertical boost ramp tops out here.")
         .defaultValue(60).range(1, 200).sliderRange(2, 120).decimalPlaces(1).build());
-    private final Setting<Double> verticalCruiseMaximum = general.add(new DoubleSetting.Builder().name("vertical-cruise-max-speed")
-        .description("Jump/Sneak cruise maximum as a percentage of vertical-max-bps.")
-        .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
-    private final Setting<Double> verticalSprintMaximum = general.add(new DoubleSetting.Builder().name("vertical-sprint-max-speed")
-        .description("Sprint + Jump/Sneak maximum as a percentage of vertical-max-bps.")
-        .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(sprintBoost::get).build());
+    private final Setting<Double> verticalCruiseMaximum = general.add(new DoubleSetting.Builder().name("vertical-cruise-bps")
+        .description("Jump/Sneak climb and descent speed in blocks per second without Sprint, up to vertical-max-bps.")
+        .defaultValue(21).range(0, 200).sliderRange(0, 60).decimalPlaces(1).build());
     private final Setting<Double> verticalAcceleration = general.add(new DoubleSetting.Builder().name("vertical-acceleration")
         .description("Minimum vertical velocity change per tick; vertical-ramp-step speeds it up when far below the target. Vertical braking uses up to twice this, more from fast climbs and dives (mirroring vertical-ramp-step).")
         .defaultValue(.05).range(.005, .5).sliderRange(.005, .15).decimalPlaces(3).build());
@@ -662,6 +661,10 @@ public final class AdaptiveElytraFly extends Module {
         record.addProperty("state", state);
         PlayerInfo info = mc.getConnection() == null ? null : mc.getConnection().getPlayerInfo(mc.player.getUUID());
         record.addProperty("ping", info == null ? -1 : info.getLatency());
+        // A slow server handles several of our packets in one tick and adds up their distance.
+        record.addProperty("serverTps", TickRate.INSTANCE.getTickRate());
+        record.addProperty("secondsSinceServerTick", TickRate.INSTANCE.getTimeSinceLastTick());
+        record.addProperty("avoidBlocks", avoidBlocks.get());
         record.addProperty("chunkAheadLoaded", chunkAheadLoaded(position, output));
         record.addProperty("flyIntoUnloadedChunks", flyIntoUnloadedChunks.get());
         record.addProperty("overdrive", overdrive.get());
@@ -731,8 +734,8 @@ public final class AdaptiveElytraFly extends Module {
     /** The engine's settings from this module's and Meteor Elytra Fly's; Meteor's stock speeds only gate axes. */
     private AdaptiveFlightEngine.Settings engineSettings(ElytraFly fly) {
         return new AdaptiveFlightEngine.Settings(acceleration.get(), braking.get(), adaptiveTurnRate.get(),
-            cruiseMaximum.get(), sprintMaximum.get(), verticalMaxSpeed.get() / 20, verticalCruiseMaximum.get(),
-            verticalSprintMaximum.get(), verticalAcceleration.get(), verticalRampStep.get(),
+            cruisePercent(), sprintPercent(), verticalMaxSpeed.get() / 20, verticalCruisePercent(),
+            100, verticalAcceleration.get(), verticalRampStep.get(),
             boostVisible(), boostTop(), boostStartSpeed.get() / 20, boostRampStep.get(),
             boostVerticalStartSpeed.get() / 20, boostRewindTicks.get(), boostSetbackHold.get(), boostCeiling(),
             slowWhenManeuvering.get() ? maneuverMaxSpeed.get() / 20 : Double.POSITIVE_INFINITY,
@@ -756,7 +759,21 @@ public final class AdaptiveElytraFly extends Module {
     private double serverMoveLimit() { return ServerMoveLimit.of(boostVisible() && splitMoves.get()); }
 
     /** Boost's total 3D speed in blocks per tick: the selected top speed, never past the server's limit. */
-    private double boostCeiling() { return Math.min(serverMoveLimit(), boostTop() * sprintMaximum.get() / 100); }
+    private double boostCeiling() { return Math.min(serverMoveLimit(), boostTop()); }
+
+    /** The adaptive engine's attainable speed in clear terrain, in blocks per second; cruise and Sprint speeds are capped by it. */
+    private double engineMaximumBps() {
+        return AdaptiveFlightStep.maximumSpeed(braking.get(), lookahead.get(), margin.get()) * 20;
+    }
+
+    // The engine takes these as percentages of what it can reach; the settings are blocks per second.
+    private double cruisePercent() { return percentOf(cruiseMaximum.get(), engineMaximumBps()); }
+    private double sprintPercent() { return boostVisible() ? 100 : percentOf(sprintMaximum.get(), engineMaximumBps()); }
+    private double verticalCruisePercent() { return percentOf(verticalCruiseMaximum.get(), verticalMaxSpeed.get()); }
+
+    private static double percentOf(double speed, double maximum) {
+        return maximum > 0 ? Math.max(0, Math.min(100, speed / maximum * 100)) : 0;
+    }
 
     /**
      * Called by the mixin just before vanilla reports this tick's position: while boosting fast, report the halfway
@@ -850,7 +867,8 @@ public final class AdaptiveElytraFly extends Module {
             String.format(Locale.ROOT, "%s: %.1f b/s", engine.boostActive() ? "Guard max" : "Engine max",
                 engine.adaptiveMaximum() * 20),
             boostLine(),
-            String.format(Locale.ROOT, "Setbacks: %d | server glide %s", setbacks, serverGlide == null ? "idle"
+            String.format(Locale.ROOT, "Setbacks: %d | server %.1f TPS | glide %s", setbacks,
+                TickRate.INSTANCE.getTickRate(), serverGlide == null ? "idle"
                 : String.format(Locale.ROOT, "%.1f b/s", serverGlide.horizontalLength() * 20))
         );
     }
@@ -870,16 +888,12 @@ public final class AdaptiveElytraFly extends Module {
         if (mc.screen == null) return;
         if (statusLabel != null) statusLabel.set(String.format(Locale.ROOT, "%s | measured %.1f b/s", state, measuredSpeed));
         if (speedLabel != null) {
-            double maximum = controlling && !engine.boostActive() ? engine.adaptiveMaximum()
-                : AdaptiveFlightStep.maximumSpeed(braking.get(), lookahead.get(), margin.get());
-            double sprint = boostVisible() ? boostTop() * 20 * sprintMaximum.get() / 100
-                : maximum * sprintMaximum.get() / 5;
+            double engine = engineMaximumBps();
             speedLabel.set(String.format(Locale.ROOT,
-                "Horizontal max %.1f b/s | cruise %.1f (%.1f%%) | %s %.1f (%.1f%%) | vertical cruise/Sprint %.1f/%.1f b/s",
-                maximum * 20, maximum * cruiseMaximum.get() / 5, cruiseMaximum.get(),
-                boostVisible() ? "unlimited boost" : "Sprint", sprint, sprintMaximum.get(),
-                verticalMaxSpeed.get() * verticalCruiseMaximum.get() / 100,
-                verticalMaxSpeed.get() * verticalSprintMaximum.get() / 100));
+                "Engine max %.1f b/s | cruise %.1f | %s %.1f | climb %.1f, with Sprint %.1f b/s",
+                engine, Math.min(cruiseMaximum.get(), engine), boostVisible() ? "boost" : "Sprint",
+                boostVisible() ? boostTop() * 20 : Math.min(sprintMaximum.get(), engine),
+                Math.min(verticalCruiseMaximum.get(), verticalMaxSpeed.get()), verticalMaxSpeed.get()));
         }
         if (boostLabel != null) boostLabel.set(boostLine());
         if (countsLabel != null) countsLabel.set("Setbacks " + (setbacks - diagnosticSetbackBase)
