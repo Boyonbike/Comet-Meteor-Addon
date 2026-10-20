@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Adaptive Elytra Fly reset:** **Reset Flight Diagnostics & Boost** now clears the learned boost cap as well as counters and immediately removes the stale **Boost capped** status. Both manual limit reset actions discard a feedback window of old boost corrections before learning again; cruise memory and correction backoff remain intact when resetting diagnostics.
+
+- **Adaptive Elytra Fly boost recovery:** learn the rejected recent 3D movement speed instead of treating slower recovery setbacks as the limit. Horizontal and vertical boost share one total-speed budget; the cap survives its ten-second hold and probes upward in small steps. Keep boost evidence separate from cruise learning, and show total measured speed and the shared boost cap in diagnostics. Held or toggled Sprint waits five gliding ticks after a chestplate-to-elytra swap before boosting.
+
 - **Adaptive Elytra Fly smart swap:** new **smart-elytra-swap** setting (default on) equips a chestplate on landing and equips a usable elytra on the airborne Jump press, immediately before vanilla opens the wings. Searches hotbar, main inventory and offhand, supports full inventories, and respects container/cursor and Curse of Binding restrictions.
 
 - **Live player search:** match the start of names as you type in both Chat Tools search bars, ignoring case. Include recent contacts, Meteor friends, online players and incoming TP requests, merge duplicate overview matches and avoid adding partial searches to recents.

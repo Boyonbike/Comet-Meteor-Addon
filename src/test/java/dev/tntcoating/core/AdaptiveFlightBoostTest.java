@@ -280,6 +280,78 @@ class AdaptiveFlightBoostTest {
 
     // Learning
 
+    @Test void boostCapSharesTheFullThreeDimensionalSpeedIncludingClimbsAndDives() {
+        for (int direction : new int[] {-1, 1}) {
+            AdaptiveFlightController controller = controller();
+            for (int tick = 0; tick < 100; tick++) {
+                controller.tick();
+                Motion actual = move(controller, new Motion(.6, direction * .1, .8), 1, .5,
+                    boost(OPEN, new Boost(14, 3, 13.3), direction)).motion();
+                assertEquals(13.3, actual.length(), EPSILON);
+                assertTrue(actual.horizontalLength() < 13.3,
+                    "vertical movement must reduce the horizontal budget");
+                assertEquals(direction, Math.signum(actual.y()), EPSILON);
+                assertEquals(actual, controller.output());
+            }
+        }
+    }
+
+    @Test void aBoostCapAppliesBelowTheRampStartAndToMomentumOnAReleasedAxis() {
+        AdaptiveFlightController controller = controller();
+        controller.accept(new Motion(3, -2, 4));
+        Motion actual = move(controller, new Motion(.6, 0, .8), 1, .5,
+            boost(OPEN, new Boost(3, 0, 2), 0)).motion();
+
+        assertEquals(2, actual.length(), EPSILON);
+        assertTrue(actual.y() < 0, "released vertical momentum still spends the boost budget");
+        assertTrue(actual.horizontalLength() < 2);
+    }
+
+    @Test void aLoweredBoostCapImmediatelyConstrainsExistingMomentumAndTurns() {
+        AdaptiveFlightController controller = controller();
+        controller.accept(new Motion(14, 3, 0));
+        for (int tick = 0; tick < 20; tick++) {
+            controller.tick();
+            Motion actual = move(controller, new Motion(0, .1, 1), 1, .5,
+                boost(OPEN, new Boost(14, 3, 12), 1)).motion();
+            assertEquals(12, actual.length(), EPSILON);
+        }
+    }
+
+    @Test void recoverySpeedDoesNotReplaceTheBoundaryOrEscapeItWhenTheHoldEnds() {
+        BoostSpeedLimit limit = new BoostSpeedLimit();
+        limit.observe(new Motion(14, 0, 0), true);
+        assertTrue(limit.corrected());
+        for (double recovery : new double[] {4, 2.4, 3.7}) {
+            limit.tick();
+            limit.observe(new Motion(recovery, 0, 0), true);
+            assertFalse(limit.corrected());
+        }
+        assertEquals(13.3, limit.ceiling(), EPSILON);
+
+        AdaptiveFlightController controller = controller();
+        BoostRamp ramp = new BoostRamp(new BoostRamp.Settings(2.999, 14.999, .3, 15, false));
+        ramp.engage(0);
+        for (int tick = 0; tick < 600; tick++) {
+            limit.tick();
+            controller.tick();
+            ramp.advance();
+            Motion actual = move(controller, new Motion(1, 0, 0), 1, .5,
+                boost(OPEN, new Boost(ramp.speed(), 0, limit.ceiling()), 0)).motion();
+            assertTrue(actual.length() <= limit.ceiling() + EPSILON);
+            assertTrue(actual.length() < 14, "the end of the hold cannot resume the rejected 280 b/s");
+            limit.observe(actual, true);
+        }
+        assertTrue(limit.ceiling() > 13.3 && limit.ceiling() <= 13.4 + EPSILON,
+            "clean capped movement must probe gradually instead of removing the boundary");
+    }
+
+    @Test void invalidBoostTotalCeilingsAreRejected() {
+        assertThrows(IllegalArgumentException.class, () -> new Boost(3, 1, -1));
+        assertThrows(IllegalArgumentException.class, () -> new Boost(3, 1, Double.NaN));
+        assertEquals(UNLIMITED, new Boost(3, 1).totalCeiling());
+    }
+
     @Test void neverCorrectedVerticalLimitsStartAtTheConfiguredMaximum() {
         AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
         learning.configure(3, .05);

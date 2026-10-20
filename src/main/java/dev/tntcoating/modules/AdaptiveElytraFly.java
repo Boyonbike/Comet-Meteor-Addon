@@ -8,6 +8,8 @@ import dev.tntcoating.core.AdaptiveFlightStep;
 import dev.tntcoating.core.AdaptiveFlightLearning;
 import dev.tntcoating.core.AdaptiveFlightMemory;
 import dev.tntcoating.core.BoostRamp;
+import dev.tntcoating.core.BoostSpeedLimit;
+import dev.tntcoating.core.ElytraBoostDelay;
 import dev.tntcoating.core.Finite;
 import dev.tntcoating.core.FlightCorridor;
 import dev.tntcoating.core.ServerGlide;
@@ -158,7 +160,7 @@ public final class AdaptiveElytraFly extends Module {
         .description("A setback while boosting rewinds the ramp by this many ticks of acceleration instead of restarting it (15 loses under 1% near top speed).")
         .defaultValue(15).range(0, 200).sliderRange(0, 60).visible(this::boostVisible).build());
     private final Setting<Boolean> boostAutoCap = boost.add(new BoolSetting.Builder().name("boost-auto-cap")
-        .description("After 3 boost setbacks within 3 seconds, cap boost just below the slowest of them for 10 seconds, then climb again.")
+        .description("Learn a shared 3D boost speed limit from rejected movement. Recovery setbacks do not replace it with the slower recovery speed. After 10 quiet seconds, probe upward in small steps.")
         .defaultValue(true).visible(this::boostVisible).build());
     private final Setting<Boolean> rememberLimits = recovery.add(new BoolSetting.Builder().name("remember-server-limits")
         .description("Save tested horizontal, ascent, descent, total movement and vertical acceleration limits separately for each server and dimension.")
@@ -276,6 +278,8 @@ public final class AdaptiveElytraFly extends Module {
     private static final long NEVER = Long.MIN_VALUE / 4;
     private final BoostRamp horizontalRamp = new BoostRamp(new BoostRamp.Settings(0, 0, 1, 0, false));
     private final BoostRamp verticalRamp = new BoostRamp(new BoostRamp.Settings(0, 0, 1, 0, false));
+    private final BoostSpeedLimit boostSpeedLimit = new BoostSpeedLimit();
+    private final ElytraBoostDelay boostDelay = new ElytraBoostDelay();
     private long boostClock, lastHorizontalBoost = NEVER, lastVerticalBoost = NEVER;
     private int verticalBoostDirection;
     private boolean boostActive;
@@ -339,7 +343,10 @@ public final class AdaptiveElytraFly extends Module {
             player = mc.player;
         }
         long now = System.nanoTime();
-        if (controlling && lastTickNanos != 0 && now - lastTickNanos > 250_000_000L) learning.pauseForLag();
+        if (controlling && lastTickNanos != 0 && now - lastTickNanos > 250_000_000L) {
+            learning.pauseForLag();
+            boostSpeedLimit.invalidateEvidence();
+        }
         lastTickNanos = now;
         controller.configure(controllerSettings());
         controller.tick();
@@ -354,6 +361,7 @@ public final class AdaptiveElytraFly extends Module {
         chunkChecks = collisionChecks = 0;
         ElytraFly fly = Modules.get().get(ElytraFly.class);
         smartLandingSwap(fly);
+        observeBoostDelay();
         if (!eligible(fly)) suspend(reason(fly));
         consumeCorrections();
         learning.tick(recoveryDelay.get(), recoveryRate.get());
@@ -426,6 +434,18 @@ public final class AdaptiveElytraFly extends Module {
             // A single click exchanges both items, even with a completely full inventory.
             mc.gameMode.handleContainerInput(mc.player.inventoryMenu.containerId, 6, slot, ContainerInput.SWAP, mc.player);
         } else InvUtils.move().from(slot).toArmor(2);
+        if (glider) {
+            boostDelay.swapped();
+            boostSpeedLimit.invalidateEvidence();
+        }
+    }
+
+    private void observeBoostDelay() {
+        if (mc.player != null) {
+            boostDelay.observe(boostClock,
+                ElytraReplace.isGlider(mc.player.getItemBySlot(EquipmentSlot.CHEST)), mc.player.isFallFlying());
+            if (!boostDelay.ready()) boostSpeedLimit.invalidateEvidence();
+        }
     }
 
     /** Follows the glide velocity the server keeps for this player, which client movement never changes. */
@@ -476,13 +496,15 @@ public final class AdaptiveElytraFly extends Module {
             return false;
         }
         checkBlocks = avoidBlocks.get() || fly.noCrash.get();
+        observeBoostDelay();
         consumeCorrections();
         // Keep close-object contact under our controller: yielding to stock here
         // would invoke Meteor's unconditional No Crash and trap tight-space movement.
-        boolean sprintKey = boostKeyMode.get() == BoostKeyMode.Toggle ? boostToggled : sprintKeyDown();
+        boolean sprintKey = boostDelay.ready()
+            && (boostKeyMode.get() == BoostKeyMode.Toggle ? boostToggled : sprintKeyDown());
         // Sprint lifts the close-object speed only while really touching or blocked, until that contact clears.
         // With unlimited boost, Sprint is boost instead, which falls back to the close-object crawl by itself.
-        if (boostVisible()) closeObjectOverride = false;
+        if (boostVisible() || !boostDelay.ready()) closeObjectOverride = false;
         else if (nearObject && sprintKey) closeObjectOverride = true;
         double releaseSpeed = closeObjectOverride ? AdaptiveFlightStep.MAX_HORIZONTAL_SPEED : closeObjectSpeed.get();
         boolean releaseSafeCollisions = safeManeuvering.get() && (closeObjectOverride
@@ -540,9 +562,13 @@ public final class AdaptiveElytraFly extends Module {
                 verticalRamp.limitTo(Math.abs(actualMotion.y()));
             }
             if (closeObjectOverride && step.safeManeuvering() && !contactResolved) closeObjectOverride = false;
-            learning.observe(actualMotion, verticalInput, sprinting,
-                step.corridor() != null && step.corridor().reason() == FlightCorridor.Reason.CLEAR
-                    && !step.glideLimited() && !contactResolved && controller.speedFactor() >= .999,
+            boolean clean = step.corridor() != null && step.corridor().reason() == FlightCorridor.Reason.CLEAR
+                && !step.terrainLimited() && !step.glideLimited() && !contactResolved;
+            if (boostActive) {
+                boostSpeedLimit.observe(actualMotion, clean);
+                learning.resetHistory();
+            } else learning.observe(actualMotion, verticalInput, sprinting,
+                clean && controller.speedFactor() >= .999,
                 (sprinting ? sprintMaximum.get() : cruiseMaximum.get()) / 100,
                 (sprinting ? verticalSprintMaximum.get() : verticalCruiseMaximum.get()) / 100);
             adaptiveMaximum = step.adaptiveMaximum();
@@ -565,7 +591,7 @@ public final class AdaptiveElytraFly extends Module {
             else if (step.terrainLimited() && ahead != null && ahead.reason() == FlightCorridor.Reason.OBSTACLE) {
                 state = "Obstacle limited";
                 obstacleLimitedTicks++;
-            } else if (boostActive) state = horizontalRamp.capped() || verticalRamp.capped()
+            } else if (boostActive) state = boostSpeedLimit.limited()
                 ? "Boost capped" : "Unlimited boost";
             else if (controller.speedFactor() < 0.999) state = "Recovering";
             else if (step.lookaheadLimited()) state = "Lookahead limited";
@@ -635,9 +661,11 @@ public final class AdaptiveElytraFly extends Module {
             if (horizontalBoost || verticalBoost) {
                 // Boost setbacks rewind its own ramps and never teach or back off the adaptive cruise limits.
                 if (setback) {
+                    boostSpeedLimit.corrected();
                     if (horizontalBoost) horizontalRamp.corrected(boostClock, horizontalRamp.lastSpeed());
                     if (verticalBoost) verticalRamp.corrected(boostClock, verticalRamp.lastSpeed());
                 } else {
+                    boostSpeedLimit.invalidateEvidence();
                     horizontalRamp.disengage();
                     verticalRamp.disengage();
                 }
@@ -678,6 +706,8 @@ public final class AdaptiveElytraFly extends Module {
         learning.forget();
         horizontalRamp.reset();
         verticalRamp.reset();
+        boostSpeedLimit.reset();
+        boostDelay.reset();
         lastHorizontalBoost = lastVerticalBoost = NEVER;
         verticalBoostDirection = 0;
         boostActive = false;
@@ -803,13 +833,15 @@ public final class AdaptiveElytraFly extends Module {
 
     /** Sprint percentages scale each boost ramp's top speed, as they scale adaptive Sprint. */
     private void configureRamps() {
+        boostSpeedLimit.configure(boostAutoCap.get());
+        boostSpeedLimit.tick();
         double horizontalMaximum = boostMaxSpeed.get() * sprintMaximum.get() / 100;
         double verticalMaximum = verticalMaxSpeed.get() * verticalSprintMaximum.get() / 100;
         horizontalRamp.configure(new BoostRamp.Settings(Math.min(boostStartSpeed.get(), horizontalMaximum),
-            horizontalMaximum, boostRampStep.get(), boostRewindTicks.get(), boostAutoCap.get()));
+            horizontalMaximum, boostRampStep.get(), boostRewindTicks.get(), false));
         // The ramp needs a positive step; with vertical-ramp-step at zero, vertical boost holds its start speed.
         verticalRamp.configure(new BoostRamp.Settings(Math.min(boostVerticalStartSpeed.get(), verticalMaximum),
-            verticalMaximum, Math.max(1e-6, verticalRampStep.get()), boostRewindTicks.get(), boostAutoCap.get()));
+            verticalMaximum, Math.max(1e-6, verticalRampStep.get()), boostRewindTicks.get(), false));
     }
 
     /** The physical Sprint key, including a rebound mouse button, while Minecraft is focused with no screen open. */
@@ -877,7 +909,8 @@ public final class AdaptiveElytraFly extends Module {
             verticalBoostDirection = 0;
         }
         boostActive = horizontalRamp.speed() > 0 || verticalRamp.speed() > 0;
-        return boostActive ? new AdaptiveFlightStep.Boost(horizontalRamp.speed(), verticalRamp.speed()) : null;
+        return boostActive ? new AdaptiveFlightStep.Boost(horizontalRamp.speed(), verticalRamp.speed(),
+            boostSpeedLimit.ceiling()) : null;
     }
 
     /** Setbacks arrive up to a feedback window after the movement that caused them, including just after release. */
@@ -891,7 +924,7 @@ public final class AdaptiveElytraFly extends Module {
         Vec3 position = mc.player.position();
         if (samplePosition == null) { samplePosition = position; sampleTime = now; }
         else if (now - sampleTime >= 1_000_000_000L) {
-            measuredSpeed = Math.hypot(position.x - samplePosition.x, position.z - samplePosition.z)
+            measuredSpeed = position.distanceTo(samplePosition)
                 * 1_000_000_000.0 / (now - sampleTime);
             samplePosition = position;
             sampleTime = now;
@@ -929,12 +962,15 @@ public final class AdaptiveElytraFly extends Module {
 
     private String boostLine() {
         if (!boostVisible()) return "Boost: off (adaptive Sprint)";
-        int capTicks = Math.max(horizontalRamp.capTicksRemaining(), verticalRamp.capTicksRemaining());
+        int capTicks = boostSpeedLimit.holdTicksRemaining();
         String toggle = boostKeyMode.get() != BoostKeyMode.Toggle ? "" : boostToggled ? " (on)" : " (off)";
         return String.format(Locale.ROOT, "Boost%s: H %.0f/%.0f | V %.0f/%.0f b/s%s | setbacks %d", toggle,
             horizontalRamp.speed() * 20, horizontalRamp.ceiling() * 20,
             verticalRamp.speed() * 20, verticalRamp.ceiling() * 20,
-            capTicks > 0 ? String.format(Locale.ROOT, " | capped %.0fs", capTicks / 20.0) : "", boostCorrections);
+            boostSpeedLimit.limited() ? String.format(Locale.ROOT, " | total cap %.1f b/s%s",
+                boostSpeedLimit.ceiling() * 20,
+                capTicks > 0 ? String.format(Locale.ROOT, " (hold %.0fs)", capTicks / 20.0) : " (probing)") : "",
+            boostCorrections);
     }
 
     private void updateStatus() {
@@ -982,6 +1018,12 @@ public final class AdaptiveElytraFly extends Module {
 
     @Override public String getInfoString() { return hud; }
 
+    private void forgetBoostLimit() {
+        boostSpeedLimit.forget();
+        if ("Boost capped".equals(state)) state = boostActive ? "Unlimited boost"
+            : controller.speedFactor() < .999 ? "Recovering" : "Flying";
+    }
+
     @Override public WWidget getWidget(GuiTheme theme) {
         var list = theme.verticalList();
         var section = list.add(theme.section("Flight Diagnostics", false)).expandX().widget();
@@ -994,7 +1036,7 @@ public final class AdaptiveElytraFly extends Module {
         glideLabel = table.add(theme.label("")).widget(); table.row();
         checksLabel = table.add(theme.label("")).widget(); table.row();
         frameLabel = table.add(theme.label("")).widget(); table.row();
-        table.add(theme.button("Reset Flight Diagnostics")).widget().action = () -> {
+        table.add(theme.button("Reset Flight Diagnostics & Boost")).widget().action = () -> {
             chunkLimitedTicks = obstacleLimitedTicks = slowFrames = 0;
             glideLimitedTicks = glideHits = 0;
             boostCorrections = 0;
@@ -1002,12 +1044,14 @@ public final class AdaptiveElytraFly extends Module {
             measuredSpeed = 0;
             samplePosition = null;
             diagnosticCorrectionBase = controller.correctionCount();
+            forgetBoostLimit();
             updateStatus();
         };
         table.row();
         table.add(theme.button("Forget This Server's Flight Limits")).widget().action = () -> {
             if (profile != null && memory != null) { memory.clear(profile); memoryDirty = true; }
             learning.forget();
+            forgetBoostLimit();
             savedLimits = AdaptiveFlightMemory.ProfileLimits.UNKNOWN;
             controller.reset();
             movementTick = Integer.MIN_VALUE;

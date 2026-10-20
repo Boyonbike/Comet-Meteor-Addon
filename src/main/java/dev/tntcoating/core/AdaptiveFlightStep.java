@@ -91,13 +91,20 @@ public final class AdaptiveFlightStep {
 
     /**
      * Unlimited boost ramp speeds in blocks per tick; zero leaves that axis on its adaptive limits. A boosted axis
-     * ignores learned limits, the correction ceiling and the adaptive engine maximum, but not the terrain,
-     * chunk and server-glide guards.
+     * ignores cruise limits, the correction ceiling and the adaptive engine maximum, but shares
+     * {@code totalCeiling} with the other axes and keeps the terrain, chunk and server-glide guards.
      */
-    public record Boost(double horizontal, double vertical) {
+    public record Boost(double horizontal, double vertical, double totalCeiling) {
+        public Boost(double horizontal, double vertical) {
+            this(horizontal, vertical, Double.POSITIVE_INFINITY);
+        }
+
         public Boost {
             if (!Double.isFinite(horizontal) || horizontal < 0 || !Double.isFinite(vertical) || vertical < 0) {
                 throw new IllegalArgumentException("Boost speeds must be finite and nonnegative.");
+            }
+            if (Double.isNaN(totalCeiling) || totalCeiling < 0) {
+                throw new IllegalArgumentException("Boost total ceiling must be nonnegative or positive infinity.");
             }
         }
     }
@@ -279,7 +286,11 @@ public final class AdaptiveFlightStep {
         // Retain the shared hard ceiling during turns and existing momentum. Percentages
         // affect the target above so reducing cruise speed still uses normal braking.
         // Boost is outside the learned displacement budget.
-        if (learned != null && !boosted) {
+        if (boosted && limited.length() > boost.totalCeiling()) {
+            // The server rejects total displacement: a climb or dive spends the same
+            // speed budget as horizontal flight, including momentum on a released axis.
+            limited = limited.scaled(boost.totalCeiling() / limited.length());
+        } else if (learned != null && !boosted) {
             double totalCeiling = learned.total() * controller.speedFactor();
             if (blend != null) totalCeiling = decaying(totalCeiling, limited.length(), previous.length());
             if (limited.length() > totalCeiling) limited = limited.scaled(totalCeiling / limited.length());
