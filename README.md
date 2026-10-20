@@ -1,4 +1,4 @@
-# Comet by Boyonabike — 0.24.2
+# Comet by Boyonabike — 0.24.3
 
 Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
@@ -9,7 +9,7 @@ Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. 
 - **Diagnostics:** **home-packet-log**.
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **tp-home-countdown** and **dub-counter**. See [HUD elements](#hud-elements).
 
-Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Area Spiral Search and Trail Hunter have been removed. The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.24.2.jar`.
+Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Area Spiral Search and Trail Hunter have been removed. The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.24.3.jar`.
 
 **Scaffold**, **Trajectories**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
@@ -123,6 +123,7 @@ Add the **adaptive-elytra-fly-engine** HUD element for a live overview of flight
 
 **How fast a server allows.** The server measures each move packet from where you were at the start of its tick. Vanilla sets you back when `distance² − serverVelocity² > 300 × packets that tick`; Paper, which 6b6t runs, uses `max(300, (10 × packets that tick)²)`. One packet a tick allows about **17.3 blocks/tick** (346 b/s). When two or more of your packets reach a Paper server in the same tick, through lag or ping jitter, each may cover only 10 blocks from the tick's start: **anything over 200 b/s in total is set back**. 6b6t setback logs confirm it: in a 6-minute 0.24.1 flight not one move between 80 and 200 b/s was rejected, while straight flight at 200–280 b/s was set back about 14 times a minute, and climbing at 55 b/s on top of 200 b/s horizontal crossed the line too. So for flight without rubber-banding, set **boost-max-bps** to **200**; faster is still faster overall (each setback costs about a tenth of a second), just not smooth. Boost's total speed is never allowed past **17 blocks/tick** either way.
 
+- **slow-when-maneuvering** (on by default): while you climb or dive (Jump or Sneak held, or vertical momentum over 10 b/s) or turn sharply (4° or more in one tick), boost brakes to **maneuver-max-bps** (**200**) in total over a few ticks, taking the speed from horizontal flight so the climb keeps its full rate. Half a second after you fly straight and level again, boost climbs back along its ramp. Straight, level flight keeps the full **boost-max-bps**. The HUD shows **Boost (maneuver)** while it holds.
 - **overdrive** (off by default): boost to **340 b/s** (17 blocks/tick) instead of **boost-max-bps**. Like anything above 200 b/s, it is set back whenever your packets bunch.
 - **split-moves** (off by default, experimental): while boosting above 200 b/s, also report a half-step position each tick, just before vanilla's own. Paper then allows more distance in that tick, so up to **390 b/s** (with overdrive) survives two ticks of packets arriving together, though three arriving together (a lag spike) are set back at any speed. It never reports a halfway point across a server correction (0.24.1 did, which caused setback storms at 60 b/s). An anticheat that counts movement packets may object.
 
@@ -390,7 +391,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.24.2.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies. XaeroPlus (`2.36.6+fabric-26.1.2`) is also compile-only from Modrinth; none is bundled.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.24.3.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies. XaeroPlus (`2.36.6+fabric-26.1.2`) is also compile-only from Modrinth; none is bundled.
 
 Automated tests cover:
 

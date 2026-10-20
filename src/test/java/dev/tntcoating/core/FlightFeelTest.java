@@ -53,14 +53,26 @@ class FlightFeelTest {
                     double verticalRamp = frames.stream().mapToDouble(Frame::verticalRamp).max().orElse(0);
                     Frame last = frames.get(frames.size() - 1);
                     switch (scenario.name()) {
-                        case "boost-release", "turns-boost" -> {
-                            assertTrue(top > 14, scenario.name() + " reaches boost speed");
-                            assertTrue(last.motion().horizontalLength() < 3, scenario.name() + " eases back to cruise");
+                        case "boost-release" -> {
+                            assertTrue(top > 14, "reaches boost speed");
+                            assertTrue(last.motion().horizontalLength() < 3, "eases back to cruise");
+                        }
+                        case "turns-boost" -> {
+                            assertTrue(top > 13, "reaches boost speed before turning");
+                            // Sharp turns at ticks 140 and 190 hold boost to the 200 b/s manoeuvre cap.
+                            assertTrue(frames.get(150).motion().length() <= EngineFeelDriver.MANEUVER_CEILING + 1e-9,
+                                "turning brakes boost to the manoeuvre cap");
+                            assertTrue(last.motion().horizontalLength() < 3, "eases back to cruise");
+                        }
+                        case "vertical-boost" -> {
+                            assertTrue(climb > .5, "climbs");
+                            assertTrue(frames.subList(40, 100).stream().allMatch(f -> f.motion().length()
+                                <= EngineFeelDriver.MANEUVER_CEILING + 1e-9), "climbing boost keeps within the manoeuvre cap");
                         }
                         // Only Meteor's fall-multiplier sink remains once W is released.
                         case "cruise-release" -> assertEquals(0, last.motion().horizontalLength(), 1e-9);
                         case "climb-boost-only" -> assertTrue(verticalRamp > 2, "vertical boost ramps");
-                        case "vertical-cruise", "vertical-boost" -> assertTrue(climb > .5, scenario.name() + " climbs");
+                        case "vertical-cruise" -> assertTrue(climb > .5, scenario.name() + " climbs");
                         case "wall-cruise-crawl", "wall-boost", "wall-glide-guard", "chunk-edge-stop" ->
                             assertTrue(last.motion().horizontalLength() < .7, scenario.name() + " stops or crawls at the edge");
                         case "chunk-edge-fly-into" -> assertTrue(last.motion().horizontalLength() > 14, "flies on into missing chunks");

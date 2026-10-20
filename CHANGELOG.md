@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.24.3
+
+- **Adaptive Elytra Fly maneuver cap:** new **slow-when-maneuvering** (on) and **maneuver-max-bps** (200). Climbing, diving or a sharp turn (4° or more in a tick) brakes boost to 200 b/s in total, the most 6b6t accepts when packets bunch, taking the speed from horizontal flight so the climb is kept; boost ramps back half a second after you fly straight and level. Straight flight keeps the full boost-max-bps. Recorded feel deliberately changed for the boosted turn and boosted climb scenarios only.
+- **Smoother boost slow-downs:** boost now brakes down to a lowered ramp (the maneuver cap, a setback's rewind) over a few ticks instead of snapping to it.
+
 ## 0.24.2
 
 - **Adaptive Elytra Fly speeds in blocks per second:** **boost-max-bps** (300), **boost-start-bps** (60), **boost-vertical-start-bps** (30), **vertical-max-bps** (60) and **close-object-bps** (12) replace the blocks-per-tick settings. They are new settings, so re-enter any value you had changed. **boost-max-bps** now caps total speed, horizontal and vertical combined, so climbing or diving while boosting no longer takes you past it.

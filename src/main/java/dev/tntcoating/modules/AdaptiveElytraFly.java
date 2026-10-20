@@ -142,6 +142,13 @@ public final class AdaptiveElytraFly extends Module {
         .description("Fastest boost in blocks per second, horizontal and vertical combined, so climbing or diving never takes you past it. 6b6t (Paper) sets back anything over 200 b/s whenever ping jitter or lag bunches your packets; at 200 or below that does not happen.")
         .defaultValue(300).range(2, 390).sliderRange(20, 340).decimalPlaces(1)
         .visible(() -> boostVisible() && !overdrive.get()).build());
+    private final Setting<Boolean> slowWhenManeuvering = boost.add(new BoolSetting.Builder().name("slow-when-maneuvering")
+        .description("While you climb, dive or turn sharply, brake boost to maneuver-max-bps in total, taking the speed from horizontal flight so the climb is kept, then ramp back up once you fly straight and level for half a second. Climbing adds to your total speed, which is what 6b6t sets back above 200 b/s.")
+        .defaultValue(true).visible(this::boostVisible).build());
+    private final Setting<Double> maneuverMaxSpeed = boost.add(new DoubleSetting.Builder().name("maneuver-max-bps")
+        .description("Total boost speed while climbing, diving or turning sharply, in blocks per second. 200 is the most 6b6t accepts when your packets bunch.")
+        .defaultValue(200).range(20, 390).sliderRange(60, 340).decimalPlaces(1)
+        .visible(() -> boostVisible() && slowWhenManeuvering.get()).build());
     private final Setting<Double> boostStartSpeed = boost.add(new DoubleSetting.Builder().name("boost-start-bps")
         .description("Horizontal speed boost starts at, in blocks per second, when slower.")
         .defaultValue(60).range(0, 390).sliderRange(0, 200).decimalPlaces(1).visible(this::boostVisible).build());
@@ -508,7 +515,8 @@ public final class AdaptiveElytraFly extends Module {
             else if (step.terrainLimited() && ahead != null && ahead.reason() == FlightCorridor.Reason.OBSTACLE) {
                 state = "Obstacle limited";
                 obstacleLimitedTicks++;
-            } else if (engine.boostActive()) state = "Unlimited boost";
+            } else if (engine.maneuverCapped()) state = "Boost (maneuver)";
+            else if (engine.boostActive()) state = "Unlimited boost";
             else if (step.lookaheadLimited()) state = "Lookahead limited";
             else if (engine.sprintBoosting()) state = "Sprint boost";
             else state = "Flying";
@@ -660,6 +668,7 @@ public final class AdaptiveElytraFly extends Module {
         record.addProperty("splitMoves", splitMoves.get());
         record.addProperty("boostTop", boostTop() * 20);
         record.addProperty("pinned", pinned);
+        record.addProperty("maneuverCapped", engine.maneuverCapped());
         record.addProperty("setbackHold", boostSetbackHold.get());
         describeRejectedMove(record, target);
         setbackLog.append(record);
@@ -726,6 +735,7 @@ public final class AdaptiveElytraFly extends Module {
             verticalSprintMaximum.get(), verticalAcceleration.get(), verticalRampStep.get(),
             boostVisible(), boostTop(), boostStartSpeed.get() / 20, boostRampStep.get(),
             boostVerticalStartSpeed.get() / 20, boostRewindTicks.get(), boostSetbackHold.get(), boostCeiling(),
+            slowWhenManeuvering.get() ? maneuverMaxSpeed.get() / 20 : Double.POSITIVE_INFINITY,
             lookahead.get(), margin.get(),
             safeManeuvering.get(), closeObjectSpeed.get() / 20,
             fly == null ? 0 : fly.horizontalSpeed.get(), fly == null ? 0 : fly.verticalSpeed.get(),

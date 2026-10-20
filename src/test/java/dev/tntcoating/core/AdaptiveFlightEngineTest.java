@@ -147,6 +147,56 @@ class AdaptiveFlightEngineTest {
         }
     }
 
+    @Test void climbingWhileBoostingBrakesToTheManeuverCapAndKeepsTheClimb() {
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(DEFAULTS);
+        for (int tick = 0; tick < 1000; tick++) fly(engine, DEFAULTS, true, false, 0);
+        assertTrue(engine.output().horizontalLength() > 14.8, "straight and level: full 300 b/s");
+        double previous = engine.output().length();
+        for (int tick = 0; tick < 100; tick++) {
+            Motion motion = fly(engine, DEFAULTS, true, true, 0);
+            assertTrue(previous - motion.length() < 2.5, "brakes over a few ticks instead of snapping: tick " + tick);
+            if (tick >= 5) {
+                assertTrue(motion.length() <= DEFAULTS.maneuverCeiling() + EPSILON, "tick " + tick + ": " + motion.length() * 20);
+                assertTrue(engine.maneuverCapped());
+            }
+            previous = motion.length();
+        }
+        assertEquals(3, engine.output().y(), 1e-6, "the climb keeps its full 60 b/s");
+        assertEquals(Math.sqrt(100 - 9), engine.output().horizontalLength(), 1e-6, "horizontal pays for it");
+    }
+
+    @Test void aSharpTurnCapsBoostAndStraightLevelFlightRampsBackGradually() {
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(DEFAULTS);
+        for (int tick = 0; tick < 1000; tick++) fly(engine, DEFAULTS, true, false, 0);
+        float yaw = 0;
+        for (int tick = 0; tick < 20; tick++) fly(engine, DEFAULTS, true, false, yaw += 6);
+        assertTrue(engine.output().length() <= DEFAULTS.maneuverCeiling() + EPSILON, "turning: " + engine.output().length() * 20);
+
+        double previous = engine.output().length();
+        for (int tick = 0; tick < AdaptiveFlightEngine.MANEUVER_HOLD_TICKS; tick++) {
+            fly(engine, DEFAULTS, true, false, yaw);
+            assertEquals(previous, engine.output().length(), 1e-6, "held for half a second after the turn");
+        }
+        for (int tick = 0; tick < 40; tick++) {
+            double speed = fly(engine, DEFAULTS, true, false, yaw).length();
+            assertTrue(speed >= previous - EPSILON && speed - previous < .2, "climbs back along the ramp: " + speed);
+            previous = speed;
+        }
+        assertTrue(previous > DEFAULTS.maneuverCeiling(), "back above 200 b/s once straight");
+    }
+
+    @Test void gentleSteeringAndAnUnsetCapLeaveBoostAlone() {
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(DEFAULTS);
+        float yaw = 0;
+        for (int tick = 0; tick < 1000; tick++) fly(engine, DEFAULTS, true, false, yaw += 1);
+        assertTrue(engine.output().horizontalLength() > 14.8, "a 1 degree per tick curve is not a maneuver");
+
+        AdaptiveFlightEngine.Settings uncapped = withManeuverCeiling(Double.POSITIVE_INFINITY);
+        AdaptiveFlightEngine free = new AdaptiveFlightEngine(uncapped);
+        for (int tick = 0; tick < 1000; tick++) fly(free, uncapped, true, tick > 900, 0);
+        assertTrue(free.output().horizontalLength() > 14, "with the cap off, climbing keeps boost speed");
+    }
+
     @Test void aBoostMaximumAboveTheServerLimitIsHeldToItInThreeDimensions() {
         AdaptiveFlightEngine.Settings tooFast = boosting(24, ServerMoveLimit.SINGLE);
         AdaptiveFlightEngine engine = new AdaptiveFlightEngine(tooFast);
@@ -162,7 +212,7 @@ class AdaptiveFlightEngineTest {
         return new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(), d.turnRate(), d.cruise(), d.sprint(),
             d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(), d.verticalAcceleration(), d.verticalRampStep(),
             d.unlimitedBoost(), top, d.boostStart(), d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(),
-            d.setbackHoldTicks(), ceiling, d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(),
+            d.setbackHoldTicks(), ceiling, d.maneuverCeiling(), d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(),
             d.stockHorizontalSpeed(), d.stockVerticalSpeed(), d.fallMultiplier());
     }
 
@@ -173,10 +223,25 @@ class AdaptiveFlightEngineTest {
 
     private static Motion fly(AdaptiveFlightEngine engine, AdaptiveFlightEngine.Settings settings,
                               boolean sprint, boolean jump) {
+        return fly(engine, settings, sprint, jump, 0);
+    }
+
+    private static Motion fly(AdaptiveFlightEngine engine, AdaptiveFlightEngine.Settings settings,
+                              boolean sprint, boolean jump, float yaw) {
         engine.startTick(settings);
         assertTrue(engine.begin(sprint, true, 1.2, 1.2, BODY, OPEN));
-        engine.step(new AdaptiveFlightEngine.Input(1, 0, 0, jump, false, -.5, BODY, OPEN,
+        engine.step(new AdaptiveFlightEngine.Input(1, 0, yaw, jump, false, -.5, BODY, OPEN,
             () -> Double.POSITIVE_INFINITY, null, movement -> movement));
         return engine.output();
+    }
+
+    /** The defaults with another manoeuvre cap. */
+    private static AdaptiveFlightEngine.Settings withManeuverCeiling(double ceiling) {
+        AdaptiveFlightEngine.Settings d = DEFAULTS;
+        return new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(), d.turnRate(), d.cruise(), d.sprint(),
+            d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(), d.verticalAcceleration(), d.verticalRampStep(),
+            d.unlimitedBoost(), d.boostTop(), d.boostStart(), d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(),
+            d.setbackHoldTicks(), d.boostCeiling(), ceiling, d.lookahead(), d.margin(), d.safeManeuvering(),
+            d.closeObjectSpeed(), d.stockHorizontalSpeed(), d.stockVerticalSpeed(), d.fallMultiplier());
     }
 }
