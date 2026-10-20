@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BoostRampTest {
     private static final double EPSILON = 1e-9;
-    private static final BoostRamp.Settings VOLYTRA = new BoostRamp.Settings(2.999, 14.999, .3, 15);
+    private static final BoostRamp.Settings VOLYTRA = new BoostRamp.Settings(2.999, 14.999, .3, 15, 0);
 
     @Test void followsVolytrasPlateauCurveFromTheStartSpeed() {
         BoostRamp ramp = new BoostRamp(VOLYTRA);
@@ -62,6 +62,19 @@ class BoostRampTest {
         assertTrue(ramp.speed() > 14.9, "fifteen clean ticks win back a fifteen-tick rewind: " + ramp.speed());
     }
 
+    @Test void afterASetbackTheRampHoldsItsRewoundSpeedBeforeAcceleratingAgain() {
+        BoostRamp ramp = new BoostRamp(new BoostRamp.Settings(2.999, 14.999, .3, 15, 2));
+        ramp.engage(10);
+        ramp.corrected();
+        double rewound = BoostRamp.rewind(10, .3, 14.999, 2.999, 15);
+        assertEquals(rewound, ramp.speed(), EPSILON);
+        ramp.advance();
+        ramp.advance();
+        assertEquals(rewound, ramp.speed(), EPSILON, "held for two ticks");
+        ramp.advance();
+        assertEquals(BoostRamp.next(rewound, .3, 14.999, 14.999), ramp.speed(), EPSILON, "then accelerates");
+    }
+
     @Test void aSetbackWhileReleasedChangesNothing() {
         BoostRamp ramp = new BoostRamp(VOLYTRA);
         ramp.engage(9);
@@ -95,14 +108,15 @@ class BoostRampTest {
     @Test void loweringTheMaximumPullsAnEngagedRampDown() {
         BoostRamp ramp = new BoostRamp(VOLYTRA);
         ramp.engage(14);
-        ramp.configure(new BoostRamp.Settings(2.999, 7.5, .3, 15));
+        ramp.configure(new BoostRamp.Settings(2.999, 7.5, .3, 15, 0));
         assertEquals(7.5, ramp.speed(), EPSILON);
     }
 
     @Test void invalidSettingsAreRejected() {
-        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(-1, 15, .3, 15));
-        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, Double.NaN, .3, 15));
-        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, 15, 0, 15));
-        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, 15, .3, -1));
+        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(-1, 15, .3, 15, 0));
+        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, Double.NaN, .3, 15, 0));
+        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, 15, 0, 15, 0));
+        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, 15, .3, -1, 0));
+        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, 15, .3, 15, -1));
     }
 }

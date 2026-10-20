@@ -16,6 +16,7 @@ import dev.tntcoating.mixin.FireworkRocketAccessor;
 import dev.tntcoating.mixin.LocalPlayerAccessor;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -153,6 +154,12 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Integer> boostRewindTicks = boost.add(new IntSetting.Builder().name("boost-rewind-ticks")
         .description("A server setback rewinds the boost ramp by this many ticks of acceleration instead of restarting it, and flight keeps its momentum (15 loses under 1% near top speed).")
         .defaultValue(15).range(0, 200).sliderRange(0, 60).visible(this::boostVisible).build());
+    private final Setting<Integer> boostSetbackHold = boost.add(new IntSetting.Builder().name("boost-setback-hold")
+        .description("After a server setback, hold the rewound boost speed for this many ticks before accelerating again. VolytraFly's acceleration delay: without it a server can pin you in place with back-to-back setbacks.")
+        .defaultValue(1).range(0, 20).sliderRange(0, 10).visible(this::boostVisible).build());
+    private final Setting<Integer> pinnedGlideTicks = boost.add(new IntSetting.Builder().name("pinned-glide-ticks")
+        .description("When two setbacks in a row put you back on exactly the same spot, the server is rejecting every move you make from there. Fly with plain vanilla elytra physics for this many ticks so it accepts one, then boost again from the start speed. Zero disables.")
+        .defaultValue(10).range(0, 60).sliderRange(0, 40).build());
     private final Setting<Integer> lookahead = terrain.add(new IntSetting.Builder().name("lookahead")
         .description("Maximum corridor distance to check, in blocks. Work is bounded at 64 blocks per scan.")
         .defaultValue(64).range(8, 64).sliderRange(8, 64).build());
@@ -240,6 +247,16 @@ public final class AdaptiveElytraFly extends Module {
     private long slowFrames, sampleTime, clientTicks;
     private int setbacks, diagnosticSetbackBase;
     private Vec3 samplePosition, lastControlledPosition;
+    // Back-to-back setbacks to one spot pin the flight: vanilla glide for a few ticks breaks the cycle.
+    private static final int PINNED_WINDOW_TICKS = 40;
+    private Vec3 lastSetbackTarget;
+    private long lastSetbackTick;
+    private int pinnedTicks;
+    private long pinnedEpisodes;
+    // Positions this client reported to the server, newest last, so a setback's target identifies the rejected move.
+    private record Reported(long tick, Vec3 position, boolean teleport, double horizontalBoost, double verticalBoost) {}
+    private static final int REPORTED_HISTORY = 40;
+    private final ArrayDeque<Reported> reported = new ArrayDeque<>();
     private final ElytraBoostDelay boostDelay = new ElytraBoostDelay();
     private static final long SETBACK_LOG_BYTES = 4L * 1024 * 1024;
     private PacketCaptureLog setbackLog;
@@ -310,6 +327,7 @@ public final class AdaptiveElytraFly extends Module {
         ElytraFly fly = Modules.get().get(ElytraFly.class);
         engine.startTick(engineSettings(fly));
         clientTicks++;
+        if (pinnedTicks > 0) pinnedTicks--;
         updateBoostKey();
         playerId = mc.player == null ? Integer.MIN_VALUE : mc.player.getId();
         floorChunkChecks = collisionChecks = 0;
@@ -326,7 +344,10 @@ public final class AdaptiveElytraFly extends Module {
     @EventHandler private void onPostTick(TickEvent.Post event) {
         LocalPlayer p = mc.player;
         smartLandingSwap(Modules.get().get(ElytraFly.class));
-        if (controlling && p != null) lastControlledPosition = p.position();
+        if (controlling && p != null) {
+            lastControlledPosition = p.position();
+            if (p.isFallFlying()) recordReported((LocalPlayerAccessor) p);
+        }
         if (serverGlide == null || p == null || mc.level == null || !p.isFallFlying()) return;
         ServerGlide.Tick tick = ServerGlide.tick(glideContext(p, sentRotation ? sentPitch : p.getXRot(),
             sentRotation ? sentYaw : p.getYRot()), p.getBoundingBox());
@@ -443,6 +464,15 @@ public final class AdaptiveElytraFly extends Module {
         checkBlocks = avoidBlocks.get() || fly.noCrash.get();
         observeBoostDelay();
         consumeCorrections();
+        if (pinnedTicks > 0) {
+            // Minecraft's own glide, which a server always accepts, until it stops pinning us in place.
+            engine.suspend();
+            controlling = true;
+            state = "Unpinning";
+            lastControlledPosition = mc.player.position();
+            updateStatus();
+            return true;
+        }
         // Keep close-object contact under our control: yielding to stock here
         // would invoke Meteor's unconditional No Crash and trap tight-space movement.
         boolean sprint = boostKeyMode.get() == BoostKeyMode.Toggle ? boostToggled : sprintKeyDown();
@@ -518,16 +548,76 @@ public final class AdaptiveElytraFly extends Module {
                 mc.player.getDeltaMovement(), mc.player.getYRot(), mc.player.getXRot()),
                 packet.change(), packet.relatives()).position();
         boolean teleport = lastControlledPosition == null || target.distanceToSqr(lastControlledPosition) > 64 * 64;
-        logSetback(count, target, teleport);
+        // A second setback straight back to where the last one put us: every move from there is being rejected.
+        boolean pinned = !teleport && lastSetbackTarget != null && clientTicks - lastSetbackTick <= PINNED_WINDOW_TICKS
+            && target.distanceToSqr(lastSetbackTarget) < .01;
+        lastSetbackTarget = teleport ? null : target;
+        lastSetbackTick = clientTicks;
+        logSetback(count, target, teleport, pinned);
         engine.setback(teleport);
+        if (pinned && pinnedGlideTicks.get() > 0) {
+            if (pinnedTicks == 0) pinnedEpisodes++;
+            pinnedTicks = pinnedGlideTicks.get();
+            engine.suspend();
+        }
+        remember(new Reported(clientTicks, target, true, 0, 0));
         setbacks = (int) Math.min(Integer.MAX_VALUE, (long) setbacks + count);
         movementTick = Integer.MIN_VALUE;
         samplePosition = null;
         measuredSpeed = 0;
     }
 
+    /** The position vanilla last reported, once per tick, with the boost that produced it. */
+    private void recordReported(LocalPlayerAccessor sent) {
+        Vec3 position = new Vec3(sent.comet$xLast(), sent.comet$yLast(), sent.comet$zLast());
+        Reported last = reported.peekLast();
+        if (last != null && last.position().distanceToSqr(position) < 1e-12) return;
+        remember(new Reported(clientTicks, position, false, engine.horizontalBoost(), engine.verticalBoost()));
+    }
+
+    private void remember(Reported move) {
+        reported.addLast(move);
+        while (reported.size() > REPORTED_HISTORY) reported.removeFirst();
+    }
+
+    /**
+     * The move the server rejected: the one reported right after the position it set us back to. Its speed, how much
+     * velocity changed from the move before and how sharply it turned show what the server objects to.
+     */
+    private void describeRejectedMove(JsonObject record, Vec3 target) {
+        Reported[] moves = reported.toArray(new Reported[0]);
+        int accepted = -1;
+        for (int i = moves.length - 1; i >= 0; i--) {
+            if (moves[i].position().distanceToSqr(target) < 1e-4) {
+                accepted = i;
+                break;
+            }
+        }
+        boolean found = accepted >= 0 && accepted + 1 < moves.length;
+        record.addProperty("rejectedMoveFound", found);
+        if (!found) return;
+        Reported from = moves[accepted], rejected = moves[accepted + 1];
+        Vec3 velocity = rejected.position().subtract(from.position()).scale(1.0 / Math.max(1, rejected.tick() - from.tick()));
+        record.addProperty("rejectedSpeed", velocity.length() * 20);
+        record.addProperty("rejectedHorizontalSpeed", velocity.horizontalDistance() * 20);
+        record.addProperty("rejectedVerticalSpeed", velocity.y * 20);
+        record.addProperty("rejectedHorizontalBoost", rejected.horizontalBoost() * 20);
+        record.addProperty("rejectedVerticalBoost", rejected.verticalBoost() * 20);
+        record.addProperty("rejectedAfterSetback", from.teleport());
+        record.addProperty("rejectedTicksAgo", clientTicks - rejected.tick());
+        if (accepted == 0 || from.teleport()) return;
+        Reported before = moves[accepted - 1];
+        Vec3 previous = from.position().subtract(before.position()).scale(1.0 / Math.max(1, from.tick() - before.tick()));
+        record.addProperty("previousSpeed", previous.length() * 20);
+        record.addProperty("velocityChange", velocity.subtract(previous).length() * 20);
+        double h0 = previous.horizontalDistance(), h1 = velocity.horizontalDistance();
+        double turn = h0 < 1e-6 || h1 < 1e-6 ? 0 : Math.toDegrees(Math.acos(Math.max(-1, Math.min(1,
+            (previous.x * velocity.x + previous.z * velocity.z) / (h0 * h1)))));
+        record.addProperty("turnDegrees", turn);
+    }
+
     /** One record per setback, before it rewinds the ramps; the log opens with the session's first setback. */
-    private void logSetback(int count, Vec3 target, boolean teleport) {
+    private void logSetback(int count, Vec3 target, boolean teleport, boolean pinned) {
         if (!logSetbacks.get()) {
             closeSetbackLog();
             return;
@@ -569,6 +659,9 @@ public final class AdaptiveElytraFly extends Module {
         record.addProperty("overdrive", overdrive.get());
         record.addProperty("splitMoves", splitMoves.get());
         record.addProperty("boostTop", boostTop() * 20);
+        record.addProperty("pinned", pinned);
+        record.addProperty("setbackHold", boostSetbackHold.get());
+        describeRejectedMove(record, target);
         setbackLog.append(record);
     }
 
@@ -618,6 +711,10 @@ public final class AdaptiveElytraFly extends Module {
         lastControlledPosition = null;
         sampleTime = 0;
         setbacks = diagnosticSetbackBase = 0;
+        lastSetbackTarget = null;
+        pinnedTicks = 0;
+        pinnedEpisodes = 0;
+        reported.clear();
         state = "Waiting for flight";
         updateStatus();
     }
@@ -628,7 +725,8 @@ public final class AdaptiveElytraFly extends Module {
             cruiseMaximum.get(), sprintMaximum.get(), verticalMaxSpeed.get(), verticalCruiseMaximum.get(),
             verticalSprintMaximum.get(), verticalAcceleration.get(), verticalRampStep.get(),
             boostVisible(), boostTop(), boostStartSpeed.get(), boostRampStep.get(),
-            boostVerticalStartSpeed.get(), boostRewindTicks.get(), serverMoveLimit(), lookahead.get(), margin.get(),
+            boostVerticalStartSpeed.get(), boostRewindTicks.get(), boostSetbackHold.get(), serverMoveLimit(),
+            lookahead.get(), margin.get(),
             safeManeuvering.get(), closeObjectSpeed.get(),
             fly == null ? 0 : fly.horizontalSpeed.get(), fly == null ? 0 : fly.verticalSpeed.get(),
             fly == null ? 0 : fly.fallMultiplier.get());
@@ -775,6 +873,7 @@ public final class AdaptiveElytraFly extends Module {
         }
         if (boostLabel != null) boostLabel.set(boostLine());
         if (countsLabel != null) countsLabel.set("Setbacks " + (setbacks - diagnosticSetbackBase)
+            + " | unpinned " + pinnedEpisodes
             + " | chunk-limited ticks " + chunkLimitedTicks + " | obstacle-limited ticks " + obstacleLimitedTicks
             + (setbackLog == null ? "" : " | logging to " + setbackLog.path().getFileName()));
         if (glideLabel != null) glideLabel.set(String.format(Locale.ROOT,

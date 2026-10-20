@@ -5,10 +5,11 @@ import java.util.Objects;
 /**
  * VolytraFly's unlimited-boost speed ramp for one axis, in blocks per client tick. Speed starts at
  * {@code start}, gains {@code step·(maximum − speed)/maximum} per tick and survives a setback by rewinding a
- * few ticks of that curve rather than restarting.
+ * few ticks of that curve rather than restarting, then holding that speed for {@code holdTicks} before
+ * accelerating again (VolytraFly's acceleration delay: without it a server can pin you with setbacks).
  */
 public final class BoostRamp {
-    public record Settings(double start, double maximum, double step, int rewindTicks) {
+    public record Settings(double start, double maximum, double step, int rewindTicks, int holdTicks) {
         public Settings {
             if (!Double.isFinite(start) || start < 0 || !Double.isFinite(maximum) || maximum < 0) {
                 throw new IllegalArgumentException("Boost speeds must be finite and nonnegative.");
@@ -17,12 +18,14 @@ public final class BoostRamp {
                 throw new IllegalArgumentException("Boost ramp step must be finite and positive.");
             }
             if (rewindTicks < 0) throw new IllegalArgumentException("Rewind ticks cannot be negative.");
+            if (holdTicks < 0) throw new IllegalArgumentException("Hold ticks cannot be negative.");
         }
     }
 
     private Settings settings;
     private boolean engaged;
     private double speed;
+    private int hold;
 
     public BoostRamp(Settings settings) {
         configure(settings);
@@ -37,12 +40,17 @@ public final class BoostRamp {
     /** Starts boosting from the current speed on this axis, never below the start speed. */
     public void engage(double currentSpeed) {
         engaged = true;
+        hold = 0;
         speed = Math.min(Math.max(floor(), Finite.clamp(currentSpeed, 0, Double.MAX_VALUE, 0)), ceiling());
     }
 
-    /** One tick along the curve. */
+    /** One tick along the curve, unless a recent setback is still holding the speed. */
     public void advance() {
         if (!engaged) return;
+        if (hold > 0) {
+            hold--;
+            return;
+        }
         speed = next(speed, settings.step(), settings.maximum(), ceiling());
     }
 
@@ -54,14 +62,20 @@ public final class BoostRamp {
 
     public void disengage() { engaged = false; }
 
-    /** A server setback while boosting: rewind {@code rewindTicks} of the curve instead of restarting it. */
+    /**
+     * A server setback while boosting: rewind {@code rewindTicks} of the curve instead of restarting it, then
+     * hold that speed for {@code holdTicks} before accelerating.
+     */
     public void corrected() {
-        if (engaged) speed = rewind(speed, settings.step(), settings.maximum(), floor(), settings.rewindTicks());
+        if (!engaged) return;
+        speed = rewind(speed, settings.step(), settings.maximum(), floor(), settings.rewindTicks());
+        hold = settings.holdTicks();
     }
 
     public void reset() {
         engaged = false;
         speed = 0;
+        hold = 0;
     }
 
     public boolean engaged() { return engaged; }

@@ -18,14 +18,15 @@ public final class AdaptiveFlightEngine {
      * The module's settings, with percentages as shown in its settings screen, and Meteor Elytra Fly's stock
      * speeds, which only enable an axis (zero disables it) and size the passive sink. {@code unlimitedBoost} is
      * Sprint boost with unlimited boost on; {@code boostTop} is the horizontal ramp's top speed and
-     * {@code boostCeiling} the total 3D speed boost may never exceed (see {@link ServerMoveLimit}).
+     * {@code boostCeiling} the total 3D speed boost may never exceed (see {@link ServerMoveLimit}). After a setback
+     * both ramps hold their rewound speed for {@code setbackHoldTicks} before accelerating.
      */
     public record Settings(double acceleration, double braking, double turnRate,
                            double cruise, double sprint,
                            double verticalMaximum, double verticalCruise, double verticalSprint,
                            double verticalAcceleration, double verticalRampStep,
                            boolean unlimitedBoost, double boostTop, double boostStart, double boostRampStep,
-                           double boostVerticalStart, int rewindTicks, double boostCeiling,
+                           double boostVerticalStart, int rewindTicks, int setbackHoldTicks, double boostCeiling,
                            int lookahead, double margin, boolean safeManeuvering, double closeObjectSpeed,
                            double stockHorizontalSpeed, double stockVerticalSpeed, double fallMultiplier) {}
 
@@ -45,8 +46,8 @@ public final class AdaptiveFlightEngine {
 
     private Settings settings;
     private final AdaptiveFlightController controller;
-    private final BoostRamp horizontalRamp = new BoostRamp(new BoostRamp.Settings(0, 0, 1, 0));
-    private final BoostRamp verticalRamp = new BoostRamp(new BoostRamp.Settings(0, 0, 1, 0));
+    private final BoostRamp horizontalRamp = new BoostRamp(new BoostRamp.Settings(0, 0, 1, 0, 0));
+    private final BoostRamp verticalRamp = new BoostRamp(new BoostRamp.Settings(0, 0, 1, 0, 0));
     private int verticalBoostDirection;
     private boolean sprintKey, boostActive, maneuvering, nearObject, closeObjectOverride;
     private boolean releaseSafeCollisions, contactResolved;
@@ -159,8 +160,8 @@ public final class AdaptiveFlightEngine {
     }
 
     /**
-     * A server position correction. A setback keeps momentum and rewinds each boost ramp by its rewind ticks,
-     * as VolytraFly does; a teleport elsewhere (such as a command) stops the flight.
+     * A server position correction. A setback keeps momentum, rewinds each boost ramp by its rewind ticks and holds
+     * it there briefly, as VolytraFly does; a teleport elsewhere (such as a command) stops the flight.
      */
     public void setback(boolean teleport) {
         if (teleport) {
@@ -259,10 +260,10 @@ public final class AdaptiveFlightEngine {
         double horizontalMaximum = s.boostTop() * s.sprint() / 100;
         double verticalMaximum = s.verticalMaximum() * s.verticalSprint() / 100;
         horizontalRamp.configure(new BoostRamp.Settings(Math.min(s.boostStart(), horizontalMaximum),
-            horizontalMaximum, s.boostRampStep(), s.rewindTicks()));
+            horizontalMaximum, s.boostRampStep(), s.rewindTicks(), s.setbackHoldTicks()));
         // The ramp needs a positive step; with vertical-ramp-step at zero, vertical boost holds its start speed.
         verticalRamp.configure(new BoostRamp.Settings(Math.min(s.boostVerticalStart(), verticalMaximum),
-            verticalMaximum, Math.max(1e-6, s.verticalRampStep()), s.rewindTicks()));
+            verticalMaximum, Math.max(1e-6, s.verticalRampStep()), s.rewindTicks(), s.setbackHoldTicks()));
     }
 
     private static AdaptiveFlightController.Settings controllerSettings(Settings s) {

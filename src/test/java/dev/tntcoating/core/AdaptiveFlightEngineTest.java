@@ -54,6 +54,19 @@ class AdaptiveFlightEngineTest {
         assertEquals(top, engine.horizontalBoost(), .01, "and it climbs straight back once they stop");
     }
 
+    @Test void theMoveAfterASetbackNeverAcceleratesAndTheRampHoldsBeforeClimbing() {
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(DEFAULTS);
+        for (int tick = 0; tick < 30; tick++) fly(engine, true);
+        double before = engine.output().horizontalLength();
+        engine.setback(false);
+        double rewound = engine.horizontalBoost();
+        Motion first = fly(engine, true);
+        assertEquals(rewound, engine.horizontalBoost(), EPSILON, "the ramp holds for boost-setback-hold");
+        assertTrue(first.horizontalLength() < before, "the first move after a setback slows instead of accelerating");
+        fly(engine, true);
+        assertTrue(engine.horizontalBoost() > rewound, "then the ramp climbs again");
+    }
+
     @Test void aHardServerLimitSettlesBoostJustBelowItWithoutAnyLearnedCap() {
         double limit = 12; // 240 b/s, below the 300 b/s ramp maximum
         AdaptiveFlightEngine engine = new AdaptiveFlightEngine(DEFAULTS);
@@ -139,7 +152,7 @@ class AdaptiveFlightEngineTest {
         return new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(), d.turnRate(), d.cruise(), d.sprint(),
             d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(), d.verticalAcceleration(), d.verticalRampStep(),
             d.unlimitedBoost(), top, d.boostStart(), d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(),
-            ceiling, d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(),
+            d.setbackHoldTicks(), ceiling, d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(),
             d.stockHorizontalSpeed(), d.stockVerticalSpeed(), d.fallMultiplier());
     }
 
