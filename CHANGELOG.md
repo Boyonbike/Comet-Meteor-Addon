@@ -1,11 +1,5 @@
 # Changelog
 
-## 0.24.2
-
-- **Adaptive Elytra Fly speeds in blocks per second:** **boost-max-bps** (300), **boost-start-bps** (60), **boost-vertical-start-bps** (30), **vertical-max-bps** (60) and **close-object-bps** (12) replace the blocks-per-tick settings. They are new settings, so re-enter any value you had changed. **boost-max-bps** now caps total speed, horizontal and vertical combined, so climbing or diving while boosting no longer takes you past it.
-- **6b6t's limit found:** 0.24.1 setback logs showed no rejected move between 80 and 200 b/s and many above it, including every climb-while-boosting setback (200 b/s horizontal plus a 55 b/s climb). That is Paper's rule: when two or more packets reach the server in one tick, each may cover only 10 blocks. Set **boost-max-bps** to **200** to fly without rubber-banding.
-- **split-moves fix:** after a server correction, vanilla's last reported position is from before it, and split-moves reported a halfway point between the two, a position the server never had, causing setback storms at 60 b/s. It now only splits a tick whose movement matches the last report, and its limit follows Paper's allowance for two bunched ticks: 390 b/s with overdrive (was 480).
-
 ## 0.24.1
 
 - **Adaptive Elytra Fly setback storms:** the first in-game setback logs showed most setbacks arriving in storms, one every round trip (about 3 ticks at 130 ms ping) with you pulled back to the identical spot each time, for up to 11 seconds and 40 seconds in 11 minutes of flight, with fly-into-unloaded-chunks on or off and while climbing and turning. Boost now holds its rewound speed for **boost-setback-hold** (default 1) tick after every setback before accelerating, VolytraFly's tested acceleration delay "to avoid getting stuck". When two setbacks in a row still land on the same spot, **pinned-glide-ticks** (default 10) hands movement to Minecraft's own elytra glide for half a second, then boosts again from the start speed. Flight Diagnostics counts these as **unpinned**.
