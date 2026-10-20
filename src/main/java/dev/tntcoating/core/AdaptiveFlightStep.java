@@ -177,8 +177,7 @@ public final class AdaptiveFlightStep {
         double horizontal = blended.horizontalLength();
         double horizontalHardCeiling = boostHorizontal ? boost.horizontal()
             : !horizontalEnabled || fraction == 0 ? 0 : horizonMaximum;
-        // Momentum above a lowered ceiling (boost released, a setback's rewind, the manoeuvre cap) brakes down to it.
-        if (boostHorizontal || horizontalEnabled && fraction > 0)
+        if (!boostHorizontal && horizontalEnabled && fraction > 0)
             horizontalHardCeiling = decaying(horizontalHardCeiling, horizontal, previous.horizontalLength());
         double horizontalFactor = horizontal > horizontalHardCeiling ? horizontalHardCeiling / horizontal : 1;
 

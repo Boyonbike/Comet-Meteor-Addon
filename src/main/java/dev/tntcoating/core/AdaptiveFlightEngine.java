@@ -13,20 +13,13 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class AdaptiveFlightEngine {
     private static final double EPSILON = 1e-7;
-    /** A view turn at least this sharp in one tick, in degrees, counts as manoeuvring. */
-    static final double MANEUVER_TURN_DEGREES = 4;
-    /** Vertical momentum above this, in blocks per tick, counts as climbing or diving. */
-    static final double MANEUVER_VERTICAL_SPEED = .5;
-    /** The manoeuvre cap stays for this many ticks after the last turn or climb, so it does not flicker. */
-    static final int MANEUVER_HOLD_TICKS = 10;
 
     /**
      * The module's settings, with percentages as shown in its settings screen, and Meteor Elytra Fly's stock
      * speeds, which only enable an axis (zero disables it) and size the passive sink. {@code unlimitedBoost} is
      * Sprint boost with unlimited boost on; {@code boostTop} is the horizontal ramp's top speed and
      * {@code boostCeiling} the total 3D speed boost may never exceed (see {@link ServerMoveLimit}). After a setback
-     * both ramps hold their rewound speed for {@code setbackHoldTicks} before accelerating. While climbing, diving or
-     * turning sharply, boost brakes down to a total of {@code maneuverCeiling} (positive infinity disables it).
+     * both ramps hold their rewound speed for {@code setbackHoldTicks} before accelerating.
      */
     public record Settings(double acceleration, double braking, double turnRate,
                            double cruise, double sprint,
@@ -34,7 +27,6 @@ public final class AdaptiveFlightEngine {
                            double verticalAcceleration, double verticalRampStep,
                            boolean unlimitedBoost, double boostTop, double boostStart, double boostRampStep,
                            double boostVerticalStart, int rewindTicks, int setbackHoldTicks, double boostCeiling,
-                           double maneuverCeiling,
                            int lookahead, double margin, boolean safeManeuvering, double closeObjectSpeed,
                            double stockHorizontalSpeed, double stockVerticalSpeed, double fallMultiplier) {}
 
@@ -62,9 +54,6 @@ public final class AdaptiveFlightEngine {
     private double releaseSpeed, adaptiveMaximum;
     private AdaptiveFlightStep.Result lastStep;
     private int chunkChecks;
-    private float lastYaw;
-    private boolean seenYaw;
-    private int maneuverTicks;
 
     public AdaptiveFlightEngine(Settings settings) {
         this.settings = Objects.requireNonNull(settings, "settings");
@@ -117,7 +106,6 @@ public final class AdaptiveFlightEngine {
         boolean sprinting = sprintKey || closeObjectOverride;
         int verticalInput = Finite.clamp(s.stockVerticalSpeed(), 0, 64, 0) == 0 ? 0
             : input.jump() ? 1 : input.sneak() ? -1 : 0;
-        trackManeuver(input.yaw(), verticalInput);
         AdaptiveFlightStep.Boost boost = updateBoost(requested, verticalInput);
         // Only a deliberate descent is worth a floor scan; Meteor's small fall-multiplier glide lands harmlessly.
         boolean descending = requested.y() < -.05 || controller.output().y() < -.05;
@@ -173,8 +161,7 @@ public final class AdaptiveFlightEngine {
 
     /**
      * A server position correction. A setback keeps momentum, rewinds each boost ramp by its rewind ticks and holds
-     * it there briefly, as VolytraFly does; a teleport elsewhere (such as a command) stops the flight. Boosted
-     * horizontal momentum drops to the rewound ramp at once, so the next move is the slower one the rewind chose.
+     * it there briefly, as VolytraFly does; a teleport elsewhere (such as a command) stops the flight.
      */
     public void setback(boolean teleport) {
         if (teleport) {
@@ -187,14 +174,6 @@ public final class AdaptiveFlightEngine {
         }
         horizontalRamp.corrected();
         verticalRamp.corrected();
-        // Boosted speed above a lowered ramp brakes down to it gradually (for the manoeuvre cap). After a setback
-        // that would repeat nearly the rejected speed from the corrected spot, set back again and pin the flight.
-        Motion output = controller.output();
-        double horizontal = output.horizontalLength();
-        if (horizontalRamp.engaged() && horizontal > horizontalRamp.speed()) {
-            double scale = horizontalRamp.speed() / horizontal;
-            controller.accept(new Motion(output.x() * scale, output.y(), output.z() * scale));
-        }
     }
 
     /** Stock flight takes over: stop controlled movement and release both ramps. */
@@ -206,8 +185,6 @@ public final class AdaptiveFlightEngine {
         boostActive = false;
         maneuvering = nearObject = closeObjectOverride = false;
         adaptiveMaximum = 0;
-        seenYaw = false;
-        maneuverTicks = 0;
     }
 
     public void reset() {
@@ -220,8 +197,6 @@ public final class AdaptiveFlightEngine {
         adaptiveMaximum = 0;
         lastStep = null;
         chunkChecks = 0;
-        seenYaw = false;
-        maneuverTicks = 0;
     }
 
     public Motion output() { return controller.output(); }
@@ -234,10 +209,6 @@ public final class AdaptiveFlightEngine {
     public double verticalBoostCeiling() { return verticalRamp.ceiling(); }
     public double adaptiveMaximum() { return adaptiveMaximum; }
     public boolean maneuvering() { return maneuvering; }
-    /** Boost is being held to the manoeuvre cap: climbing, diving or turning sharply in the last half second. */
-    public boolean maneuverCapped() {
-        return boostActive && maneuverTicks > 0 && Double.isFinite(settings.maneuverCeiling());
-    }
     public boolean nearObject() { return nearObject; }
     public boolean closeObjectOverride() { return closeObjectOverride; }
     public boolean contactResolved() { return contactResolved; }
@@ -262,28 +233,8 @@ public final class AdaptiveFlightEngine {
             verticalBoostDirection = 0;
         }
         boostActive = horizontalRamp.speed() > 0 || verticalRamp.speed() > 0;
-        if (boostActive && maneuverTicks > 0 && Double.isFinite(settings.maneuverCeiling())) {
-            // The server counts total speed: keep the climb and take what it costs from horizontal speed. Lowering
-            // the ramp itself makes this a braking target, so boost slows over a few ticks instead of snapping, and
-            // climbs back along its curve afterwards as it does after a collision.
-            double ceiling = Math.min(settings.boostCeiling(), settings.maneuverCeiling());
-            double vertical = Math.min(ceiling, verticalRamp.speed() > 0 ? verticalRamp.speed() : Math.abs(previous.y()));
-            verticalRamp.limitTo(ceiling);
-            horizontalRamp.limitTo(Math.sqrt(ceiling * ceiling - vertical * vertical));
-        }
         return boostActive ? new AdaptiveFlightStep.Boost(horizontalRamp.speed(), verticalRamp.speed(),
             settings.boostCeiling()) : null;
-    }
-
-    /** Climbing, diving or a sharp turn starts (or extends) the manoeuvre cap. */
-    private void trackManeuver(float yaw, int verticalInput) {
-        boolean turning = seenYaw && Math.abs(Math.IEEEremainder(yaw - lastYaw, 360)) >= MANEUVER_TURN_DEGREES;
-        lastYaw = yaw;
-        seenYaw = true;
-        boolean vertical = verticalInput != 0 || Math.abs(controller.output().y()) > MANEUVER_VERTICAL_SPEED;
-        // Counts the triggering tick too, so the cap lasts MANEUVER_HOLD_TICKS ticks after the last turn or climb.
-        if (turning || vertical) maneuverTicks = MANEUVER_HOLD_TICKS + 1;
-        else if (maneuverTicks > 0) maneuverTicks--;
     }
 
     /** Meteor Vanilla's requested movement from the keys, with its fall-multiplier sink. */

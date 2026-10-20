@@ -12,8 +12,6 @@ import net.minecraft.world.phys.Vec3;
 final class EngineFeelDriver implements FlightFeelScenarios.Driver {
     private static final Vec3 DOWN = new Vec3(0, -1, 0);
     private static final double FLOOR_SCAN = 32;
-    /** The module default: 200 b/s total while climbing, diving or turning sharply. */
-    static final double MANEUVER_CEILING = 10;
 
     private Profile profile;
     private AdaptiveFlightEngine engine;
@@ -22,8 +20,7 @@ final class EngineFeelDriver implements FlightFeelScenarios.Driver {
         return new AdaptiveFlightEngine.Settings(p.acceleration(), p.braking(), p.turnRate(), p.cruise(), p.sprint(),
             p.verticalMax(), p.verticalCruise(), p.verticalSprint(), p.verticalAcceleration(), p.verticalRampStep(),
             p.unlimitedBoost(), p.boostMax(), p.boostStart(), p.boostRampStep(), p.boostVerticalStart(),
-            p.rewindTicks(), 1, Math.min(ServerMoveLimit.SINGLE, p.boostMax() * p.sprint() / 100), MANEUVER_CEILING,
-            p.lookahead(), p.margin(), p.safeManeuvering(), p.closeObjectSpeed(),
+            p.rewindTicks(), 1, ServerMoveLimit.SINGLE, p.lookahead(), p.margin(), p.safeManeuvering(), p.closeObjectSpeed(),
             p.flyHorizontalSpeed(), p.flyVerticalSpeed(), p.fallMultiplier());
     }
 
