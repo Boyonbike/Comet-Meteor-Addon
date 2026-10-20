@@ -9,7 +9,7 @@ public final class FlightFeelRecorder {
     private FlightFeelRecorder() {}
 
     public static void main(String[] args) throws Exception {
-        FlightFeelScenarios.record(new LegacyFeelDriver());
+        FlightFeelScenarios.record(new EngineFeelDriver());
         System.out.println("Recorded flight feel into " + FlightFeelScenarios.GOLDEN_DIRECTORY.toAbsolutePath());
     }
 }

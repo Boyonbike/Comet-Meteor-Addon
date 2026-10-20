@@ -10,14 +10,12 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 /** Live overview of Adaptive Elytra Fly's engine; hidden while that engine is not running. */
 public final class EngineHud extends HudElement {
     public static final HudElementInfo<EngineHud> ADAPTIVE_ELYTRA_FLY = new HudElementInfo<>(CometHud.GROUP,
-        "adaptive-elytra-fly-engine", "Adaptive Elytra Fly's state, output, learned limits, correction recovery and the simulated server glide.",
+        "adaptive-elytra-fly-engine", "Adaptive Elytra Fly's state, output, boost, setbacks and the simulated server glide.",
         EngineHud::new);
 
     private static final String TITLE = "Adaptive Elytra Fly";
     private static final List<String> PREVIEW = List.of("State: Flying", "Speed: 41.0 b/s | H 41.2 | V +0.0",
-        "Engine max: 118.0 b/s | recovery 100%", "Boost: H 0/300 | V 0/60 b/s | setbacks 0",
-        "Learned: H 1280.0 | up 60.0 | down 60.0 b/s", "Total movement max: 1280.0 b/s",
-        "Corrections: 0 | server glide 30.0 b/s");
+        "Engine max: 118.0 b/s", "Boost: H 0/300 | V 0/60 b/s", "Setbacks: 0 | server glide 30.0 b/s");
 
     private final PanelStyle style = new PanelStyle(settings);
 

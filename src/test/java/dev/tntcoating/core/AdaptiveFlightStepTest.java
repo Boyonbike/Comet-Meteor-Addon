@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class AdaptiveFlightStepTest {
     private static final double EPSILON = 1e-10;
+    private static final AdaptiveFlightStep.Controls CRUISE = TestControls.of(false, 1, 0, false);
     private final AABB body = new AABB(.2, 65, .2, .8, 66.8, .8);
 
     @Test void releasingInputBrakesThroughTheProductionPipeline() {
@@ -23,7 +24,7 @@ class AdaptiveFlightStepTest {
         controller.accept(new Motion(2, 0, 0));
         Probe probe = new Probe();
 
-        var first = AdaptiveFlightStep.move(controller, Motion.ZERO, 3, 1, body, probe, 64, .35);
+        var first = AdaptiveFlightStep.move(controller, Motion.ZERO, 3, 1, body, probe, 64, .35, CRUISE);
         assertEquals(1.5, first.motion().x(), EPSILON);
         assertEquals(CLEAR, first.corridor().reason());
         assertEquals(32, probe.boxes.size(), "one complete corridor scan per moving step");
@@ -34,31 +35,11 @@ class AdaptiveFlightStepTest {
         AABB moved = moved(body, first.motion());
         for (double expected : new double[] {1, .5, 0}) {
             controller.tick();
-            var step = AdaptiveFlightStep.move(controller, Motion.ZERO, 3, 1, moved, probe, 64, .35);
+            var step = AdaptiveFlightStep.move(controller, Motion.ZERO, 3, 1, moved, probe, 64, .35, CRUISE);
             assertEquals(expected, step.motion().x(), EPSILON);
             moved = moved(moved, step.motion());
             if (expected == 0) assertNull(step.corridor());
         }
-    }
-
-    @Test void loweringStockLandingSpeedsImposesBothAxisCeilingsImmediately() {
-        AdaptiveFlightController controller = controller(.25, .5);
-        controller.accept(new Motion(3, 4, 0));
-        Probe probe = new Probe();
-
-        var slowed = AdaptiveFlightStep.move(controller, new Motion(.2, .05, 0),
-            .2, .05, body, probe, 64, .1);
-        assertTrue(slowed.motion().horizontalLength() <= .2 + EPSILON);
-        assertTrue(Math.abs(slowed.motion().y()) <= .05 + EPSILON);
-        assertEquals(slowed.motion(), controller.output());
-        assertTrue(slowed.motion().length() < .21);
-
-        int collisionCalls = probe.boxes.size();
-        var stopped = AdaptiveFlightStep.move(controller, Motion.ZERO, 0, 0, body, probe, 64, .1);
-        assertEquals(Motion.ZERO, stopped.motion());
-        assertNull(stopped.corridor());
-        assertEquals(collisionCalls, probe.boxes.size());
-        assertEquals(Motion.ZERO, controller.output());
     }
 
     @Test void acceleratesThenBrakesAtALoadedEdgeAcrossManyTicksWithoutCrossing() {
@@ -73,7 +54,7 @@ class AdaptiveFlightStepTest {
             controller.tick();
             int before = probe.boxes.size();
             var step = AdaptiveFlightStep.move(controller, new Motion(8, 0, 0),
-                8, 0, position, probe, 64, .25);
+                8, 0, position, probe, 64, .25, CRUISE);
             double speed = step.motion().length();
             peak = Math.max(peak, speed);
             decelerated |= speed + EPSILON < previous;
@@ -97,8 +78,10 @@ class AdaptiveFlightStepTest {
         Probe probe = new Probe();
         probe.obstacles.add(new AABB(3.5, 65, 1.25, 3.6, 67, 1.35));
 
+        // A percentage whose target is exactly the 2 blocks per tick requested.
         var step = AdaptiveFlightStep.move(controller, new Motion(0, 0, 2),
-            2, 0, body, probe, 64, .1);
+            2, 0, body, probe, 64, .1,
+            TestControls.of(false, 2 / AdaptiveFlightStep.maximumSpeed(.5, 64, .1), 0, false));
         assertEquals(OBSTACLE, step.corridor().reason());
         double expectedX = 2 - .5 / Math.sqrt(2);
         double expectedZ = .5 / Math.sqrt(2);
@@ -114,30 +97,14 @@ class AdaptiveFlightStepTest {
         assertTrue(step.terrainLimited());
     }
 
-    @Test void correctionPausePerformsNoTerrainQueries() {
-        AdaptiveFlightController controller = controller(.25, .5);
-        controller.accept(new Motion(3, 0, 0));
-        controller.corrected(1);
-        Probe probe = new Probe();
-
-        for (int tick = 0; tick < 2; tick++) {
-            controller.tick();
-            var step = AdaptiveFlightStep.move(controller, new Motion(5, 0, 0),
-                5, 1, body, probe, 64, .35);
-            assertEquals(Motion.ZERO, step.motion());
-            assertNull(step.corridor());
-            assertFalse(step.lookaheadLimited());
-        }
-        assertTrue(probe.chunks.isEmpty());
-        assertTrue(probe.boxes.isEmpty());
-    }
-
     @Test void clearCappedHorizonStillImposesAnAbsoluteBrakingCeiling() {
         AdaptiveFlightController controller = controller(100, .3);
         Probe probe = new Probe();
 
+        // Even a boost request far beyond it is held to the braking envelope of the clear horizon.
         var step = AdaptiveFlightStep.move(controller, new Motion(64, 0, 0),
-            64, 0, body, probe, 1000, .35);
+            64, 0, body, probe, 1000, .35, new AdaptiveFlightStep.Controls(true, 1, 1, 0, false, null,
+                AdaptiveFlightStep.SAFE_MANEUVER_SPEED, TestControls.BLEND, new AdaptiveFlightStep.Boost(64, 0)));
         double clearance = FlightCorridor.MAX_DISTANCE - .35;
         double cap = Math.sqrt(.3 * .3 + 2 * .3 * clearance) - .3;
         assertEquals(CLEAR, step.corridor().reason());
@@ -156,7 +123,7 @@ class AdaptiveFlightStepTest {
         AABB negative = new AABB(-15.8, 65, -.8, -15.2, 66.8, -.2);
 
         var step = AdaptiveFlightStep.move(controller, new Motion(-5, 0, 0),
-            5, 0, negative, probe, 64, .05);
+            5, 0, negative, probe, 64, .05, CRUISE);
         assertEquals(CHUNKS, step.corridor().reason());
         assertTrue(probe.chunks.contains("-2,-1"));
         assertTrue(step.motion().x() < 0 && step.motion().x() > -.15);
@@ -172,7 +139,7 @@ class AdaptiveFlightStepTest {
         probe.obstacles.add(new AABB(-5, 64, -5, 100, 65, 100));
 
         var step = AdaptiveFlightStep.move(controller, new Motion(1, -.1, 0),
-            2, 1, body, probe, 8, .1);
+            2, 1, body, probe, 8, .1, CRUISE);
         assertEquals(CLEAR, step.corridor().reason());
         assertTrue(step.motion().y() < 0, "Minecraft must receive downward motion to resolve touchdown");
         assertTrue(moved(body, step.motion()).minY < 65);
@@ -181,7 +148,7 @@ class AdaptiveFlightStepTest {
         // A block extending above the current feet is still a real obstacle.
         probe.obstacles.add(new AABB(.2, 64, .2, 1.5, 65.2, .8));
         var blocked = AdaptiveFlightStep.move(controller, new Motion(1, -.1, 0),
-            2, 1, body, probe, 8, .1);
+            2, 1, body, probe, 8, .1, CRUISE);
         assertEquals(OBSTACLE, blocked.corridor().reason());
         assertEquals(Motion.ZERO, blocked.motion());
     }
@@ -192,7 +159,7 @@ class AdaptiveFlightStepTest {
         Probe probe = new Probe();
 
         var step = AdaptiveFlightStep.move(controller, new Motion(3, 0, 0),
-            3, 1, null, probe, 64, .1);
+            3, 1, null, probe, 64, .1, CRUISE);
         assertEquals(INVALID, step.corridor().reason());
         assertEquals(Motion.ZERO, step.motion());
         assertEquals(Motion.ZERO, controller.output());
@@ -201,7 +168,7 @@ class AdaptiveFlightStepTest {
     }
 
     private static AdaptiveFlightController controller(double acceleration, double braking) {
-        return new AdaptiveFlightController(new Settings(acceleration, braking, .5, 2, 3, .1));
+        return new AdaptiveFlightController(new Settings(acceleration, braking, 0));
     }
 
     private static AABB moved(AABB box, Motion motion) {

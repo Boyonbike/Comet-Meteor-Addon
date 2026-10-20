@@ -220,7 +220,7 @@ class ServerGlideTest {
         final World world;
         final boolean guard;
         final AdaptiveFlightController controller =
-            new AdaptiveFlightController(new Settings(.15, .3, .75, 5, 60, .0025, 15));
+            new AdaptiveFlightController(new Settings(.15, .3, 15));
         AABB box = BODY;
         Motion serverGlide;
         Motion lastMotion = Motion.ZERO;

@@ -12,7 +12,7 @@ class AdaptiveFlightControllerTest {
     private static final double UNLIMITED = Double.POSITIVE_INFINITY;
 
     private static AdaptiveFlightController controller() {
-        return new AdaptiveFlightController(new Settings(0.25, 0.5, 0.5, 2, 3, 0.1));
+        return new AdaptiveFlightController(new Settings(0.25, 0.5, 0));
     }
 
     @Test void limitsTheFullVectorWhenAcceleratingAndTurning() {
@@ -57,59 +57,6 @@ class AdaptiveFlightControllerTest {
         assertMotion(new Motion(1, 0, 0), controller.step(new Motion(1, 0, 0), UNLIMITED));
     }
 
-    @Test void correctionClearsMomentumPausesAndRecoversOnlyAfterTheDelay() {
-        AdaptiveFlightController controller = controller();
-        controller.accept(new Motion(3, 0, 0));
-        controller.corrected(1);
-        assertMotion(Motion.ZERO, controller.output());
-        assertEquals(0.5, controller.speedFactor(), EPSILON);
-        assertEquals(1, controller.correctionCount());
-        assertEquals(0, controller.ticksSinceCorrection());
-        assertEquals(2, controller.pauseTicksRemaining());
-        assertEquals(Status.PAUSED, controller.status());
-        assertMotion(Motion.ZERO, controller.step(new Motion(5, 0, 0), UNLIMITED));
-        controller.accept(new Motion(3, 0, 0));
-        assertMotion(Motion.ZERO, controller.output());
-
-        for (int tick = 0; tick < 2; tick++) {
-            controller.tick();
-            assertEquals(2 - tick, controller.pauseTicksRemaining());
-            assertMotion(Motion.ZERO, controller.step(new Motion(5, 0, 0), UNLIMITED));
-        }
-        controller.tick();
-        assertEquals(0, controller.pauseTicksRemaining());
-        assertEquals(Status.RECOVERING, controller.status());
-        assertEquals(0.5, controller.speedFactor(), EPSILON);
-        controller.tick();
-        assertEquals(0.6, controller.speedFactor(), EPSILON);
-
-        for (int i = 0; i < 10; i++) controller.tick();
-        assertEquals(1, controller.speedFactor(), EPSILON);
-        assertEquals(Status.READY, controller.status());
-    }
-
-    @Test void repeatedCorrectionsHaveBoundedBackoffAndSaturatingCounters() {
-        AdaptiveFlightController controller = controller();
-        controller.corrected(2);
-        assertEquals(0.25, controller.speedFactor(), EPSILON);
-        controller.corrected(Integer.MAX_VALUE);
-        controller.corrected(1);
-        assertEquals(AdaptiveFlightController.MIN_SPEED_FACTOR, controller.speedFactor(), EPSILON);
-        assertEquals(Integer.MAX_VALUE, controller.correctionCount());
-        controller.corrected(0);
-        assertEquals(2, controller.pauseTicksRemaining());
-        assertThrows(IllegalArgumentException.class, () -> controller.corrected(-1));
-    }
-
-    @Test void zeroPauseAndRecoveryCanBeConfigured() {
-        AdaptiveFlightController controller = new AdaptiveFlightController(new Settings(10, 10, 0.5, 0, 0, 0));
-        controller.corrected(1);
-        assertEquals(0, controller.pauseTicksRemaining());
-        assertMotion(new Motion(1, 0, 0), controller.step(new Motion(2, 0, 0), UNLIMITED));
-        for (int i = 0; i < 20; i++) controller.tick();
-        assertEquals(0.5, controller.speedFactor(), EPSILON);
-    }
-
     @Test void hardTerrainLimitOverridesMomentumImmediatelyAndClearsStoredSpeed() {
         AdaptiveFlightController controller = controller();
         controller.accept(new Motion(3, 4, 0));
@@ -129,19 +76,16 @@ class AdaptiveFlightControllerTest {
         assertMotion(new Motion(0.35, 0, 0), controller.step(new Motion(3, 0, 0), UNLIMITED));
     }
 
-    @Test void changingTuningPreservesBackoffAndResetClearsAllFlightState() {
+    @Test void changingTuningKeepsMomentumAndResetClearsAllFlightState() {
         AdaptiveFlightController controller = controller();
-        controller.corrected(2);
-        Settings updated = new Settings(0.1, 0.4, 0.8, 1, 5, 0.01);
+        controller.accept(new Motion(2, 0, 0));
+        Settings updated = new Settings(0.1, 0.4, 0);
         controller.configure(updated);
-        assertEquals(0.25, controller.speedFactor(), EPSILON);
-        assertEquals(2, controller.correctionCount());
+        assertMotion(new Motion(2, 0, 0), controller.output());
+        controller.accept(new Motion(1, 0, 0));
+        assertEquals(Status.TERRAIN_LIMITED, controller.status());
         controller.reset();
         assertSame(updated, controller.settings());
-        assertEquals(1, controller.speedFactor(), EPSILON);
-        assertEquals(0, controller.correctionCount());
-        assertEquals(0, controller.pauseTicksRemaining());
-        assertEquals(Integer.MAX_VALUE, controller.ticksSinceCorrection());
         assertEquals(Status.READY, controller.status());
         assertMotion(Motion.ZERO, controller.output());
         assertMotion(new Motion(0.1, 0, 0), controller.step(new Motion(1, 0, 0), UNLIMITED));
@@ -151,14 +95,13 @@ class AdaptiveFlightControllerTest {
         assertThrows(IllegalArgumentException.class, () -> new Motion(Double.NaN, 0, 0));
         assertThrows(IllegalArgumentException.class, () -> new Motion(0, Double.POSITIVE_INFINITY, 0));
         assertThrows(IllegalArgumentException.class, () -> new Motion(Double.MAX_VALUE, Double.MAX_VALUE, 0));
-        assertThrows(IllegalArgumentException.class, () -> new Settings(0, 1, 0.5, 1, 1, 0.1));
-        assertThrows(IllegalArgumentException.class, () -> new Settings(1, Double.NaN, 0.5, 1, 1, 0.1));
-        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, 0, 1, 1, 0.1));
-        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, 1.1, 1, 1, 0.1));
-        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, 0.5, -1, 1, 0.1));
-        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, 0.5, 1, -1, 0.1));
-        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, 0.5, 1, 1, Double.NaN));
-        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, 0.5, 1, 1, 1.1));
+        assertThrows(IllegalArgumentException.class, () -> new Settings(0, 1, 0));
+        assertThrows(IllegalArgumentException.class, () -> new Settings(1, Double.NaN, 0));
+        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 0, 0));
+        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, -1));
+        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, 91));
+        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, 0, -1, 0));
+        assertThrows(IllegalArgumentException.class, () -> new Settings(1, 1, 0, 10, Double.NaN));
 
         AdaptiveFlightController controller = controller();
         controller.accept(new Motion(1, 0, 0));
@@ -173,7 +116,7 @@ class AdaptiveFlightControllerTest {
 
     @Test void largeFiniteReversalDoesNotOverflowTheDifferenceVector() {
         AdaptiveFlightController controller = new AdaptiveFlightController(
-            new Settings(1e307, 1e307, 0.5, 0, 0, 0));
+            new Settings(1e307, 1e307, 0));
         controller.accept(new Motion(1e308, 0, 0));
         Motion output = controller.step(new Motion(-1e308, 0, 0), UNLIMITED);
         assertTrue(Double.isFinite(output.x()));

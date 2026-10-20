@@ -3,15 +3,14 @@ package dev.tntcoating.core;
 import java.util.Objects;
 
 /**
- * Tick-based flight momentum and correction recovery, independent of Minecraft.
+ * Tick-based flight momentum, independent of Minecraft: acceleration, braking and heading assistance.
  * Distances and acceleration are measured in blocks per client tick.
  */
 public final class AdaptiveFlightController {
-    public static final double MIN_SPEED_FACTOR = 0.1;
     /** Effective heading assistance never exceeds a right angle per tick. */
     public static final double MAX_TURN_RATE = 90;
 
-    public enum Status { READY, RECOVERING, PAUSED, TERRAIN_LIMITED }
+    public enum Status { READY, TERRAIN_LIMITED }
 
     public record Motion(double x, double y, double z) {
         public static final Motion ZERO = new Motion(0, 0, 0);
@@ -39,22 +38,13 @@ public final class AdaptiveFlightController {
     /**
      * {@code braking} is the gentlest braking. With a finite {@code brakingHorizon} and a {@code brakingTop} speed,
      * braking rises with speed so that a stop from that top speed fits the horizon; see {@link Braking}.
+     * Rates are degrees per tick; a zero turn rate retains momentum-based steering.
      */
-    public record Settings(double acceleration, double braking, double correctionMultiplier,
-                           int correctionPauseTicks, int recoveryDelayTicks, double recoveryPerTick,
-                           double turnRate, double brakingHorizon, double brakingTop) {
-        /** A zero turn rate retains the original momentum-based steering. Rates are degrees per tick. */
-        public Settings(double acceleration, double braking, double correctionMultiplier,
-                        int correctionPauseTicks, int recoveryDelayTicks, double recoveryPerTick) {
-            this(acceleration, braking, correctionMultiplier, correctionPauseTicks,
-                recoveryDelayTicks, recoveryPerTick, 0);
-        }
-
+    public record Settings(double acceleration, double braking, double turnRate,
+                           double brakingHorizon, double brakingTop) {
         /** Constant braking, as before speed-scaled braking existed. */
-        public Settings(double acceleration, double braking, double correctionMultiplier,
-                        int correctionPauseTicks, int recoveryDelayTicks, double recoveryPerTick, double turnRate) {
-            this(acceleration, braking, correctionMultiplier, correctionPauseTicks,
-                recoveryDelayTicks, recoveryPerTick, turnRate, Double.POSITIVE_INFINITY, 0);
+        public Settings(double acceleration, double braking, double turnRate) {
+            this(acceleration, braking, turnRate, Double.POSITIVE_INFINITY, 0);
         }
 
         public Settings {
@@ -63,16 +53,6 @@ public final class AdaptiveFlightController {
             }
             if (!Double.isFinite(braking) || braking <= 0) {
                 throw new IllegalArgumentException("Braking must be finite and positive.");
-            }
-            if (!Double.isFinite(correctionMultiplier)
-                || correctionMultiplier <= 0 || correctionMultiplier > 1) {
-                throw new IllegalArgumentException("Correction multiplier must be in (0, 1].");
-            }
-            if (correctionPauseTicks < 0 || recoveryDelayTicks < 0) {
-                throw new IllegalArgumentException("Recovery and pause ticks cannot be negative.");
-            }
-            if (!Double.isFinite(recoveryPerTick) || recoveryPerTick < 0 || recoveryPerTick > 1) {
-                throw new IllegalArgumentException("Recovery per tick must be in [0, 1].");
             }
             if (!Double.isFinite(turnRate) || turnRate < 0 || turnRate > 90) {
                 throw new IllegalArgumentException("Turn rate must be in [0, 90] degrees per tick.");
@@ -98,90 +78,28 @@ public final class AdaptiveFlightController {
 
     private Settings settings;
     private Motion output = Motion.ZERO;
-    private double speedFactor = 1;
-    private int correctionCount;
-    private int ticksSinceCorrection = Integer.MAX_VALUE;
-    private int futurePauseTicks;
-    private boolean pausedThisTick;
-    private boolean pauseStarted;
     private boolean terrainLimited;
     private boolean boosting;
-    private boolean transientRecovery;
 
     public AdaptiveFlightController(Settings settings) {
         configure(settings);
     }
 
-    /** Changes tuning without discarding momentum or an active correction backoff. */
+    /** Changes tuning without discarding momentum. */
     public void configure(Settings settings) {
         this.settings = Objects.requireNonNull(settings, "settings");
     }
 
     public void reset() {
         output = Motion.ZERO;
-        speedFactor = 1;
-        correctionCount = 0;
-        ticksSinceCorrection = Integer.MAX_VALUE;
-        futurePauseTicks = 0;
-        pausedThisTick = false;
-        pauseStarted = false;
         terrainLimited = false;
         boosting = false;
-        transientRecovery = false;
     }
 
-    /**
-     * Starts a client tick. A correction halts the rest of its current tick and
-     * the next configured number of complete ticks. Recovery never advances
-     * more than once per tick, regardless of how many movement events occur.
-     */
+    /** Starts a client tick, clearing the previous tick's status. */
     public void tick() {
         boosting = false;
-        pausedThisTick = futurePauseTicks > 0;
-        if (pausedThisTick) futurePauseTicks--;
-        pauseStarted = true;
         terrainLimited = false;
-        if (ticksSinceCorrection < Integer.MAX_VALUE) ticksSinceCorrection++;
-        int recoveryDelay = transientRecovery ? Math.min(settings.recoveryDelayTicks(), 20) : settings.recoveryDelayTicks();
-        double recoveryRate = transientRecovery ? Math.min(1, settings.recoveryPerTick() * 4) : settings.recoveryPerTick();
-        if (!pausedThisTick && correctionCount > 0 && ticksSinceCorrection > recoveryDelay) {
-            speedFactor = Math.min(1, speedFactor + recoveryRate);
-            if (speedFactor == 1) transientRecovery = false;
-        }
-    }
-
-    /** Records one or more server corrections without overflowing counters. */
-    public void corrected(int count) {
-        corrected(count, false);
-    }
-
-    /** A stall's correction burst shares one temporary backoff and recovers promptly after feedback settles. */
-    public void corrected(int count, boolean transientFeedback) {
-        if (count < 0) throw new IllegalArgumentException("Correction count cannot be negative.");
-        if (count == 0) return;
-        correctionCount = (int) Math.min(Integer.MAX_VALUE, (long) correctionCount + count);
-        if (transientFeedback) {
-            if (!transientRecovery)
-                speedFactor = Math.max(MIN_SPEED_FACTOR, speedFactor * settings.correctionMultiplier());
-            transientRecovery = speedFactor < 1;
-        } else {
-            transientRecovery = false;
-            speedFactor = Math.max(MIN_SPEED_FACTOR,
-                speedFactor * Math.pow(settings.correctionMultiplier(), count));
-        }
-        ticksSinceCorrection = 0;
-        futurePauseTicks = settings.correctionPauseTicks();
-        pausedThisTick = futurePauseTicks > 0;
-        pauseStarted = false;
-        output = Motion.ZERO;
-        terrainLimited = false;
-        boosting = false;
-    }
-
-    /** Counts corrections for diagnostics only: no backoff, pause or momentum loss. Unlimited boost owns its own recovery. */
-    public void recordCorrection(int count) {
-        if (count < 0) throw new IllegalArgumentException("Correction count cannot be negative.");
-        correctionCount = (int) Math.min(Integer.MAX_VALUE, (long) correctionCount + count);
     }
 
     /**
@@ -221,26 +139,17 @@ public final class AdaptiveFlightController {
             throw new IllegalArgumentException("Turn reference must be nonnegative or positive infinity.");
         }
         terrainLimited = false;
-        boosting = false;
-        if (pausedThisTick) {
-            output = Motion.ZERO;
-            return output;
-        }
-
-        // A ramped (unlimited boost) horizontal target is outside the correction ceiling; its ramp has its own recovery.
-        Motion target = rampedHorizontal ? new Motion(requested.x(), requested.y() * speedFactor, requested.z())
-            : requested.scaled(speedFactor);
-        boosting = sprintBoost && target.length() > 0;
-        boolean braking = target.length() < output.length() || oppositeDirection(output, target);
-        output = steer(output, target, braking ? settings.brakingAt(output.length()) : settings.acceleration(),
+        boosting = sprintBoost && requested.length() > 0;
+        boolean braking = requested.length() < output.length() || oppositeDirection(output, requested);
+        output = steer(output, requested, braking ? settings.brakingAt(output.length()) : settings.acceleration(),
             settings.turnRate(), settings.acceleration(), turnReference, rampedHorizontal);
-        double targetHorizontal = target.horizontalLength();
+        double targetHorizontal = requested.horizontalLength();
         double horizontal = output.horizontalLength();
         if (rampedHorizontal && !braking && targetHorizontal > 0 && horizontal > 0) {
             double scale = targetHorizontal / horizontal;
             output = new Motion(output.x() * scale, output.y(), output.z() * scale);
         } else if (rampedHorizontal && !braking && targetHorizontal > 0) {
-            output = new Motion(target.x(), output.y(), target.z());
+            output = new Motion(requested.x(), output.y(), requested.z());
         }
         double length = output.length();
         if (length > safeDistance) {
@@ -253,31 +162,16 @@ public final class AdaptiveFlightController {
     /** Remembers the actual motion after an external swept collision/chunk guard. */
     public void accept(Motion actual) {
         Objects.requireNonNull(actual, "actual");
-        if (pausedThisTick) {
-            output = Motion.ZERO;
-            boosting = false;
-            return;
-        }
         if (actual.length() < output.length()) terrainLimited = true;
         output = actual;
     }
 
     public Settings settings() { return settings; }
     public Motion output() { return output; }
-    public double speedFactor() { return speedFactor; }
-    public int correctionCount() { return correctionCount; }
-    public int ticksSinceCorrection() { return ticksSinceCorrection; }
     public boolean isBoosting() { return boosting; }
 
-    /** Includes the current tick while it is paused. */
-    public int pauseTicksRemaining() {
-        return futurePauseTicks + (pausedThisTick && pauseStarted ? 1 : 0);
-    }
-
     public Status status() {
-        if (pausedThisTick) return Status.PAUSED;
-        if (terrainLimited) return Status.TERRAIN_LIMITED;
-        return speedFactor < 1 ? Status.RECOVERING : Status.READY;
+        return terrainLimited ? Status.TERRAIN_LIMITED : Status.READY;
     }
 
     private static boolean oppositeDirection(Motion current, Motion target) {

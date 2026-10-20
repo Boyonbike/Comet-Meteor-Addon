@@ -2,7 +2,6 @@ package dev.tntcoating.core;
 
 import dev.tntcoating.core.AdaptiveFlightController.Motion;
 import dev.tntcoating.core.AdaptiveFlightController.Settings;
-import dev.tntcoating.core.AdaptiveFlightMemory.Limits;
 import dev.tntcoating.core.AdaptiveFlightStep.Blend;
 import dev.tntcoating.core.AdaptiveFlightStep.Boost;
 import dev.tntcoating.core.AdaptiveFlightStep.Controls;
@@ -16,8 +15,7 @@ class AdaptiveFlightBoostTest {
     private static final double EPSILON = 1e-9;
     private static final double UNLIMITED = Double.POSITIVE_INFINITY;
     private static final AABB BODY = new AABB(.2, 65, .2, .8, 66.8, .8);
-    private static final Limits OPEN = new Limits(64, 3, 3, .05);
-    private static final Blend BLEND = new Blend(3, .5, 1);
+    private static final Blend BLEND = new Blend(3, .05, .5);
     private static final double HORIZON = 64 - .35;
     private static final Braking MODEL = new Braking(.3, HORIZON, 15);
     private static final FlightCorridor.Probe CLEAR = new FlightCorridor.Probe() {
@@ -36,7 +34,7 @@ class AdaptiveFlightBoostTest {
         controller.accept(new Motion(.5, 0, 0));
         assertEquals(.5 - MODEL.capacity(.5), controller.step(Motion.ZERO, UNLIMITED).length(), EPSILON);
         assertEquals(.3, MODEL.capacity(.5), .003, "near cruise speed, braking is the configured comfort rate");
-        assertEquals(.3, new Settings(.15, .3, .75, 0, 60, .0025, 15).brakingAt(15), EPSILON,
+        assertEquals(.3, new Settings(.15, .3, 15).brakingAt(15), EPSILON,
             "without a horizon, braking stays constant");
     }
 
@@ -53,7 +51,7 @@ class AdaptiveFlightBoostTest {
         for (int tick = 0; tick < 100; tick++) {
             controller.tick();
             var step = AdaptiveFlightStep.move(controller, new Motion(1, 0, 0), 1, .5, body, probe, 64, .35,
-                boost(OPEN, new Boost(15, 0), 0));
+                boost(new Boost(15, 0), 0));
             body = body.move(step.motion().x(), step.motion().y(), step.motion().z());
             assertFalse(body.intersects(wall), "tick " + tick);
             hardest = Math.max(hardest, previous - step.motion().length());
@@ -105,26 +103,11 @@ class AdaptiveFlightBoostTest {
         assertEquals(-15, output.x(), EPSILON, "once turned around, boost resumes the ramp speed");
     }
 
-    @Test void boostCorrectionsAreCountedWithoutBackoffOrPause() {
+    @Test void boostIgnoresTheEngineMaximum() {
         AdaptiveFlightController controller = controller();
-        controller.accept(new Motion(15, 0, 0));
-        controller.recordCorrection(2);
-        assertEquals(2, controller.correctionCount());
-        assertEquals(1, controller.speedFactor(), EPSILON);
-        assertEquals(0, controller.pauseTicksRemaining());
-        assertEquals(new Motion(15, 0, 0), controller.output());
-    }
+        assertTrue(AdaptiveFlightStep.maximumSpeed(.3, 64, .35) < 15);
 
-    // Unlimited boost: flight step
-
-    @Test void boostIgnoresLearnedLimitsAndTheCorrectionCeiling() {
-        AdaptiveFlightController controller = controller();
-        controller.corrected(1);
-        controller.tick();
-        assertTrue(controller.speedFactor() < 1);
-        Limits strict = new Limits(1, .5, .5, .05, 1);
-
-        var step = move(controller, new Motion(1, 0, 0), 1, .5, boost(strict, new Boost(15, 0), 0));
+        var step = move(controller, new Motion(1, 0, 0), 1, .5, boost(new Boost(15, 0), 0));
 
         assertEquals(15, step.motion().horizontalLength(), EPSILON);
         assertFalse(step.terrainLimited());
@@ -139,14 +122,14 @@ class AdaptiveFlightBoostTest {
         AdaptiveFlightController controller = controller();
         AABB body = BODY;
         var first = AdaptiveFlightStep.move(controller, new Motion(1, 0, 0), 1, .5, body, probe, 64, .35,
-            boost(OPEN, new Boost(15, 0), 0));
+            boost(new Boost(15, 0), 0));
         assertEquals(FlightCorridor.Reason.OBSTACLE, first.corridor().reason());
         assertTrue(first.terrainLimited());
         assertTrue(first.motion().length() < 15);
         for (int tick = 0; tick < 80; tick++) {
             controller.tick();
             var step = AdaptiveFlightStep.move(controller, new Motion(1, 0, 0), 1, .5, body, probe, 64, .35,
-                boost(OPEN, new Boost(15, 0), 0));
+                boost(new Boost(15, 0), 0));
             body = body.move(step.motion().x(), step.motion().y(), step.motion().z());
             assertFalse(body.intersects(wall), "tick " + tick);
         }
@@ -160,7 +143,7 @@ class AdaptiveFlightBoostTest {
         };
         AdaptiveFlightController controller = controller();
         var step = AdaptiveFlightStep.move(controller, new Motion(1, 0, 0), 1, .5, BODY, probe, 64, .35,
-            boost(OPEN, new Boost(15, 0), 0));
+            boost(new Boost(15, 0), 0));
         assertEquals(FlightCorridor.Reason.CHUNKS, step.corridor().reason());
         assertTrue(step.motion().length() < 15);
     }
@@ -197,20 +180,15 @@ class AdaptiveFlightBoostTest {
 
     @Test void boostNeedsMeteorsHorizontalAxisEnabled() {
         AdaptiveFlightController controller = controller();
-        var step = move(controller, new Motion(1, 0, 0), 0, .5, boost(OPEN, new Boost(15, 0), 0));
+        var step = move(controller, new Motion(1, 0, 0), 0, .5, boost(new Boost(15, 0), 0));
         assertEquals(0, step.motion().horizontalLength(), EPSILON);
     }
 
     @Test void releasingBoostBrakesDownInsteadOfSnappingToTheAdaptiveMaximum() {
         AdaptiveFlightController blended = controller();
         blended.accept(new Motion(15, 0, 0));
-        var step = move(blended, new Motion(1, 0, 0), 1, .5, cruise(OPEN, BLEND, 0));
+        var step = move(blended, new Motion(1, 0, 0), 1, .5, cruise(BLEND, 0));
         assertEquals(15 - MODEL.capacity(15), step.motion().horizontalLength(), EPSILON);
-
-        AdaptiveFlightController legacy = controller();
-        legacy.accept(new Motion(15, 0, 0));
-        var snapped = move(legacy, new Motion(1, 0, 0), 1, .5, cruise(OPEN, null, 0));
-        assertEquals(AdaptiveFlightStep.maximumSpeed(.3, 64, .35), snapped.motion().horizontalLength(), 1e-6);
     }
 
     // Blended vertical
@@ -220,43 +198,31 @@ class AdaptiveFlightBoostTest {
         Motion motion = Motion.ZERO;
         for (int tick = 0; tick < 3; tick++) {
             controller.tick();
-            motion = move(controller, Motion.ZERO, 0, .5, cruise(OPEN, BLEND, 1)).motion();
+            motion = move(controller, Motion.ZERO, 0, .5, cruise(BLEND, 1)).motion();
         }
         assertEquals(3 * .35, motion.y(), EPSILON);
     }
 
-    @Test void setbackReducedVerticalAccelerationSlowsTheVerticalRamp() {
-        AdaptiveFlightController full = controller();
-        AdaptiveFlightController reduced = controller();
-        double fast = move(full, Motion.ZERO, 0, .5, cruise(OPEN, BLEND, 1)).motion().y();
-        double slow = move(reduced, Motion.ZERO, 0, .5, cruise(OPEN, new Blend(3, .5, .5), 1)).motion().y();
-        assertEquals(.5, fast, EPSILON);
-        assertEquals(.25, slow, EPSILON);
-    }
-
-    @Test void learnedVerticalLimitsStillLowerCruiseClimb() {
+    @Test void aLowerVerticalMaximumLowersCruiseClimb() {
         AdaptiveFlightController controller = controller();
-        Limits corrected = new Limits(64, .6, 3, .05);
         Motion motion = Motion.ZERO;
         for (int tick = 0; tick < 10; tick++) {
             controller.tick();
-            motion = move(controller, Motion.ZERO, 0, .5, cruise(corrected, BLEND, 1)).motion();
+            motion = move(controller, Motion.ZERO, 0, .5, cruise(new Blend(.6, .05, .5), 1)).motion();
         }
         assertEquals(.6 * .35, motion.y(), EPSILON);
     }
 
-    @Test void verticalBoostTakesItsRampSpeedAtOnceIgnoringLearnedLimits() {
+    @Test void verticalBoostTakesItsRampSpeedAtOnceEvenAboveTheVerticalMaximum() {
         AdaptiveFlightController controller = controller();
-        Limits strict = new Limits(64, .5, .5, .05);
-        var step = move(controller, Motion.ZERO, 0, .5, boost(strict, new Boost(0, 3), 1));
+        var step = move(controller, Motion.ZERO, 0, .5, boost(new Blend(.5, .05, .5), new Boost(0, 3), 1));
         assertEquals(3, step.motion().y(), EPSILON);
     }
 
-    @Test void releasingVerticalBoostBrakesDownToALowerLearnedCeiling() {
+    @Test void releasingVerticalBoostBrakesDownToTheCruiseClimb() {
         AdaptiveFlightController controller = controller();
         controller.accept(new Motion(0, 3, 0));
-        Limits corrected = new Limits(64, 1, 1, .05);
-        var step = move(controller, Motion.ZERO, 0, .5, cruise(corrected, BLEND, 1));
+        var step = move(controller, Motion.ZERO, 0, .5, cruise(BLEND, 1));
         assertEquals(3 - .5, step.motion().y(), EPSILON, "slowing mirrors the vertical ramp: .5 per tick at 3");
     }
 
@@ -268,7 +234,7 @@ class AdaptiveFlightBoostTest {
         for (int tick = 0; tick < 200 && floor > 0; tick++) {
             controller.tick();
             motion = move(controller, Motion.ZERO, 0, .5,
-                boost(OPEN, new Blend(3, .5, 1, floor), new Boost(0, 3), -1)).motion();
+                boost(new Blend(3, .05, .5, floor), new Boost(0, 3), -1)).motion();
             assertTrue(-motion.y() <= floor + AdaptiveFlightStep.LANDING_SPEED + EPSILON, "tick " + tick);
             assertTrue(previous + motion.y() < 3, "braking is gradual, not a sudden stop");
             previous = -motion.y();
@@ -278,7 +244,7 @@ class AdaptiveFlightBoostTest {
         assertTrue(-motion.y() <= AdaptiveFlightStep.LANDING_SPEED + EPSILON, "touchdown at " + -motion.y());
     }
 
-    // Learning
+    // The shared 3D boost ceiling
 
     @Test void boostCapSharesTheFullThreeDimensionalSpeedIncludingClimbsAndDives() {
         for (int direction : new int[] {-1, 1}) {
@@ -286,7 +252,7 @@ class AdaptiveFlightBoostTest {
             for (int tick = 0; tick < 100; tick++) {
                 controller.tick();
                 Motion actual = move(controller, new Motion(.6, direction * .1, .8), 1, .5,
-                    boost(OPEN, new Boost(14, 3, 13.3), direction)).motion();
+                    boost(new Boost(14, 3, 13.3), direction)).motion();
                 assertEquals(13.3, actual.length(), EPSILON);
                 assertTrue(actual.horizontalLength() < 13.3,
                     "vertical movement must reduce the horizontal budget");
@@ -300,7 +266,7 @@ class AdaptiveFlightBoostTest {
         AdaptiveFlightController controller = controller();
         controller.accept(new Motion(3, -2, 4));
         Motion actual = move(controller, new Motion(.6, 0, .8), 1, .5,
-            boost(OPEN, new Boost(3, 0, 2), 0)).motion();
+            boost(new Boost(3, 0, 2), 0)).motion();
 
         assertEquals(2, actual.length(), EPSILON);
         assertTrue(actual.y() < 0, "released vertical momentum still spends the boost budget");
@@ -313,37 +279,9 @@ class AdaptiveFlightBoostTest {
         for (int tick = 0; tick < 20; tick++) {
             controller.tick();
             Motion actual = move(controller, new Motion(0, .1, 1), 1, .5,
-                boost(OPEN, new Boost(14, 3, 12), 1)).motion();
+                boost(new Boost(14, 3, 12), 1)).motion();
             assertEquals(12, actual.length(), EPSILON);
         }
-    }
-
-    @Test void recoverySpeedDoesNotReplaceTheBoundaryOrEscapeItWhenTheHoldEnds() {
-        BoostSpeedLimit limit = new BoostSpeedLimit();
-        limit.observe(new Motion(14, 0, 0), true);
-        assertTrue(limit.corrected());
-        for (double recovery : new double[] {4, 2.4, 3.7}) {
-            limit.tick();
-            limit.observe(new Motion(recovery, 0, 0), true);
-            assertFalse(limit.corrected());
-        }
-        assertEquals(13.3, limit.ceiling(), EPSILON);
-
-        AdaptiveFlightController controller = controller();
-        BoostRamp ramp = new BoostRamp(new BoostRamp.Settings(2.999, 14.999, .3, 15, false));
-        ramp.engage(0);
-        for (int tick = 0; tick < 600; tick++) {
-            limit.tick();
-            controller.tick();
-            ramp.advance();
-            Motion actual = move(controller, new Motion(1, 0, 0), 1, .5,
-                boost(OPEN, new Boost(ramp.speed(), 0, limit.ceiling()), 0)).motion();
-            assertTrue(actual.length() <= limit.ceiling() + EPSILON);
-            assertTrue(actual.length() < 14, "the end of the hold cannot resume the rejected 280 b/s");
-            limit.observe(actual, true);
-        }
-        assertTrue(limit.ceiling() > 13.3 && limit.ceiling() <= 13.4 + EPSILON,
-            "clean capped movement must probe gradually instead of removing the boundary");
     }
 
     @Test void invalidBoostTotalCeilingsAreRejected() {
@@ -352,52 +290,25 @@ class AdaptiveFlightBoostTest {
         assertEquals(UNLIMITED, new Boost(3, 1).totalCeiling());
     }
 
-    @Test void neverCorrectedVerticalLimitsStartAtTheConfiguredMaximum() {
-        AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
-        learning.configure(3, .05);
-        Limits remembered = new Limits(64, .9, .8, .05);
-
-        learning.restore(remembered, Limits.UNKNOWN);
-        assertEquals(3, learning.limits().ascent(), EPSILON);
-        assertEquals(3, learning.limits().descent(), EPSILON);
-        assertEquals(remembered, learning.remembered(), "an unproven start is not saved as evidence");
-
-        learning.restore(remembered, new Limits(64, .9, 64, .05));
-        assertEquals(.9, learning.limits().ascent(), EPSILON, "a corrected direction keeps its learned limit");
-        assertEquals(3, learning.limits().descent(), EPSILON);
-    }
-
-    @Test void discardingBoostEvidenceTeachesNothing() {
-        AdaptiveFlightLearning learning = new AdaptiveFlightLearning();
-        learning.observe(new Motion(15, 0, 0), 0, true, true, 1, 1);
-        Limits before = learning.limits();
-        learning.resetHistory();
-        assertFalse(learning.corrected(.75));
-        assertEquals(before, learning.limits());
-        assertEquals(Limits.UNKNOWN, learning.ceilings());
-    }
-
     private static AdaptiveFlightController controller() {
-        return new AdaptiveFlightController(new Settings(.15, .3, .75, 0, 60, .0025, 15, HORIZON, 15));
+        return new AdaptiveFlightController(new Settings(.15, .3, 15, HORIZON, 15));
     }
 
-    private static Controls boost(Limits limits, Boost boost, int verticalInput) {
-        return boost(limits, BLEND, boost, verticalInput);
+    private static Controls boost(Boost boost, int verticalInput) {
+        return boost(BLEND, boost, verticalInput);
     }
 
-    private static Controls boost(Limits limits, Blend blend, Boost boost, int verticalInput) {
-        return new Controls(true, 1, 1, verticalInput, false, null, limits,
-            AdaptiveFlightStep.SAFE_MANEUVER_SPEED, blend, boost);
+    private static Controls boost(Blend blend, Boost boost, int verticalInput) {
+        return new Controls(true, 1, 1, verticalInput, false, null, AdaptiveFlightStep.SAFE_MANEUVER_SPEED, blend, boost);
     }
 
     /** Boost as the module sends it from a slow start: safe maneuvering on, at the default close-object speed. */
     private static Controls releasing(Boost boost) {
-        return new Controls(true, 1, 1, 0, true, null, OPEN, .6, BLEND, boost);
+        return new Controls(true, 1, 1, 0, true, null, .6, BLEND, boost);
     }
 
-    private static Controls cruise(Limits limits, Blend blend, int verticalInput) {
-        return new Controls(false, .35, .35, verticalInput, false, null, limits,
-            AdaptiveFlightStep.SAFE_MANEUVER_SPEED, blend, null);
+    private static Controls cruise(Blend blend, int verticalInput) {
+        return new Controls(false, .35, .35, verticalInput, false, null, AdaptiveFlightStep.SAFE_MANEUVER_SPEED, blend, null);
     }
 
     private static AdaptiveFlightStep.Result move(AdaptiveFlightController controller, Motion requested,

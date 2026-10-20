@@ -16,6 +16,8 @@ class AdaptiveFlightSprintTest {
     private static final double EPSILON = 1e-10;
     private static final double UNLIMITED = Double.POSITIVE_INFINITY;
     private static final AABB BODY = new AABB(.2, 65, .2, .8, 66.8, .8);
+    /** Sprint without unlimited boost: the whole attainable maximum. */
+    private static final AdaptiveFlightStep.Controls SPRINT = TestControls.of(true, 1, 0, false);
 
     @Test void sprintFromRestUsesTheConfiguredAcceleration() {
         AdaptiveFlightController controller = controller(.25, .5);
@@ -69,8 +71,8 @@ class AdaptiveFlightSprintTest {
         for (int tick = 0; tick < 100; tick++) {
             normal.tick();
             sprint.tick();
-            AdaptiveFlightStep.move(normal, requested, 2, 1, BODY, probe, 64, .35, false);
-            var step = AdaptiveFlightStep.move(sprint, requested, 2, 1, BODY, probe, 64, .35, true);
+            AdaptiveFlightStep.move(normal, requested, 2, 1, BODY, probe, 64, .35, cruiseTo(2, .3, .35));
+            var step = AdaptiveFlightStep.move(sprint, requested, 2, 1, BODY, probe, 64, .35, SPRINT);
             assertTrue(step.motion().x() - previous <= .25 + EPSILON);
             assertTrue(step.motion().x() >= previous - EPSILON);
             previous = step.motion().x();
@@ -89,9 +91,9 @@ class AdaptiveFlightSprintTest {
         Probe probe = new Probe();
         for (int tick = 0; tick < 100; tick++) {
             var first = AdaptiveFlightStep.move(low, new Motion(.5, 0, 0),
-                .5, 1, BODY, probe, 64, .35, true);
+                .5, 1, BODY, probe, 64, .35, SPRINT);
             var second = AdaptiveFlightStep.move(high, new Motion(4, 0, 0),
-                4, 1, BODY, probe, 64, .35, true);
+                4, 1, BODY, probe, 64, .35, SPRINT);
             assertMotion(first.motion(), second.motion());
         }
         assertTrue(low.output().horizontalLength() > 4);
@@ -102,21 +104,23 @@ class AdaptiveFlightSprintTest {
         controller.accept(new Motion(2, 0, 0));
 
         var step = AdaptiveFlightStep.move(controller, new Motion(2, 0, 0),
-            2, 1, BODY, new Probe(), 64, .35, true);
+            2, 1, BODY, new Probe(), 64, .35, SPRINT);
 
         assertMotion(new Motion(2.15, 0, 0), step.motion());
     }
 
-    @Test void releasingSprintRestoresTheNormalHorizontalCeiling() {
+    @Test void releasingSprintBrakesDownToTheCruiseTargetInsteadOfSnapping() {
         AdaptiveFlightController controller = controller(.25, .5);
         controller.accept(new Motion(4, 0, 0));
+        Probe probe = new Probe();
 
-        var released = AdaptiveFlightStep.move(controller, new Motion(2, 0, 0),
-            2, 1, BODY, new Probe(), 64, .35, false);
-
-        assertMotion(new Motion(2, 0, 0), released.motion());
-        assertEquals(released.motion(), controller.output());
-        assertFalse(controller.isBoosting());
+        for (double expected : new double[] {3.5, 3, 2.5, 2, 2}) {
+            var released = AdaptiveFlightStep.move(controller, new Motion(2, 0, 0),
+                2, 1, BODY, probe, 64, .35, cruiseTo(2, .5, .35));
+            assertMotion(new Motion(expected, 0, 0), released.motion());
+            assertEquals(released.motion(), controller.output());
+            assertFalse(controller.isBoosting());
+        }
     }
 
     @Test void holdingSprintWithoutHorizontalInputStillBrakesToAStop() {
@@ -125,10 +129,10 @@ class AdaptiveFlightSprintTest {
         Probe probe = new Probe();
 
         var first = AdaptiveFlightStep.move(controller, Motion.ZERO,
-            2, 1, BODY, probe, 64, .35, true);
+            2, 1, BODY, probe, 64, .35, SPRINT);
         assertMotion(new Motion(2.5, 0, 0), first.motion());
         for (int tick = 0; tick < 8; tick++) {
-            AdaptiveFlightStep.move(controller, Motion.ZERO, 2, 1, BODY, probe, 64, .35, true);
+            AdaptiveFlightStep.move(controller, Motion.ZERO, 2, 1, BODY, probe, 64, .35, SPRINT);
         }
         assertMotion(Motion.ZERO, controller.output());
         assertFalse(controller.isBoosting());
@@ -139,7 +143,7 @@ class AdaptiveFlightSprintTest {
         controller.accept(new Motion(3, 0, 0));
 
         var step = AdaptiveFlightStep.move(controller, Motion.ZERO,
-            0, 1, BODY, new Probe(), 64, .35, true);
+            0, 1, BODY, new Probe(), 64, .35, SPRINT);
 
         assertMotion(Motion.ZERO, step.motion());
         assertNull(step.corridor());
@@ -152,7 +156,7 @@ class AdaptiveFlightSprintTest {
         double previous = 2;
         for (int tick = 0; tick < 40; tick++) {
             var step = AdaptiveFlightStep.move(controller, new Motion(-2, 0, 0),
-                2, 1, BODY, probe, 64, .35, true);
+                2, 1, BODY, probe, 64, .35, SPRINT);
             double current = step.motion().x();
             assertTrue(current <= previous + EPSILON);
             assertTrue(previous - current <= (previous > 0 ? .5 : .25) + EPSILON);
@@ -167,7 +171,7 @@ class AdaptiveFlightSprintTest {
         controller.accept(initial);
 
         var step = AdaptiveFlightStep.move(controller, new Motion(0, 0, 2),
-            2, 1, BODY, new Probe(), 64, .35, true);
+            2, 1, BODY, new Probe(), 64, .35, SPRINT);
 
         assertEquals(.25, difference(initial, step.motion()), EPSILON);
         assertTrue(step.motion().x() > 0 && step.motion().z() > 0);
@@ -184,66 +188,6 @@ class AdaptiveFlightSprintTest {
         assertMotion(new Motion(.35, 0, 0), controller.step(new Motion(5, 0, 0), UNLIMITED, true));
     }
 
-    @Test void correctionPauseAndGradualRecoveryStillApplyWhileSprintIsHeld() {
-        AdaptiveFlightController controller = controller(.25, .5);
-        controller.corrected(1);
-        Probe probe = new Probe();
-        Motion requested = new Motion(2, 0, 0);
-
-        assertMotion(Motion.ZERO, controller.step(requested, UNLIMITED, true));
-        for (int tick = 0; tick < 2; tick++) {
-            controller.tick();
-            var paused = AdaptiveFlightStep.move(controller, requested,
-                2, 1, BODY, probe, 64, .35, true);
-            assertMotion(Motion.ZERO, paused.motion());
-            assertNull(paused.corridor());
-            assertEquals(Status.PAUSED, controller.status());
-        }
-        assertEquals(0, probe.chunkChecks);
-        assertTrue(probe.boxes.isEmpty());
-
-        controller.tick();
-        var resumed = AdaptiveFlightStep.move(controller, requested,
-            2, 1, BODY, probe, 64, .35, true);
-        assertMotion(new Motion(.25, 0, 0), resumed.motion());
-        assertEquals(Status.RECOVERING, controller.status());
-        assertEquals(.5, controller.speedFactor(), EPSILON);
-        controller.tick();
-        var recovering = AdaptiveFlightStep.move(controller, requested,
-            2, 1, BODY, probe, 64, .35, true);
-        assertMotion(new Motion(.5, 0, 0), recovering.motion());
-        assertEquals(.6, controller.speedFactor(), EPSILON);
-    }
-
-    @Test void sprintCannotMaskCorrectionBackoffBehindTheLookaheadLimit() {
-        AdaptiveFlightController controller = new AdaptiveFlightController(
-            new Settings(.25, .3, .5, 0, 1000, 0));
-        controller.corrected(1);
-        Probe probe = new Probe();
-        for (int tick = 0; tick < 100; tick++) {
-            controller.tick();
-            AdaptiveFlightStep.move(controller, new Motion(2, 0, 0),
-                2, 1, BODY, probe, 64, .35, true);
-        }
-        double cap = Math.sqrt(.3 * .3 + 2 * .3 * (64 - .35)) - .3;
-        assertMotion(new Motion(cap * .5, 0, 0), controller.output());
-        assertEquals(.5, controller.speedFactor(), EPSILON);
-    }
-
-    @Test void repeatedCorrectionsRetainTheirMinimumBackoffDuringSprint() {
-        AdaptiveFlightController controller = new AdaptiveFlightController(
-            new Settings(.25, .3, .5, 0, 1000, 0));
-        controller.corrected(20);
-        Probe probe = new Probe();
-        for (int tick = 0; tick < 40; tick++) {
-            AdaptiveFlightStep.move(controller, new Motion(2, 0, 0),
-                2, 1, BODY, probe, 64, .35, true);
-        }
-        double cap = Math.sqrt(.3 * .3 + 2 * .3 * (64 - .35)) - .3;
-        assertEquals(AdaptiveFlightController.MIN_SPEED_FACTOR, controller.speedFactor(), EPSILON);
-        assertMotion(new Motion(cap * .1, 0, 0), controller.output());
-    }
-
     @Test void continuousSprintStopsBeforeUnloadedTerrainWithABoundedProbeBudget() {
         AdaptiveFlightController controller = controller(.25, .3);
         Probe probe = new Probe((x, z) -> x == 0 && z == 0);
@@ -254,7 +198,7 @@ class AdaptiveFlightSprintTest {
             int previousChecks = probe.chunkChecks;
             int previousCollisions = probe.boxes.size();
             var step = AdaptiveFlightStep.move(controller, new Motion(2, 0, 0),
-                2, 0, position, probe, 64, .25, true);
+                2, 0, position, probe, 64, .25, SPRINT);
             assertEquals(CHUNKS, step.corridor().reason());
             assertBoundedScan(step, probe, previousChecks, previousCollisions);
             position = moved(position, step.motion());
@@ -278,7 +222,7 @@ class AdaptiveFlightSprintTest {
             int previousChecks = probe.chunkChecks;
             int previousCollisions = probe.boxes.size();
             var step = AdaptiveFlightStep.move(controller, new Motion(2, 0, 0),
-                2, 0, position, probe, 64, .25, true);
+                2, 0, position, probe, 64, .25, SPRINT);
             assertEquals(OBSTACLE, step.corridor().reason());
             assertBoundedScan(step, probe, previousChecks, previousCollisions);
             position = moved(position, step.motion());
@@ -298,27 +242,29 @@ class AdaptiveFlightSprintTest {
             AdaptiveFlightStep.Result step = null;
             for (int tick = 0; tick < 100; tick++) {
                 step = AdaptiveFlightStep.move(controller, new Motion(2, 0, 0),
-                    2, 1, BODY, probe, tuning[0], .35, true);
+                    2, 1, BODY, probe, tuning[0], .35, SPRINT);
             }
             double cap = Math.sqrt(tuning[1] * tuning[1] + 2 * tuning[1] * (tuning[0] - .35)) - tuning[1];
             assertEquals(cap, step.motion().horizontalLength(), EPSILON);
+            assertEquals(cap, step.adaptiveMaximum(), EPSILON);
             assertTrue(step.motion().horizontalLength() > previous);
-            assertTrue(step.lookaheadLimited());
             previous = step.motion().horizontalLength();
         }
     }
 
-    @Test void sprintCannotExceedTheBrakingCeilingOfTheCappedLookahead() {
+    @Test void momentumBeyondTheCappedLookaheadBrakesAsHardAsTheClearHorizonRequires() {
         AdaptiveFlightController controller = controller(.25, .3);
         controller.accept(new Motion(64, 0, 0));
         Probe probe = new Probe();
         var step = AdaptiveFlightStep.move(controller, new Motion(2, 0, 0),
-            2, 0, BODY, probe, 1000, .35, true);
+            2, 0, BODY, probe, 1000, .35, SPRINT);
 
-        double cap = Math.sqrt(.3 * .3 + 2 * .3 * (FlightCorridor.MAX_DISTANCE - .35)) - .3;
+        double clearance = FlightCorridor.MAX_DISTANCE - .35;
         assertEquals(CLEAR, step.corridor().reason());
         assertEquals(FlightCorridor.MAX_DISTANCE, step.corridor().clearDistance());
-        assertEquals(cap, step.motion().horizontalLength(), EPSILON);
+        assertEquals(controller.settings().brakingModel().allowed(64, clearance),
+            step.motion().horizontalLength(), EPSILON);
+        assertTrue(step.motion().horizontalLength() < 64 && step.motion().horizontalLength() <= clearance);
         assertEquals(step.motion(), controller.output());
         assertTrue(step.lookaheadLimited());
         assertTrue(step.terrainLimited());
@@ -326,20 +272,25 @@ class AdaptiveFlightSprintTest {
         assertBoundedScan(step, probe, 0, 0);
     }
 
-    @Test void sprintRaisesTheHorizontalCeilingButRetainsTheVerticalCeiling() {
+    @Test void sprintRaisesTheHorizontalTargetWhileVerticalMomentumBrakesTowardsItsCeiling() {
         AdaptiveFlightController controller = controller(.25, .5);
         controller.accept(new Motion(4, 2, 0));
         var step = AdaptiveFlightStep.move(controller, new Motion(2, 4, 0),
-            2, .1, BODY, new Probe(), 64, .25, true);
+            2, .1, BODY, new Probe(), 64, .25, SPRINT);
 
         assertTrue(step.motion().horizontalLength() > 4);
         assertTrue(step.motion().horizontalLength() <= 4.25 + EPSILON);
-        assertTrue(Math.abs(step.motion().y()) <= .1 + EPSILON);
+        assertEquals(1.5, step.motion().y(), EPSILON, "a released vertical brakes instead of snapping to the stock speed");
         assertEquals(step.motion(), controller.output());
     }
 
     private static AdaptiveFlightController controller(double acceleration, double braking) {
-        return new AdaptiveFlightController(new Settings(acceleration, braking, .5, 2, 3, .1));
+        return new AdaptiveFlightController(new Settings(acceleration, braking, 0));
+    }
+
+    /** Cruise at the percentage of the attainable maximum that is exactly {@code speed}. */
+    private static AdaptiveFlightStep.Controls cruiseTo(double speed, double braking, double margin) {
+        return TestControls.of(false, speed / AdaptiveFlightStep.maximumSpeed(braking, 64, margin), 0, false);
     }
 
     private static void assertMotion(Motion expected, Motion actual) {

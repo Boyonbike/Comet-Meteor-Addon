@@ -58,8 +58,8 @@ class AdaptiveFlightCorneringTest {
     }
 
     @Test void fasterAccelerationRetainsOrdinaryControlUntilDriftNeedsAssistance() {
-        AdaptiveFlightController assisted = new AdaptiveFlightController(new Settings(.5, .6, .5, 2, 3, .1, 15));
-        AdaptiveFlightController ordinary = new AdaptiveFlightController(new Settings(.5, .6, .5, 2, 3, .1));
+        AdaptiveFlightController assisted = new AdaptiveFlightController(new Settings(.5, .6, 15));
+        AdaptiveFlightController ordinary = new AdaptiveFlightController(new Settings(.5, .6, 0));
         assisted.accept(new Motion(.9, 0, 0));
         ordinary.accept(new Motion(.9, 0, 0));
         assertEquals(ordinary.step(new Motion(0, 0, .9), UNLIMITED),
@@ -118,30 +118,13 @@ class AdaptiveFlightCorneringTest {
         assertMotion(new Motion(5.4, 0, 0), controller.step(new Motion(-6, 0, 0), UNLIMITED));
     }
 
-    @Test void zeroTurnRateAndLegacySettingsRetainMomentumBasedSteering() {
+    @Test void zeroTurnRateRetainsMomentumBasedSteering() {
         AdaptiveFlightController controller = controller(0);
         controller.accept(new Motion(6, 0, 0));
         Motion output = controller.step(new Motion(0, 0, 6), UNLIMITED);
         assertEquals(.15, difference(new Motion(6, 0, 0), output), EPSILON);
         assertTrue(output.x() > 5.8);
         assertTrue(output.z() < .15);
-        assertEquals(0, new Settings(.15, .3, .5, 2, 3, .1).turnRate());
-    }
-
-    @Test void correctionPauseAndReducedAdaptiveOutputRemainAuthoritative() {
-        AdaptiveFlightController controller = controller(15);
-        controller.accept(new Motion(6, 0, 0));
-        controller.corrected(1);
-        assertEquals(Motion.ZERO, controller.step(new Motion(0, 0, 6), UNLIMITED));
-        for (int i = 0; i < 2; i++) {
-            controller.tick();
-            assertEquals(Motion.ZERO, controller.step(new Motion(0, 0, 6), UNLIMITED));
-        }
-        controller.tick();
-        controller.accept(new Motion(3, 0, 0));
-        Motion recovered = controller.step(new Motion(0, 0, 6), UNLIMITED);
-        assertEquals(3, recovered.length(), EPSILON);
-        assertEquals(Math.toRadians(15), heading(recovered), EPSILON);
     }
 
     @Test void terrainClippingAndAcceptedSlowMotionImmediatelyReduceSteeringAssistance() {
@@ -173,7 +156,7 @@ class AdaptiveFlightCorneringTest {
 
         // Six blocks per tick is past the engine maximum here, so the assisted rate has doubled.
         var step = AdaptiveFlightStep.move(controller, new Motion(0, 0, 6),
-            6, 0, body, probe, 64, .1);
+            6, 0, body, probe, 64, .1, TestControls.of(false, 1, 0, false));
         assertEquals(FlightCorridor.Reason.OBSTACLE, step.corridor().reason());
         assertTrue(step.terrainLimited());
         assertTrue(step.motion().length() < 6);
@@ -257,12 +240,12 @@ class AdaptiveFlightCorneringTest {
     @Test void rejectsInvalidTurnRates() {
         for (double turnRate : new double[] {-1, 90.01, Double.NaN, Double.POSITIVE_INFINITY}) {
             assertThrows(IllegalArgumentException.class,
-                () -> new Settings(.15, .3, .5, 2, 3, .1, turnRate));
+                () -> new Settings(.15, .3, turnRate));
         }
     }
 
     private static AdaptiveFlightController controller(double turnRate) {
-        return new AdaptiveFlightController(new Settings(.15, .3, .5, 2, 3, .1, turnRate));
+        return new AdaptiveFlightController(new Settings(.15, .3, turnRate));
     }
 
     private static Motion fromHeading(double degrees, double horizontal, double vertical) {

@@ -16,30 +16,26 @@ class AdaptiveFlightControlsTest {
     private static final double EPSILON = 1e-9;
     private static final AABB BODY = new AABB(.2, 65, .2, .8, 66.8, .8);
 
-    @Test void percentagesScaleTheAttainableMaximumAtDifferentHorizonsBrakingAndBackoffs() {
+    @Test void percentagesScaleTheAttainableMaximumAtDifferentHorizonsAndBraking() {
         for (double[] tuning : new double[][] {{8, .15, .1}, {64, .3, .35}, {1000, 2, .5}}) {
-            for (int corrections : new int[] {0, 1, 2}) {
-                for (double fraction : new double[] {.1, .25, .5, 1}) {
-                    AdaptiveFlightController controller = controller(100, tuning[1]);
-                    controller.corrected(corrections);
-                    double maximum = maximum(tuning[1], tuning[0], tuning[2]) * controller.speedFactor();
-                    AdaptiveFlightStep.Result result = null;
+            for (double fraction : new double[] {.1, .25, .5, 1}) {
+                AdaptiveFlightController controller = controller(100, tuning[1]);
+                double maximum = maximum(tuning[1], tuning[0], tuning[2]);
+                AdaptiveFlightStep.Result result = null;
 
-                    for (int tick = 0; tick < 3; tick++) {
-                        controller.tick();
-                        result = AdaptiveFlightStep.move(controller, new Motion(.01, 0, 0),
-                            .01, 0, BODY, new Probe(), tuning[0], tuning[2],
-                            TestControls.of(false, fraction, 0, false));
-                    }
-
-                    assertEquals(maximum, result.adaptiveMaximum(), EPSILON,
-                        "the reported maximum includes correction backoff once, before the percentage");
-                    assertEquals(maximum * fraction, result.motion().x(), EPSILON,
-                        "even small percentages must reduce the attainable cap, not the raw 64-block target");
-                    assertEquals(0, result.motion().y(), EPSILON);
-                    assertEquals(result.motion(), controller.output());
-                    assertEquals(CLEAR, result.corridor().reason());
+                for (int tick = 0; tick < 3; tick++) {
+                    controller.tick();
+                    result = AdaptiveFlightStep.move(controller, new Motion(.01, 0, 0),
+                        .01, 0, BODY, new Probe(), tuning[0], tuning[2],
+                        TestControls.of(false, fraction, 0, false));
                 }
+
+                assertEquals(maximum, result.adaptiveMaximum(), EPSILON, "the reported maximum is before the percentage");
+                assertEquals(maximum * fraction, result.motion().x(), EPSILON,
+                    "even small percentages must reduce the attainable cap, not the raw 64-block target");
+                assertEquals(0, result.motion().y(), EPSILON);
+                assertEquals(result.motion(), controller.output());
+                assertEquals(CLEAR, result.corridor().reason());
             }
         }
     }
@@ -73,14 +69,15 @@ class AdaptiveFlightControlsTest {
         assertEquals(low.adaptiveMaximum() * .5, low.motion().horizontalLength(), EPSILON);
     }
 
-    @Test void normalVerticalInputKeepsItsConfiguredSpeed() {
+    @Test void verticalInputFliesItsPercentageOfTheVerticalMaximumWhateverTheStockSpeed() {
+        AdaptiveFlightStep.Blend blend = new AdaptiveFlightStep.Blend(3, 100, 0);
         var up = AdaptiveFlightStep.move(controller(100, .3), new Motion(0, .1, 0),
-            1, .1, BODY, new Probe(), 64, .35, TestControls.of(false, 1, 1, false));
-        var down = AdaptiveFlightStep.move(controller(100, .3), new Motion(0, -.1, 0),
-            1, .1, BODY, new Probe(), 64, .35, TestControls.of(false, 1, -1, false));
+            1, .1, BODY, new Probe(), 64, .35, TestControls.of(false, 1, .5, 1, false, null, blend));
+        var down = AdaptiveFlightStep.move(controller(100, .3), new Motion(0, -2, 0),
+            1, 2, BODY, new Probe(), 64, .35, TestControls.of(false, 1, .5, -1, false, null, blend));
 
-        assertMotion(new Motion(0, .1, 0), up.motion());
-        assertMotion(new Motion(0, -.1, 0), down.motion());
+        assertMotion(new Motion(0, 1.5, 0), up.motion());
+        assertMotion(new Motion(0, -1.5, 0), down.motion());
     }
 
     @Test void sprintBoostsIntentionalClimbAndDescentIncludingPureVerticalFlight() {
@@ -91,7 +88,6 @@ class AdaptiveFlightControlsTest {
                 TestControls.of(true, 1, direction, false));
             assertMotion(new Motion(0, direction * vertical.adaptiveMaximum(), 0), vertical.motion());
             assertTrue(Math.abs(vertical.motion().y()) > .1);
-            assertTrue(controller.isBoosting(), "pure vertical Sprint is an active boost");
 
             var diagonal = AdaptiveFlightStep.move(controller(100, .3), new Motion(.1, direction * .1, 0),
                 .1, .1, BODY, new Probe(), 64, .35,
@@ -122,7 +118,6 @@ class AdaptiveFlightControlsTest {
         var released = AdaptiveFlightStep.move(controller, Motion.ZERO,
             0, .1, BODY, probe, 64, .35, TestControls.of(true, 1, 0, false));
         assertMotion(Motion.ZERO, released.motion());
-        assertFalse(controller.isBoosting());
     }
 
     @Test void sprintDoesNotBoostAutomaticVerticalDriftWithoutAnIntentionalVerticalKey() {
@@ -191,7 +186,7 @@ class AdaptiveFlightControlsTest {
 
         var step = AdaptiveFlightStep.move(controller, new Motion(.5, 0, 0),
             1, 0, BODY, probe, 64, .35,
-            new Controls(false, 1, 1, 0, true, null, null, .6));
+            new Controls(false, 1, 1, 0, true, null, .6, TestControls.BLEND, null));
 
         assertTrue(step.safeManeuvering());
         assertEquals(.6, step.motion().length(), EPSILON);
@@ -292,7 +287,7 @@ class AdaptiveFlightControlsTest {
     }
 
     private static AdaptiveFlightController controller(double acceleration, double braking) {
-        return new AdaptiveFlightController(new Settings(acceleration, braking, .5, 0, 1000, 0));
+        return new AdaptiveFlightController(new Settings(acceleration, braking, 0));
     }
 
     private static double maximum(double braking, double lookahead, double margin) {

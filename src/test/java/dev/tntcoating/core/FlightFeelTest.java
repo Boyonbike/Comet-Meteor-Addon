@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class FlightFeelTest {
     private static final double TOLERANCE = 1e-12;
-    private static final Supplier<FlightFeelScenarios.Driver> DRIVER = LegacyFeelDriver::new;
+    private static final Supplier<FlightFeelScenarios.Driver> DRIVER = EngineFeelDriver::new;
 
     @TestFactory List<DynamicTest> everyScenarioMatchesItsRecordedFeel() {
         List<DynamicTest> tests = new ArrayList<>();
