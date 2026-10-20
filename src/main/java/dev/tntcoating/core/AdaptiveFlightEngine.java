@@ -17,14 +17,15 @@ public final class AdaptiveFlightEngine {
     /**
      * The module's settings, with percentages as shown in its settings screen, and Meteor Elytra Fly's stock
      * speeds, which only enable an axis (zero disables it) and size the passive sink. {@code unlimitedBoost} is
-     * Sprint boost with unlimited boost on.
+     * Sprint boost with unlimited boost on; {@code boostTop} is the horizontal ramp's top speed and
+     * {@code boostCeiling} the total 3D speed boost may never exceed (see {@link ServerMoveLimit}).
      */
     public record Settings(double acceleration, double braking, double turnRate,
                            double cruise, double sprint,
                            double verticalMaximum, double verticalCruise, double verticalSprint,
                            double verticalAcceleration, double verticalRampStep,
                            boolean unlimitedBoost, double boostTop, double boostStart, double boostRampStep,
-                           double boostVerticalStart, int rewindTicks,
+                           double boostVerticalStart, int rewindTicks, double boostCeiling,
                            int lookahead, double margin, boolean safeManeuvering, double closeObjectSpeed,
                            double stockHorizontalSpeed, double stockVerticalSpeed, double fallMultiplier) {}
 
@@ -231,7 +232,8 @@ public final class AdaptiveFlightEngine {
             verticalBoostDirection = 0;
         }
         boostActive = horizontalRamp.speed() > 0 || verticalRamp.speed() > 0;
-        return boostActive ? new AdaptiveFlightStep.Boost(horizontalRamp.speed(), verticalRamp.speed()) : null;
+        return boostActive ? new AdaptiveFlightStep.Boost(horizontalRamp.speed(), verticalRamp.speed(),
+            settings.boostCeiling()) : null;
     }
 
     /** Meteor Vanilla's requested movement from the keys, with its fall-multiplier sink. */

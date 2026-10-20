@@ -111,11 +111,48 @@ class AdaptiveFlightEngineTest {
         assertTrue(engine.output().length() <= output.length() + EPSILON);
     }
 
+    @Test void overdriveBoostsTo340AndAClimbSharesTheServerLimitInsteadOfExceedingIt() {
+        AdaptiveFlightEngine.Settings overdrive = boosting(ServerMoveLimit.SINGLE, ServerMoveLimit.SINGLE);
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(overdrive);
+        for (int tick = 0; tick < 1000; tick++) fly(engine, overdrive, true, false);
+        assertTrue(engine.output().horizontalLength() > 16.9, "340 b/s: " + engine.output().horizontalLength() * 20);
+
+        for (int tick = 0; tick < 100; tick++) {
+            Motion motion = fly(engine, overdrive, true, true);
+            assertTrue(motion.length() <= ServerMoveLimit.SINGLE + EPSILON, "tick " + tick + ": " + motion.length());
+            if (tick > 10) assertTrue(motion.y() > 2, "still climbing at boost speed");
+        }
+    }
+
+    @Test void aBoostMaximumAboveTheServerLimitIsHeldToItInThreeDimensions() {
+        AdaptiveFlightEngine.Settings tooFast = boosting(24, ServerMoveLimit.SINGLE);
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(tooFast);
+        for (int tick = 0; tick < 1000; tick++) {
+            Motion motion = fly(engine, tooFast, true, tick > 500);
+            assertTrue(motion.length() <= ServerMoveLimit.SINGLE + EPSILON, "tick " + tick + ": " + motion.length());
+        }
+    }
+
+    /** The defaults with another boost top speed and total boost ceiling. */
+    private static AdaptiveFlightEngine.Settings boosting(double top, double ceiling) {
+        AdaptiveFlightEngine.Settings d = DEFAULTS;
+        return new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(), d.turnRate(), d.cruise(), d.sprint(),
+            d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(), d.verticalAcceleration(), d.verticalRampStep(),
+            d.unlimitedBoost(), top, d.boostStart(), d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(),
+            ceiling, d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(),
+            d.stockHorizontalSpeed(), d.stockVerticalSpeed(), d.fallMultiplier());
+    }
+
     /** One client tick of W held (and Sprint when boosting), facing +Z in open air. */
     private static Motion fly(AdaptiveFlightEngine engine, boolean sprint) {
-        engine.startTick(DEFAULTS);
+        return fly(engine, DEFAULTS, sprint, false);
+    }
+
+    private static Motion fly(AdaptiveFlightEngine engine, AdaptiveFlightEngine.Settings settings,
+                              boolean sprint, boolean jump) {
+        engine.startTick(settings);
         assertTrue(engine.begin(sprint, true, 1.2, 1.2, BODY, OPEN));
-        engine.step(new AdaptiveFlightEngine.Input(1, 0, 0, false, false, -.5, BODY, OPEN,
+        engine.step(new AdaptiveFlightEngine.Input(1, 0, 0, jump, false, -.5, BODY, OPEN,
             () -> Double.POSITIVE_INFINITY, null, movement -> movement));
         return engine.output();
     }

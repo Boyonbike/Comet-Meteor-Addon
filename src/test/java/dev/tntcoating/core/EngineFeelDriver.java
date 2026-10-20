@@ -20,7 +20,7 @@ final class EngineFeelDriver implements FlightFeelScenarios.Driver {
         return new AdaptiveFlightEngine.Settings(p.acceleration(), p.braking(), p.turnRate(), p.cruise(), p.sprint(),
             p.verticalMax(), p.verticalCruise(), p.verticalSprint(), p.verticalAcceleration(), p.verticalRampStep(),
             p.unlimitedBoost(), p.boostMax(), p.boostStart(), p.boostRampStep(), p.boostVerticalStart(),
-            p.rewindTicks(), p.lookahead(), p.margin(), p.safeManeuvering(), p.closeObjectSpeed(),
+            p.rewindTicks(), ServerMoveLimit.SINGLE, p.lookahead(), p.margin(), p.safeManeuvering(), p.closeObjectSpeed(),
             p.flyHorizontalSpeed(), p.flyVerticalSpeed(), p.fallMultiplier());
     }
 

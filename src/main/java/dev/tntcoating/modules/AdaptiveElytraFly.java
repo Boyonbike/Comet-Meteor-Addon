@@ -10,6 +10,7 @@ import dev.tntcoating.core.ElytraBoostDelay;
 import dev.tntcoating.core.FlightCorridor;
 import dev.tntcoating.core.PacketCaptureLog;
 import dev.tntcoating.core.ServerGlide;
+import dev.tntcoating.core.ServerMoveLimit;
 import dev.tntcoating.core.SmartElytraSwap;
 import dev.tntcoating.mixin.FireworkRocketAccessor;
 import java.io.IOException;
@@ -129,9 +130,13 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Boolean> unlimitedBoost = boost.add(new BoolSetting.Builder().name("unlimited-boost")
         .description("Holding Sprint flies VolytraFly's speed ramp instead of the adaptive engine maximum. Terrain, chunk and server-glide guards still apply. Off restores adaptive Sprint.")
         .defaultValue(true).visible(sprintBoost::get).build());
+    private final Setting<Boolean> overdrive = boost.add(new BoolSetting.Builder().name("overdrive")
+        .description("Boost to 340 b/s (17 blocks per tick), the most a vanilla server accepts in one move packet, instead of boost-max-speed. Any boost above 245 b/s is set back whenever two move packets reach the server in the same tick (lag or ping jitter), so 340 b/s rubber-bands no more often than 300 b/s.")
+        .defaultValue(false).visible(this::boostVisible).build());
     private final Setting<Double> boostMaxSpeed = boost.add(new DoubleSetting.Builder().name("boost-max-speed")
-        .description("Top horizontal boost speed in blocks per tick (14.999 is VolytraFly's 300 b/s). Vanilla servers set back elytra moves over about 17.3 blocks per tick.")
-        .defaultValue(14.999).range(.1, 64).sliderRange(1, 17.3).decimalPlaces(3).visible(this::boostVisible).build());
+        .description("Top horizontal boost speed in blocks per tick with overdrive off (14.999 is VolytraFly's 300 b/s). Boost's total 3D speed never exceeds what a vanilla server accepts per move packet: 17 blocks per tick.")
+        .defaultValue(14.999).range(.1, 24).sliderRange(1, 17).decimalPlaces(3)
+        .visible(() -> boostVisible() && !overdrive.get()).build());
     private final Setting<Double> boostStartSpeed = boost.add(new DoubleSetting.Builder().name("boost-start-speed")
         .description("Horizontal speed boost starts at, in blocks per tick, when slower (2.999 is 60 b/s).")
         .defaultValue(2.999).range(0, 64).sliderRange(0, 10).decimalPlaces(3).visible(this::boostVisible).build());
@@ -557,6 +562,8 @@ public final class AdaptiveElytraFly extends Module {
         record.addProperty("ping", info == null ? -1 : info.getLatency());
         record.addProperty("chunkAheadLoaded", chunkAheadLoaded(position, output));
         record.addProperty("flyIntoUnloadedChunks", flyIntoUnloadedChunks.get());
+        record.addProperty("overdrive", overdrive.get());
+        record.addProperty("boostTop", boostTop() * 20);
         setbackLog.append(record);
     }
 
@@ -615,8 +622,8 @@ public final class AdaptiveElytraFly extends Module {
         return new AdaptiveFlightEngine.Settings(acceleration.get(), braking.get(), adaptiveTurnRate.get(),
             cruiseMaximum.get(), sprintMaximum.get(), verticalMaxSpeed.get(), verticalCruiseMaximum.get(),
             verticalSprintMaximum.get(), verticalAcceleration.get(), verticalRampStep.get(),
-            boostVisible(), boostMaxSpeed.get(), boostStartSpeed.get(), boostRampStep.get(),
-            boostVerticalStartSpeed.get(), boostRewindTicks.get(), lookahead.get(), margin.get(),
+            boostVisible(), boostTop(), boostStartSpeed.get(), boostRampStep.get(),
+            boostVerticalStartSpeed.get(), boostRewindTicks.get(), serverMoveLimit(), lookahead.get(), margin.get(),
             safeManeuvering.get(), closeObjectSpeed.get(),
             fly == null ? 0 : fly.horizontalSpeed.get(), fly == null ? 0 : fly.verticalSpeed.get(),
             fly == null ? 0 : fly.fallMultiplier.get());
@@ -631,6 +638,12 @@ public final class AdaptiveElytraFly extends Module {
     }
 
     private boolean boostVisible() { return sprintBoost.get() && unlimitedBoost.get(); }
+
+    /** The most a vanilla server accepts per tick in total, which boost never exceeds. */
+    private double serverMoveLimit() { return ServerMoveLimit.SINGLE; }
+
+    /** The horizontal boost ramp's top speed: the server's per-tick limit with overdrive, otherwise boost-max-speed. */
+    private double boostTop() { return overdrive.get() ? serverMoveLimit() : boostMaxSpeed.get(); }
 
     /** The physical Sprint key, including a rebound mouse button, while Minecraft is focused with no screen open. */
     private boolean sprintKeyDown() {
@@ -714,9 +727,9 @@ public final class AdaptiveElytraFly extends Module {
     private String boostLine() {
         if (!boostVisible()) return "Boost: off (adaptive Sprint)";
         String toggle = boostKeyMode.get() != BoostKeyMode.Toggle ? "" : boostToggled ? " (on)" : " (off)";
-        return String.format(Locale.ROOT, "Boost%s: H %.0f/%.0f | V %.0f/%.0f b/s", toggle,
+        return String.format(Locale.ROOT, "Boost%s: H %.0f/%.0f | V %.0f/%.0f b/s%s", toggle,
             engine.horizontalBoost() * 20, engine.horizontalBoostCeiling() * 20,
-            engine.verticalBoost() * 20, engine.verticalBoostCeiling() * 20);
+            engine.verticalBoost() * 20, engine.verticalBoostCeiling() * 20, overdrive.get() ? " | overdrive" : "");
     }
 
     private void updateStatus() {
@@ -727,7 +740,7 @@ public final class AdaptiveElytraFly extends Module {
         if (speedLabel != null) {
             double maximum = controlling && !engine.boostActive() ? engine.adaptiveMaximum()
                 : AdaptiveFlightStep.maximumSpeed(braking.get(), lookahead.get(), margin.get());
-            double sprint = boostVisible() ? boostMaxSpeed.get() * 20 * sprintMaximum.get() / 100
+            double sprint = boostVisible() ? boostTop() * 20 * sprintMaximum.get() / 100
                 : maximum * sprintMaximum.get() / 5;
             speedLabel.set(String.format(Locale.ROOT,
                 "Horizontal max %.1f b/s | cruise %.1f (%.1f%%) | %s %.1f (%.1f%%) | vertical cruise/Sprint %.1f/%.1f b/s",
