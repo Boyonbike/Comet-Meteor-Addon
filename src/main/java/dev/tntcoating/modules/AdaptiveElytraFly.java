@@ -1,5 +1,6 @@
 package dev.tntcoating.modules;
 
+import com.google.gson.JsonObject;
 import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.compat.MeteorUpgrades;
 import dev.tntcoating.core.AdaptiveFlightController.Motion;
@@ -7,14 +8,18 @@ import dev.tntcoating.core.AdaptiveFlightEngine;
 import dev.tntcoating.core.AdaptiveFlightStep;
 import dev.tntcoating.core.ElytraBoostDelay;
 import dev.tntcoating.core.FlightCorridor;
+import dev.tntcoating.core.PacketCaptureLog;
 import dev.tntcoating.core.ServerGlide;
 import dev.tntcoating.core.SmartElytraSwap;
 import dev.tntcoating.mixin.FireworkRocketAccessor;
+import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
@@ -43,6 +48,7 @@ import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.Direction;
@@ -76,6 +82,7 @@ public final class AdaptiveElytraFly extends Module {
     private final SettingGroup general = settings.getDefaultGroup();
     private final SettingGroup boost = settings.createGroup("Unlimited Boost");
     private final SettingGroup terrain = settings.createGroup("Terrain");
+    private final SettingGroup diagnostics = settings.createGroup("Diagnostics");
     private final Setting<Boolean> smartElytraSwap = general.add(new BoolSetting.Builder().name("smart-elytra-swap")
         .description("Wear a chestplate on the ground. Press Jump again in the air to equip an elytra from your inventory and start flying in the same attempt.")
         .defaultValue(true).build());
@@ -158,6 +165,9 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Boolean> serverGlideGuard = terrain.add(new BoolSetting.Builder().name("server-glide-guard")
         .description("Keep walls out of reach of the server's own elytra glide. A vanilla server keeps simulating a normal glide from your reported position every tick, and that hidden speed, not your visible speed, deals fly-into-wall damage.")
         .defaultValue(true).build());
+    private final Setting<Boolean> logSetbacks = diagnostics.add(new BoolSetting.Builder().name("log-setbacks")
+        .description("Write every server setback while flying to meteor-client/comet/setback-logs (one file per session, at most 4 MB): speed, boost, ping and whether terrain ahead was loaded, to compare flights by numbers instead of feel.")
+        .defaultValue(true).build());
 
     // Receive events run on Netty. Only these atomic mailboxes are touched there; all flight/world work is client-thread work.
     private final AtomicInteger corrections = new AtomicInteger();
@@ -222,6 +232,9 @@ public final class AdaptiveElytraFly extends Module {
     private int setbacks, diagnosticSetbackBase;
     private Vec3 samplePosition, lastControlledPosition;
     private final ElytraBoostDelay boostDelay = new ElytraBoostDelay();
+    private static final long SETBACK_LOG_BYTES = 4L * 1024 * 1024;
+    private PacketCaptureLog setbackLog;
+    private boolean setbackLogFailed;
 
     public AdaptiveElytraFly() {
         super(TntCoatingAddon.CATEGORY, "adaptive-elytra-fly",
@@ -241,9 +254,15 @@ public final class AdaptiveElytraFly extends Module {
         } else if (mc.player != null && mc.level != null && !fly.isActive()) fly.toggle();
     }
 
-    @Override public void onDeactivate() { reset(); }
+    @Override public void onDeactivate() {
+        reset();
+        closeSetbackLog();
+    }
 
-    @EventHandler private void onGameLeft(GameLeftEvent event) { reset(); }
+    @EventHandler private void onGameLeft(GameLeftEvent event) {
+        reset();
+        closeSetbackLog();
+    }
 
     @EventHandler private void onPacket(PacketEvent.Receive event) {
         if (event.packet instanceof ClientboundPlayerPositionPacket position) {
@@ -490,11 +509,70 @@ public final class AdaptiveElytraFly extends Module {
                 mc.player.getDeltaMovement(), mc.player.getYRot(), mc.player.getXRot()),
                 packet.change(), packet.relatives()).position();
         boolean teleport = lastControlledPosition == null || target.distanceToSqr(lastControlledPosition) > 64 * 64;
+        logSetback(count, target, teleport);
         engine.setback(teleport);
         setbacks = (int) Math.min(Integer.MAX_VALUE, (long) setbacks + count);
         movementTick = Integer.MIN_VALUE;
         samplePosition = null;
         measuredSpeed = 0;
+    }
+
+    /** One record per setback, before it rewinds the ramps; the log opens with the session's first setback. */
+    private void logSetback(int count, Vec3 target, boolean teleport) {
+        if (!logSetbacks.get()) {
+            closeSetbackLog();
+            return;
+        }
+        if (setbackLog == null || !setbackLog.isAccepting()) {
+            if (setbackLogFailed || setbackLog != null) return;
+            try {
+                setbackLog = PacketCaptureLog.open(MeteorClient.FOLDER.toPath().resolve("comet/setback-logs"),
+                    SETBACK_LOG_BYTES);
+            } catch (IOException | RuntimeException e) {
+                setbackLogFailed = true;
+                warning("Could not open the setback log: %s", e.getMessage() == null ? e : e.getMessage());
+                return;
+            }
+        }
+        Motion output = engine.output();
+        Vec3 position = mc.player.position();
+        JsonObject record = new JsonObject();
+        record.addProperty("time", Instant.now().toString());
+        record.addProperty("tick", clientTicks);
+        record.addProperty("count", count);
+        record.addProperty("dimension", mc.level.dimension().identifier().toString());
+        record.addProperty("x", position.x);
+        record.addProperty("y", position.y);
+        record.addProperty("z", position.z);
+        record.addProperty("correctionDistance", lastControlledPosition == null ? -1 : target.distanceTo(lastControlledPosition));
+        record.addProperty("teleport", teleport);
+        record.addProperty("speed", output.length() * 20);
+        record.addProperty("horizontalSpeed", output.horizontalLength() * 20);
+        record.addProperty("verticalSpeed", output.y() * 20);
+        record.addProperty("boosting", engine.boostActive());
+        record.addProperty("horizontalBoost", engine.horizontalBoost() * 20);
+        record.addProperty("verticalBoost", engine.verticalBoost() * 20);
+        record.addProperty("state", state);
+        PlayerInfo info = mc.getConnection() == null ? null : mc.getConnection().getPlayerInfo(mc.player.getUUID());
+        record.addProperty("ping", info == null ? -1 : info.getLatency());
+        record.addProperty("chunkAheadLoaded", chunkAheadLoaded(position, output));
+        record.addProperty("flyIntoUnloadedChunks", flyIntoUnloadedChunks.get());
+        setbackLog.append(record);
+    }
+
+    /** Whether the client has the chunk two seconds of current horizontal flight ahead, capped at 64 blocks. */
+    private boolean chunkAheadLoaded(Vec3 position, Motion output) {
+        double horizontal = output.horizontalLength();
+        double reach = Math.min(64, horizontal * 40);
+        double x = horizontal == 0 ? position.x : position.x + output.x() / horizontal * reach;
+        double z = horizontal == 0 ? position.z : position.z + output.z() / horizontal * reach;
+        return mc.level.getChunkSource().hasChunk((int) Math.floor(x / 16), (int) Math.floor(z / 16));
+    }
+
+    private void closeSetbackLog() {
+        if (setbackLog != null) setbackLog.close();
+        setbackLog = null;
+        setbackLogFailed = false;
     }
 
     private void suspend(String why) {
@@ -660,7 +738,8 @@ public final class AdaptiveElytraFly extends Module {
         }
         if (boostLabel != null) boostLabel.set(boostLine());
         if (countsLabel != null) countsLabel.set("Setbacks " + (setbacks - diagnosticSetbackBase)
-            + " | chunk-limited ticks " + chunkLimitedTicks + " | obstacle-limited ticks " + obstacleLimitedTicks);
+            + " | chunk-limited ticks " + chunkLimitedTicks + " | obstacle-limited ticks " + obstacleLimitedTicks
+            + (setbackLog == null ? "" : " | logging to " + setbackLog.path().getFileName()));
         if (glideLabel != null) glideLabel.set(String.format(Locale.ROOT,
             "Server glide %s | glide-limited ticks %d | predicted server wall hits %d",
             serverGlide == null ? "idle" : String.format(Locale.ROOT, "%.1f b/s%s",
