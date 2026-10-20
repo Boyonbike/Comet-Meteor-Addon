@@ -26,8 +26,8 @@ public final class PlayerSpeedHud extends HudElement {
         BlocksPerSecond(1, "b/s"),
         KilometersPerHour(3.6, "km/h");
 
-        private final double multiplier;
-        private final String suffix;
+        final double multiplier;
+        final String suffix;
 
         Units(double multiplier, String suffix) {
             this.multiplier = multiplier;

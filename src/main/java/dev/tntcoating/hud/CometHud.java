@@ -13,6 +13,7 @@ public final class CometHud {
         Hud hud = Hud.get();
         hud.register(EngineHud.ADAPTIVE_ELYTRA_FLY);
         hud.register(PlayerSpeedHud.INFO);
+        hud.register(Speed3dHud.INFO);
         hud.register(TeleportCountdownHud.INFO);
         hud.register(DubCounterHud.INFO);
     }

@@ -14,7 +14,7 @@ public final class EngineHud extends HudElement {
         EngineHud::new);
 
     private static final String TITLE = "Adaptive Elytra Fly";
-    private static final List<String> PREVIEW = List.of("State: Flying", "Speed: 41.0 b/s | H 41.2 | V +0.0",
+    private static final List<String> PREVIEW = List.of("State: Flying", "Speed: 41.0 b/s | 3D 41.2 | H 41.2 | V +0.0",
         "Engine max: 118.0 b/s", "Boost: H 0/300 | V 0/60 b/s", "Setbacks: 0 | server glide 30.0 b/s");
 
     private final PanelStyle style = new PanelStyle(settings);

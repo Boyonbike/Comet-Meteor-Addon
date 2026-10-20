@@ -13,6 +13,11 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class AdaptiveFlightEngine {
     private static final double EPSILON = 1e-7;
+    // A heading change faster than this, in degrees per tick, counts as turning for maneuver mode. Turn assistance
+    // closes the gap every tick at speed, so the gap is about this tick's mouse turn (or a strafe key).
+    private static final double MANEUVER_TURN_DEGREES = 2;
+    // Maneuver mode outlasts its trigger by this many ticks, so it cannot flicker between capped and full speed.
+    private static final int MANEUVER_HOLD_TICKS = 10;
 
     /**
      * The module's settings and Meteor Elytra Fly's stock speeds, which only enable an axis (zero disables it) and
@@ -22,7 +27,8 @@ public final class AdaptiveFlightEngine {
      * {@code verticalMaximum} shape the horizontal and vertical ramp curves, which the Sprint caps only stop short
      * of, never reshape, and {@code boostCeiling} is the total 3D speed boost may never exceed (see
      * {@link ServerMoveLimit}). After a setback both ramps hold their rewound speed for {@code setbackHoldTicks}
-     * before accelerating.
+     * before accelerating. With {@code maneuverMode}, flying horizontally, vertically and turning at once holds total
+     * 3D speed to {@code maneuverCeiling}, and boost speeds up again from there afterwards.
      */
     public record Settings(double acceleration, double braking, double turnRate,
                            double cruise, double sprint,
@@ -30,7 +36,7 @@ public final class AdaptiveFlightEngine {
                            double verticalAcceleration, double verticalRampStep,
                            boolean unlimitedBoost, double boostTop, double boostStart, double boostRampStep,
                            double boostVerticalStart, int rewindTicks, int setbackHoldTicks, double boostCeiling,
-                           int lookahead, double margin, boolean safeManeuvering, double closeObjectSpeed,
+                           boolean maneuverMode, double maneuverCeiling, int lookahead, double margin, boolean safeManeuvering, double closeObjectSpeed,
                            double stockHorizontalSpeed, double stockVerticalSpeed, double fallMultiplier) {}
 
     /** Minecraft's collision for a movement from the current body, without step-up. */
@@ -51,8 +57,8 @@ public final class AdaptiveFlightEngine {
     private final AdaptiveFlightController controller;
     private final BoostRamp horizontalRamp = new BoostRamp(new BoostRamp.Settings(0, 0, 1, 0, 0));
     private final BoostRamp verticalRamp = new BoostRamp(new BoostRamp.Settings(0, 0, 1, 0, 0));
-    private int verticalBoostDirection;
-    private boolean sprintKey, boostActive, maneuvering, nearObject, closeObjectOverride;
+    private int verticalBoostDirection, maneuverTicks;
+    private boolean sprintKey, boostActive, maneuvering, nearObject, closeObjectOverride, maneuverMode;
     private boolean releaseSafeCollisions, contactResolved;
     private double releaseSpeed, adaptiveMaximum;
     private AdaptiveFlightStep.Result lastStep;
@@ -109,6 +115,7 @@ public final class AdaptiveFlightEngine {
         boolean sprinting = sprintKey || closeObjectOverride;
         int verticalInput = Finite.clamp(s.stockVerticalSpeed(), 0, 64, 0) == 0 ? 0
             : input.jump() ? 1 : input.sneak() ? -1 : 0;
+        updateManeuver(requested, verticalInput);
         AdaptiveFlightStep.Boost boost = updateBoost(requested, verticalInput);
         // The step works in shares of what the adaptive engine can attain; a cap above that is no limit.
         double horizon = AdaptiveFlightStep.maximumSpeed(s.braking(), s.lookahead(), s.margin());
@@ -125,7 +132,8 @@ public final class AdaptiveFlightEngine {
             new AdaptiveFlightStep.Controls(sprinting,
                 share(sprinting ? s.sprint() : s.cruise(), horizon),
                 share(sprinting ? s.verticalSprint() : s.verticalCruise(), verticalHorizon),
-                verticalInput, releaseSafeCollisions, input.glide(), releaseSpeed, blend, boost));
+                verticalInput, releaseSafeCollisions, input.glide(), releaseSpeed, blend, boost,
+                maneuverMode ? s.maneuverCeiling() : Double.POSITIVE_INFINITY));
         Motion actual = step.motion();
         contactResolved = false;
         if (step.safeManeuvering()) {
@@ -176,6 +184,7 @@ public final class AdaptiveFlightEngine {
             verticalRamp.disengage();
             verticalBoostDirection = 0;
             boostActive = false;
+            clearManeuver();
             return;
         }
         horizontalRamp.corrected();
@@ -191,6 +200,7 @@ public final class AdaptiveFlightEngine {
         boostActive = false;
         maneuvering = nearObject = closeObjectOverride = false;
         adaptiveMaximum = 0;
+        clearManeuver();
     }
 
     public void reset() {
@@ -201,6 +211,7 @@ public final class AdaptiveFlightEngine {
         sprintKey = boostActive = maneuvering = nearObject = closeObjectOverride = false;
         releaseSafeCollisions = contactResolved = false;
         adaptiveMaximum = 0;
+        clearManeuver();
         lastStep = null;
         chunkChecks = 0;
     }
@@ -217,6 +228,8 @@ public final class AdaptiveFlightEngine {
     public boolean maneuvering() { return maneuvering; }
     public boolean nearObject() { return nearObject; }
     public boolean closeObjectOverride() { return closeObjectOverride; }
+    /** Maneuver mode holds total 3D speed to its ceiling on the latest step. */
+    public boolean maneuverMode() { return maneuverMode; }
     public boolean contactResolved() { return contactResolved; }
     /** The latest step, or null before the first. */
     public AdaptiveFlightStep.Result lastStep() { return lastStep; }
@@ -238,9 +251,41 @@ public final class AdaptiveFlightEngine {
             verticalRamp.disengage();
             verticalBoostDirection = 0;
         }
+        // Maneuvering holds both ramps to their share of the 3D ceiling, so they speed up from it afterwards.
+        double ramps = Math.hypot(horizontalRamp.speed(), verticalRamp.speed());
+        if (maneuverMode && ramps > settings.maneuverCeiling()) {
+            double ceiling = settings.maneuverCeiling();
+            verticalRamp.limitTo(verticalRamp.speed() * ceiling / ramps);
+            // The vertical ramp never drops below its start speed, so horizontal takes what remains.
+            horizontalRamp.limitTo(Math.sqrt(Math.max(0, ceiling * ceiling
+                - verticalRamp.speed() * verticalRamp.speed())));
+        }
         boostActive = horizontalRamp.speed() > 0 || verticalRamp.speed() > 0;
         return boostActive ? new AdaptiveFlightStep.Boost(horizontalRamp.speed(), verticalRamp.speed(),
             settings.boostCeiling()) : null;
+    }
+
+    /** Maneuvering: horizontal and vertical input while turning, held for a short grace once that stops. */
+    private void updateManeuver(Motion requested, int verticalInput) {
+        if (!settings.maneuverMode()) {
+            clearManeuver();
+            return;
+        }
+        Motion previous = controller.output();
+        boolean turning = false;
+        if (previous.horizontalLength() > EPSILON && requested.horizontalLength() > 0) {
+            double gap = Math.IEEEremainder(Math.atan2(requested.z(), requested.x())
+                - Math.atan2(previous.z(), previous.x()), 2 * Math.PI);
+            turning = Math.abs(gap) > Math.toRadians(MANEUVER_TURN_DEGREES);
+        }
+        if (turning && verticalInput != 0) maneuverTicks = MANEUVER_HOLD_TICKS;
+        else if (maneuverTicks > 0) maneuverTicks--;
+        maneuverMode = maneuverTicks > 0;
+    }
+
+    private void clearManeuver() {
+        maneuverMode = false;
+        maneuverTicks = 0;
     }
 
     /** Meteor Vanilla's requested movement from the keys, with its fall-multiplier sink. */

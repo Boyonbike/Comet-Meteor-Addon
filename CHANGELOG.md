@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.24.6
+
+- **Adaptive Elytra Fly maneuver mode:** moving horizontally, climbing or descending and turning all at once now holds total 3D speed to **maneuver-max-bps** (default 200 b/s; **maneuver-mode**, on by default), to cut rubber-banding in combined maneuvers. The cap lasts half a second after you stop turning, then boost speeds up again from it along its normal curve. Climbing or turning on its own is never capped, and all fifteen recorded scripted flights reproduce exactly.
+- **3D speed HUD:** the **adaptive-elytra-fly-engine** element's speed line now includes the engine's 3D output, and a new **speed-3d** element shows measured 3D speed and when the maneuver cap is active.
+
 ## 0.24.5
 
 - **Adaptive Elytra Fly speed caps in blocks per second:** **cruise-max-bps** (41.2), **vertical-cruise-max-bps** (21), **boost-max-bps** (300) and **vertical-boost-max-bps** (60) replace **cruise-max-speed**, **sprint-max-speed**, **vertical-max-speed**, **vertical-cruise-max-speed**, **vertical-sprint-max-speed**, **boost-max-speed** and **boost-start-speed**. They are new settings, so re-enter any value you had changed. The boost curve is now fixed at VolytraFly's 2.999 to 14.999 blocks/tick (60 to 300 b/s; overdrive still raises its top). A boost cap stops that curve where you set it instead of reshaping it: boost accelerates exactly as at 300 b/s and holds the cap, where lowering **boost-max-speed** used to make the whole ramp taper towards it. Braking is planned from the curve's top, so a cap never changes it. Default flight is unchanged: all fifteen recorded scripted flights reproduce exactly.

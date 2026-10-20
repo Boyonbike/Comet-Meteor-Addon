@@ -120,6 +120,12 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Double> verticalBoostMaxBps = general.add(new DoubleSetting.Builder().name("vertical-boost-max-bps")
         .description("Sprint + Jump/Sneak speed cap in blocks per second, up to 60. Vertical boost accelerates along its fixed curve and stops at this speed.")
         .defaultValue(60).range(0, 60).sliderRange(0, 60).decimalPlaces(1).visible(sprintBoost::get).build());
+    private final Setting<Boolean> maneuverMode = general.add(new BoolSetting.Builder().name("maneuver-mode")
+        .description("While moving horizontally, climbing or descending and turning at once, hold total 3D speed to maneuver-max-bps to reduce setbacks. Boost speeds up again from the cap half a second after you stop.")
+        .defaultValue(true).build());
+    private final Setting<Double> maneuverMaxBps = general.add(new DoubleSetting.Builder().name("maneuver-max-bps")
+        .description("Total 3D speed cap while maneuvering, in blocks per second.")
+        .defaultValue(200).range(20, 480).sliderRange(60, 340).decimalPlaces(1).visible(maneuverMode::get).build());
     private final Setting<Double> verticalAcceleration = general.add(new DoubleSetting.Builder().name("vertical-acceleration")
         .description("Minimum vertical velocity change per tick; vertical-ramp-step speeds it up when far below the target. Vertical braking uses up to twice this, more from fast climbs and dives (mirroring vertical-ramp-step).")
         .defaultValue(.05).range(.005, .5).sliderRange(.005, .15).decimalPlaces(3).build());
@@ -498,7 +504,8 @@ public final class AdaptiveElytraFly extends Module {
             else if (step.terrainLimited() && ahead != null && ahead.reason() == FlightCorridor.Reason.OBSTACLE) {
                 state = "Obstacle limited";
                 obstacleLimitedTicks++;
-            } else if (engine.boostActive()) state = "Unlimited boost";
+            } else if (engine.maneuverMode()) state = "Maneuver capped";
+            else if (engine.boostActive()) state = "Unlimited boost";
             else if (step.lookaheadLimited()) state = "Lookahead limited";
             else if (engine.sprintBoosting()) state = "Sprint boost";
             else state = "Flying";
@@ -651,6 +658,8 @@ public final class AdaptiveElytraFly extends Module {
         record.addProperty("boostTop", boostTop() * 20);
         record.addProperty("boostMaxBps", boostMaxBps.get());
         record.addProperty("verticalBoostMaxBps", verticalBoostMaxBps.get());
+        record.addProperty("maneuverMode", engine.maneuverMode());
+        record.addProperty("maneuverMaxBps", maneuverMode.get() ? maneuverMaxBps.get() : -1);
         record.addProperty("pinned", pinned);
         record.addProperty("setbackHold", boostSetbackHold.get());
         describeRejectedMove(record, target);
@@ -718,7 +727,7 @@ public final class AdaptiveElytraFly extends Module {
             verticalBoostMaxBps.get() / 20, verticalAcceleration.get(), verticalRampStep.get(),
             boostVisible(), boostTop(), BOOST_START, boostRampStep.get(),
             boostVerticalStartSpeed.get(), boostRewindTicks.get(), boostSetbackHold.get(), serverMoveLimit(),
-            lookahead.get(), margin.get(),
+            maneuverMode.get(), maneuverMaxBps.get() / 20, lookahead.get(), margin.get(),
             safeManeuvering.get(), closeObjectSpeed.get(),
             fly == null ? 0 : fly.horizontalSpeed.get(), fly == null ? 0 : fly.verticalSpeed.get(),
             fly == null ? 0 : fly.fallMultiplier.get());
@@ -825,14 +834,20 @@ public final class AdaptiveElytraFly extends Module {
         if (ms > 50) slowFrames++;
     }
 
+    /** Maneuver mode is holding controlled flight to {@link #maneuverMaxBps()}. */
+    public boolean maneuverCapped() { return isActive() && controlling && engine.maneuverMode(); }
+
+    public double maneuverMaxBps() { return maneuverMaxBps.get(); }
+
     /** Lines for the Adaptive Elytra Fly HUD element, or null while the module is off. */
     public List<String> hudLines() {
         if (!isActive()) return null;
         Motion output = engine.output();
         return List.of(
-            String.format(Locale.ROOT, "State: %s", state),
-            String.format(Locale.ROOT, "Speed: %.1f b/s | H %.1f | V %+.1f",
-                measuredSpeed, output.horizontalLength() * 20, output.y() * 20),
+            String.format(Locale.ROOT, "State: %s%s", state, maneuverCapped()
+                ? String.format(Locale.ROOT, " | maneuver ≤%.0f", maneuverMaxBps.get()) : ""),
+            String.format(Locale.ROOT, "Speed: %.1f b/s | 3D %.1f | H %.1f | V %+.1f",
+                measuredSpeed, output.length() * 20, output.horizontalLength() * 20, output.y() * 20),
             String.format(Locale.ROOT, "%s: %.1f b/s", engine.boostActive() ? "Guard max" : "Engine max",
                 engine.adaptiveMaximum() * 20),
             boostLine(),

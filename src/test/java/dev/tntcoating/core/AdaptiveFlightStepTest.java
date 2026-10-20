@@ -42,6 +42,16 @@ class AdaptiveFlightStepTest {
         }
     }
 
+    @Test void aTotalCeilingHoldsUnboostedMomentumToo() {
+        AdaptiveFlightController controller = controller(.25, .5);
+        controller.accept(new Motion(2, 0, 0));
+        var capped = new AdaptiveFlightStep.Controls(false, 1, 1, 0, false, null,
+            AdaptiveFlightStep.SAFE_MANEUVER_SPEED, TestControls.BLEND, null, 1);
+        var step = AdaptiveFlightStep.move(controller, new Motion(3, 0, 0), 3, 1, body, new Probe(), 64, .35, capped);
+        assertEquals(1, step.motion().length(), EPSILON);
+        assertEquals(step.motion(), controller.output());
+    }
+
     @Test void acceleratesThenBrakesAtALoadedEdgeAcrossManyTicksWithoutCrossing() {
         AdaptiveFlightController controller = controller(.5, .3);
         Probe probe = new Probe((x, z) -> x == 0);

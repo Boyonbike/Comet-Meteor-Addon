@@ -29,11 +29,19 @@ public final class AdaptiveFlightStep {
     /**
      * Horizontal and vertical percentages are independent fractions of their attainable outputs,
      * not the raw 64-block request. A non-null {@code glide} keeps walls outside the server's hidden
-     * glide reach; a null {@code boost} leaves both axes on the adaptive engine.
+     * glide reach; a null {@code boost} leaves both axes on the adaptive engine. {@code totalCeiling} holds the
+     * whole 3D movement, boosted or not, such as maneuver mode's cap.
      */
     public record Controls(boolean sprintBoost, double maximumFraction, double verticalFraction, int verticalInput,
                            boolean releaseSafeCollisions, ServerGlide.Context glide,
-                           double collisionReleaseSpeed, Blend blend, Boost boost) {
+                           double collisionReleaseSpeed, Blend blend, Boost boost, double totalCeiling) {
+        public Controls(boolean sprintBoost, double maximumFraction, double verticalFraction, int verticalInput,
+                        boolean releaseSafeCollisions, ServerGlide.Context glide,
+                        double collisionReleaseSpeed, Blend blend, Boost boost) {
+            this(sprintBoost, maximumFraction, verticalFraction, verticalInput, releaseSafeCollisions, glide,
+                collisionReleaseSpeed, blend, boost, Double.POSITIVE_INFINITY);
+        }
+
         public Controls {
             if (!Double.isFinite(maximumFraction) || maximumFraction < 0 || maximumFraction > 1) {
                 throw new IllegalArgumentException("Horizontal maximum fraction must be in [0, 1].");
@@ -48,6 +56,9 @@ public final class AdaptiveFlightStep {
                 throw new IllegalArgumentException("Collision release speed must be finite and positive.");
             }
             Objects.requireNonNull(blend, "blend");
+            if (Double.isNaN(totalCeiling) || totalCeiling < 0) {
+                throw new IllegalArgumentException("Total ceiling must be nonnegative or positive infinity.");
+            }
         }
     }
 
@@ -211,8 +222,8 @@ public final class AdaptiveFlightStep {
         Motion limited = new Motion(blended.x() * horizontalFactor, y, blended.z() * horizontalFactor);
         // The server rejects total displacement: a climb or dive spends the same
         // speed budget as horizontal flight, including momentum on a released axis.
-        if (boosted && limited.length() > boost.totalCeiling())
-            limited = limited.scaled(boost.totalCeiling() / limited.length());
+        double totalCeiling = Math.min(controls.totalCeiling(), boosted ? boost.totalCeiling() : Double.POSITIVE_INFINITY);
+        if (limited.length() > totalCeiling) limited = limited.scaled(totalCeiling / limited.length());
         controller.accept(limited);
         double speed = limited.length();
         FlightCorridor.Probe chunksOnly = probe == null ? null : FlightCorridor.Probe.chunksOnly(probe);
