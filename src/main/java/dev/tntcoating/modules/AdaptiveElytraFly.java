@@ -99,7 +99,7 @@ public final class AdaptiveElytraFly extends Module {
         .description("Heading assistance in degrees per tick. Rises with speed to double at the adaptive engine's maximum, so fast turns stop sliding sideways, and fades out at low speed, where steering keeps its precise momentum feel. Zero restores momentum steering.")
         .defaultValue(15).range(0, 45).sliderRange(0, 45).build());
     private final Setting<Boolean> sprintBoost = general.add(new BoolSetting.Builder().name("sprint-boost")
-        .description("Hold your Sprint key to boost horizontal movement and deliberate climb/descent. With unlimited-boost on, Sprint drives the unlimited boost ramp; otherwise it raises the adaptive engine to sprint-max-speed.")
+        .description("Hold your Sprint key to boost horizontal movement and deliberate climb/descent. With unlimited-boost on, Sprint drives the unlimited boost ramp; otherwise it raises the adaptive engine to boost-max-bps and vertical-boost-max-bps.")
         .defaultValue(true).build());
     private final Setting<BoostKeyMode> boostKeyMode = general.add(new EnumSetting.Builder<BoostKeyMode>()
         .name("boost-key-mode")
@@ -108,48 +108,38 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Boolean> toggleOffWhenIdle = general.add(new BoolSetting.Builder().name("toggle-off-when-idle")
         .description("In Toggle mode, turn boost off once you stop pressing every movement key (WASD, Jump, Sneak), unless Meteor's Auto Walk, Elytra Fly autopilot, Baritone or Baritone Elytra is moving you.")
         .defaultValue(true).visible(() -> sprintBoost.get() && boostKeyMode.get() == BoostKeyMode.Toggle).build());
-    private final Setting<Double> cruiseMaximum = general.add(new DoubleSetting.Builder().name("cruise-max-speed")
-        .description("Horizontal cruise maximum as a percentage of the adaptive engine's attainable speed. 100% uses its full output; see Flight Diagnostics for blocks/second.")
-        .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
-    private final Setting<Double> sprintMaximum = general.add(new DoubleSetting.Builder().name("sprint-max-speed")
-        .description("Horizontal Sprint maximum: a percentage of boost-max-speed with unlimited-boost on, otherwise of the adaptive engine's attainable speed.")
-        .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(sprintBoost::get).build());
-    private final Setting<Double> verticalMaxSpeed = general.add(new DoubleSetting.Builder().name("vertical-max-speed")
-        .description("Fastest climb/descent in blocks per tick (3 is 60 b/s). Vertical percentages and the vertical boost ramp are of this.")
-        .defaultValue(3).range(.05, 10).sliderRange(.1, 6).decimalPlaces(2).build());
-    private final Setting<Double> verticalCruiseMaximum = general.add(new DoubleSetting.Builder().name("vertical-cruise-max-speed")
-        .description("Jump/Sneak cruise maximum as a percentage of vertical-max-speed.")
-        .defaultValue(35).range(0, 100).sliderRange(0, 100).decimalPlaces(1).build());
-    private final Setting<Double> verticalSprintMaximum = general.add(new DoubleSetting.Builder().name("vertical-sprint-max-speed")
-        .description("Sprint + Jump/Sneak maximum as a percentage of vertical-max-speed.")
-        .defaultValue(100).range(0, 100).sliderRange(0, 100).decimalPlaces(1).visible(sprintBoost::get).build());
+    private final Setting<Double> cruiseMaxBps = general.add(new DoubleSetting.Builder().name("cruise-max-bps")
+        .description("Horizontal cruise speed cap in blocks per second. Cruise also never passes the adaptive engine's terrain-safe maximum (about 118 b/s with defaults; see Flight Diagnostics).")
+        .defaultValue(41.2).range(0, 480).sliderRange(0, 120).decimalPlaces(1).build());
+    private final Setting<Double> verticalCruiseMaxBps = general.add(new DoubleSetting.Builder().name("vertical-cruise-max-bps")
+        .description("Jump/Sneak cruise speed cap in blocks per second, up to 60.")
+        .defaultValue(21).range(0, 60).sliderRange(0, 60).decimalPlaces(1).build());
+    private final Setting<Double> boostMaxBps = general.add(new DoubleSetting.Builder().name("boost-max-bps")
+        .description("Horizontal Sprint/boost speed cap in blocks per second. Boost accelerates along its fixed curve and stops at this speed instead of tapering towards it. The curve tops out at 300 b/s (overdrive: 340, or 480 with split-moves); with unlimited-boost off, Sprint also never passes the adaptive engine's maximum.")
+        .defaultValue(300).range(0, 480).sliderRange(0, 340).decimalPlaces(1).visible(sprintBoost::get).build());
+    private final Setting<Double> verticalBoostMaxBps = general.add(new DoubleSetting.Builder().name("vertical-boost-max-bps")
+        .description("Sprint + Jump/Sneak speed cap in blocks per second, up to 60. Vertical boost accelerates along its fixed curve and stops at this speed.")
+        .defaultValue(60).range(0, 60).sliderRange(0, 60).decimalPlaces(1).visible(sprintBoost::get).build());
     private final Setting<Double> verticalAcceleration = general.add(new DoubleSetting.Builder().name("vertical-acceleration")
         .description("Minimum vertical velocity change per tick; vertical-ramp-step speeds it up when far below the target. Vertical braking uses up to twice this, more from fast climbs and dives (mirroring vertical-ramp-step).")
         .defaultValue(.05).range(.005, .5).sliderRange(.005, .15).decimalPlaces(3).build());
     private final Setting<Double> verticalRampStep = general.add(new DoubleSetting.Builder().name("vertical-ramp-step")
-        .description("How fast climb/descent speeds up, in blocks per tick squared at rest, tapering to zero at vertical-max-speed (like VolytraFly's acceleration curve). Zero keeps vertical-acceleration only.")
+        .description("How fast climb/descent speeds up, in blocks per tick squared at rest, tapering to zero at 60 b/s (like VolytraFly's acceleration curve). Zero keeps vertical-acceleration only.")
         .defaultValue(.5).range(0, 5).sliderRange(0, 2).decimalPlaces(2).build());
     private final Setting<Boolean> unlimitedBoost = boost.add(new BoolSetting.Builder().name("unlimited-boost")
         .description("Holding Sprint flies VolytraFly's speed ramp instead of the adaptive engine maximum. Terrain, chunk and server-glide guards still apply. Off restores adaptive Sprint.")
         .defaultValue(true).visible(sprintBoost::get).build());
     private final Setting<Boolean> overdrive = boost.add(new BoolSetting.Builder().name("overdrive")
-        .description("Boost to the most a vanilla server accepts per tick instead of boost-max-speed: 340 b/s (17 blocks per tick), or 480 b/s with split-moves. Any boost above 245 b/s is set back whenever two move packets reach the server in the same tick (lag or ping jitter), so 340 b/s rubber-bands no more often than 300 b/s.")
+        .description("Raise the boost curve's top from 300 b/s to the most a vanilla server accepts per tick: 340 b/s (17 blocks per tick), or 480 b/s with split-moves. boost-max-bps still caps it. Any boost above 245 b/s is set back whenever two move packets reach the server in the same tick (lag or ping jitter), so 340 b/s rubber-bands no more often than 300 b/s.")
         .defaultValue(false).visible(this::boostVisible).build());
     private final Setting<Boolean> splitMoves = boost.add(new BoolSetting.Builder().name("split-moves")
         .description("Experimental: while boosting above 200 b/s, also report a half-step position each tick. A vanilla server then allows twice the distance per tick (480 b/s with overdrive) and stops setting back 300-340 b/s when two ticks of packets arrive together. An anticheat that counts movement packets may set you back or kick you instead.")
         .defaultValue(false).visible(this::boostVisible).build());
-    private final Setting<Double> boostMaxSpeed = boost.add(new DoubleSetting.Builder().name("boost-max-speed")
-        .description("Top horizontal boost speed in blocks per tick with overdrive off (14.999 is VolytraFly's 300 b/s). Boost's total 3D speed never exceeds what a vanilla server accepts per move packet: 17 blocks per tick.")
-        .defaultValue(14.999).range(.1, 24).sliderRange(1, 17).decimalPlaces(3)
-        .visible(() -> boostVisible() && !overdrive.get()).build());
-    private final Setting<Double> boostStartSpeed = boost.add(new DoubleSetting.Builder().name("boost-start-speed")
-        .description("Horizontal speed boost starts at, in blocks per tick, when slower (2.999 is 60 b/s).")
-        .defaultValue(2.999).range(0, 64).sliderRange(0, 10).decimalPlaces(3).visible(this::boostVisible).build());
     private final Setting<Double> boostRampStep = boost.add(new DoubleSetting.Builder().name("boost-ramp-step")
-        .description("Horizontal boost acceleration in blocks per tick squared at rest, tapering to zero at boost-max-speed.")
+        .description("Horizontal boost acceleration in blocks per tick squared at rest, tapering to zero at the curve's 300 b/s top. boost-max-bps stops the ramp sooner without changing it.")
         .defaultValue(.3).range(.01, 5).sliderRange(.05, 2).decimalPlaces(2).visible(this::boostVisible).build());
     private final Setting<Double> boostVerticalStartSpeed = boost.add(new DoubleSetting.Builder().name("boost-vertical-start-speed")
-        .description("Climb/descent speed boost starts at, in blocks per tick, when slower. The vertical boost then follows vertical-ramp-step up to vertical-max-speed.")
+        .description("Climb/descent speed boost starts at, in blocks per tick, when slower. The vertical boost then follows vertical-ramp-step up to vertical-boost-max-bps.")
         .defaultValue(1.5).range(0, 10).sliderRange(0, 6).decimalPlaces(2).visible(this::boostVisible).build());
     private final Setting<Integer> boostRewindTicks = boost.add(new IntSetting.Builder().name("boost-rewind-ticks")
         .description("A server setback rewinds the boost ramp by this many ticks of acceleration instead of restarting it, and flight keeps its momentum (15 loses under 1% near top speed).")
@@ -659,6 +649,8 @@ public final class AdaptiveElytraFly extends Module {
         record.addProperty("overdrive", overdrive.get());
         record.addProperty("splitMoves", splitMoves.get());
         record.addProperty("boostTop", boostTop() * 20);
+        record.addProperty("boostMaxBps", boostMaxBps.get());
+        record.addProperty("verticalBoostMaxBps", verticalBoostMaxBps.get());
         record.addProperty("pinned", pinned);
         record.addProperty("setbackHold", boostSetbackHold.get());
         describeRejectedMove(record, target);
@@ -722,9 +714,9 @@ public final class AdaptiveElytraFly extends Module {
     /** The engine's settings from this module's and Meteor Elytra Fly's; Meteor's stock speeds only gate axes. */
     private AdaptiveFlightEngine.Settings engineSettings(ElytraFly fly) {
         return new AdaptiveFlightEngine.Settings(acceleration.get(), braking.get(), adaptiveTurnRate.get(),
-            cruiseMaximum.get(), sprintMaximum.get(), verticalMaxSpeed.get(), verticalCruiseMaximum.get(),
-            verticalSprintMaximum.get(), verticalAcceleration.get(), verticalRampStep.get(),
-            boostVisible(), boostTop(), boostStartSpeed.get(), boostRampStep.get(),
+            cruiseMaxBps.get() / 20, boostMaxBps.get() / 20, VERTICAL_TOP, verticalCruiseMaxBps.get() / 20,
+            verticalBoostMaxBps.get() / 20, verticalAcceleration.get(), verticalRampStep.get(),
+            boostVisible(), boostTop(), BOOST_START, boostRampStep.get(),
             boostVerticalStartSpeed.get(), boostRewindTicks.get(), boostSetbackHold.get(), serverMoveLimit(),
             lookahead.get(), margin.get(),
             safeManeuvering.get(), closeObjectSpeed.get(),
@@ -763,8 +755,12 @@ public final class AdaptiveElytraFly extends Module {
             mc.player.horizontalCollision));
     }
 
-    /** The horizontal boost ramp's top speed: the server's per-tick limit with overdrive, otherwise boost-max-speed. */
-    private double boostTop() { return overdrive.get() ? serverMoveLimit() : boostMaxSpeed.get(); }
+    // The boost curves, in blocks per tick: VolytraFly's 60 to 300 b/s horizontally and a 60 b/s vertical top.
+    // The b/s settings cap speed along them; they never reshape them.
+    private static final double BOOST_START = 2.999, BOOST_TOP = 14.999, VERTICAL_TOP = 3;
+
+    /** The horizontal boost curve's top speed: the server's per-tick limit with overdrive, otherwise 300 b/s. */
+    private double boostTop() { return overdrive.get() ? serverMoveLimit() : BOOST_TOP; }
 
     /** The physical Sprint key, including a rebound mouse button, while Minecraft is focused with no screen open. */
     private boolean sprintKeyDown() {
@@ -862,14 +858,15 @@ public final class AdaptiveElytraFly extends Module {
         if (speedLabel != null) {
             double maximum = controlling && !engine.boostActive() ? engine.adaptiveMaximum()
                 : AdaptiveFlightStep.maximumSpeed(braking.get(), lookahead.get(), margin.get());
-            double sprint = boostVisible() ? boostTop() * 20 * sprintMaximum.get() / 100
-                : maximum * sprintMaximum.get() / 5;
+            // What each cap actually allows: none passes its curve's top or, outside boost, the engine maximum.
+            double vertical = Math.min(maximum, VERTICAL_TOP) * 20;
+            double sprint = Math.min(boostMaxBps.get(), (boostVisible() ? boostTop() : maximum) * 20);
             speedLabel.set(String.format(Locale.ROOT,
-                "Horizontal max %.1f b/s | cruise %.1f (%.1f%%) | %s %.1f (%.1f%%) | vertical cruise/Sprint %.1f/%.1f b/s",
-                maximum * 20, maximum * cruiseMaximum.get() / 5, cruiseMaximum.get(),
-                boostVisible() ? "unlimited boost" : "Sprint", sprint, sprintMaximum.get(),
-                verticalMaxSpeed.get() * verticalCruiseMaximum.get() / 5,
-                verticalMaxSpeed.get() * verticalSprintMaximum.get() / 5));
+                "Horizontal max %.1f b/s | cruise %.1f | %s %.1f | vertical cruise/Sprint %.1f/%.1f b/s",
+                maximum * 20, Math.min(cruiseMaxBps.get(), maximum * 20),
+                boostVisible() ? "unlimited boost" : "Sprint", sprint,
+                Math.min(verticalCruiseMaxBps.get(), vertical),
+                Math.min(verticalBoostMaxBps.get(), boostVisible() ? VERTICAL_TOP * 20 : vertical)));
         }
         if (boostLabel != null) boostLabel.set(boostLine());
         if (countsLabel != null) countsLabel.set("Setbacks " + (setbacks - diagnosticSetbackBase)

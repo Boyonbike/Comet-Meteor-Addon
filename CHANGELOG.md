@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.24.5
+
+- **Adaptive Elytra Fly speed caps in blocks per second:** **cruise-max-bps** (41.2), **vertical-cruise-max-bps** (21), **boost-max-bps** (300) and **vertical-boost-max-bps** (60) replace **cruise-max-speed**, **sprint-max-speed**, **vertical-max-speed**, **vertical-cruise-max-speed**, **vertical-sprint-max-speed**, **boost-max-speed** and **boost-start-speed**. They are new settings, so re-enter any value you had changed. The boost curve is now fixed at VolytraFly's 2.999 to 14.999 blocks/tick (60 to 300 b/s; overdrive still raises its top). A boost cap stops that curve where you set it instead of reshaping it: boost accelerates exactly as at 300 b/s and holds the cap, where lowering **boost-max-speed** used to make the whole ramp taper towards it. Braking is planned from the curve's top, so a cap never changes it. Default flight is unchanged: all fifteen recorded scripted flights reproduce exactly.
+
 ## 0.24.1
 
 - **Adaptive Elytra Fly setback storms:** the first in-game setback logs showed most setbacks arriving in storms, one every round trip (about 3 ticks at 130 ms ping) with you pulled back to the identical spot each time, for up to 11 seconds and 40 seconds in 11 minutes of flight, with fly-into-unloaded-chunks on or off and while climbing and turning. Boost now holds its rewound speed for **boost-setback-hold** (default 1) tick after every setback before accelerating, VolytraFly's tested acceleration delay "to avoid getting stuck". When two setbacks in a row still land on the same spot, **pinned-glide-ticks** (default 10) hands movement to Minecraft's own elytra glide for half a second, then boosts again from the start speed. Flight Diagnostics counts these as **unpinned**.

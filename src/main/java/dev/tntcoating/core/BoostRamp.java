@@ -7,12 +7,22 @@ import java.util.Objects;
  * {@code start}, gains {@code step·(maximum − speed)/maximum} per tick and survives a setback by rewinding a
  * few ticks of that curve rather than restarting, then holding that speed for {@code holdTicks} before
  * accelerating again (VolytraFly's acceleration delay: without it a server can pin you with setbacks).
+ * {@code limit} is a speed cap: the ramp stops there without reshaping the curve, which still tapers towards
+ * {@code maximum}.
  */
 public final class BoostRamp {
-    public record Settings(double start, double maximum, double step, int rewindTicks, int holdTicks) {
+    public record Settings(double start, double maximum, double step, int rewindTicks, int holdTicks, double limit) {
+        /** No cap below the curve's own maximum. */
+        public Settings(double start, double maximum, double step, int rewindTicks, int holdTicks) {
+            this(start, maximum, step, rewindTicks, holdTicks, maximum);
+        }
+
         public Settings {
             if (!Double.isFinite(start) || start < 0 || !Double.isFinite(maximum) || maximum < 0) {
                 throw new IllegalArgumentException("Boost speeds must be finite and nonnegative.");
+            }
+            if (!Double.isFinite(limit) || limit < 0) {
+                throw new IllegalArgumentException("Boost limit must be finite and nonnegative.");
             }
             if (!Double.isFinite(step) || step <= 0) {
                 throw new IllegalArgumentException("Boost ramp step must be finite and positive.");
@@ -81,7 +91,8 @@ public final class BoostRamp {
     public boolean engaged() { return engaged; }
     /** The current ramp speed, or zero while not boosting. */
     public double speed() { return engaged ? speed : 0; }
-    public double ceiling() { return settings.maximum(); }
+    /** The fastest the ramp goes: its cap, or the curve's maximum when that is lower. */
+    public double ceiling() { return Math.min(settings.maximum(), settings.limit()); }
 
     private double floor() { return Math.min(settings.start(), ceiling()); }
 

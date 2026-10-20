@@ -112,7 +112,22 @@ class BoostRampTest {
         assertEquals(7.5, ramp.speed(), EPSILON);
     }
 
+    @Test void aLimitStopsTheCurveWithoutReshapingIt() {
+        BoostRamp free = new BoostRamp(VOLYTRA);
+        BoostRamp capped = new BoostRamp(new BoostRamp.Settings(2.999, 14.999, .3, 15, 0, 7.5));
+        free.engage(0);
+        capped.engage(0);
+        for (int tick = 0; tick < 200; tick++) {
+            assertEquals(Math.min(7.5, free.speed()), capped.speed(), EPSILON, "tick " + tick);
+            free.advance();
+            capped.advance();
+        }
+        assertEquals(7.5, capped.speed(), EPSILON);
+        assertEquals(7.5, capped.ceiling(), EPSILON);
+    }
+
     @Test void invalidSettingsAreRejected() {
+        assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, 15, .3, 15, 0, -1));
         assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(-1, 15, .3, 15, 0));
         assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, Double.NaN, .3, 15, 0));
         assertThrows(IllegalArgumentException.class, () -> new BoostRamp.Settings(3, 15, 0, 15, 0));

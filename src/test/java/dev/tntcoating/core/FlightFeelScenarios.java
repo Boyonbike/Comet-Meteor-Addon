@@ -26,7 +26,10 @@ final class FlightFeelScenarios {
 
     private FlightFeelScenarios() {}
 
-    /** Module and Meteor Elytra Fly settings. Percentages are as shown in the settings screen. */
+    /**
+     * Module and Meteor Elytra Fly settings. Cruise and Sprint values are the engine's speed caps in blocks per tick;
+     * the profiles below match the 35%/100% shares they were recorded with.
+     */
     record Profile(String name,
                    double acceleration, double braking, double turnRate, double cruise, double sprint,
                    double verticalMax, double verticalCruise, double verticalSprint,
@@ -37,19 +40,24 @@ final class FlightFeelScenarios {
                    double flyHorizontalSpeed, double flyVerticalSpeed, double fallMultiplier) {}
 
     static final Profile DEFAULTS = new Profile("defaults",
-        .15, .3, 15, 35, 100, 3, 35, 100, .05, .5,
+        .15, .3, 15, cruise(.3, 64, .35), 15, 3, 3 * .35, 3, .05, .5,
         true, 14.999, 2.999, .3, 1.5, 15,
         64, .35, true, .6,
         1, 1, .01);
 
     /** The user's saved values as of 2026-10-20 (Adaptive Elytra Fly and Meteor Elytra Fly). */
     static final Profile USER = new Profile("user",
-        .15, .3, 15, 35, 100, 3, 35, 100, .15, .5,
+        .15, .3, 15, cruise(.3, 64, .2), 15, 3, 3 * .35, 3, .15, .5,
         true, 14.999, 2.999, .3, 1.2499999999999998, 15,
         64, .2, true, .6,
         2.797482889048999, 2, .01);
 
     static final List<Profile> PROFILES = List.of(DEFAULTS, USER);
+
+    /** The old default cruise: 35% of the adaptive engine's attainable speed. */
+    private static double cruise(double braking, int lookahead, double margin) {
+        return AdaptiveFlightStep.maximumSpeed(braking, lookahead, margin) * .35;
+    }
 
     /** Keys held this tick; yaw in degrees, as Minecraft reports it. */
     record Keys(int forward, int right, float yaw, boolean jump, boolean sneak, boolean sprint) {

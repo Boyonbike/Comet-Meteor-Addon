@@ -15,11 +15,14 @@ public final class AdaptiveFlightEngine {
     private static final double EPSILON = 1e-7;
 
     /**
-     * The module's settings, with percentages as shown in its settings screen, and Meteor Elytra Fly's stock
-     * speeds, which only enable an axis (zero disables it) and size the passive sink. {@code unlimitedBoost} is
-     * Sprint boost with unlimited boost on; {@code boostTop} is the horizontal ramp's top speed and
-     * {@code boostCeiling} the total 3D speed boost may never exceed (see {@link ServerMoveLimit}). After a setback
-     * both ramps hold their rewound speed for {@code setbackHoldTicks} before accelerating.
+     * The module's settings and Meteor Elytra Fly's stock speeds, which only enable an axis (zero disables it) and
+     * size the passive sink. {@code cruise}, {@code sprint}, {@code verticalCruise} and {@code verticalSprint} are
+     * speed caps in blocks per tick: cruise and Sprint never pass them, nor the adaptive engine's own attainable
+     * speed. {@code unlimitedBoost} is Sprint boost with unlimited boost on; {@code boostTop} and
+     * {@code verticalMaximum} shape the horizontal and vertical ramp curves, which the Sprint caps only stop short
+     * of, never reshape, and {@code boostCeiling} is the total 3D speed boost may never exceed (see
+     * {@link ServerMoveLimit}). After a setback both ramps hold their rewound speed for {@code setbackHoldTicks}
+     * before accelerating.
      */
     public record Settings(double acceleration, double braking, double turnRate,
                            double cruise, double sprint,
@@ -107,6 +110,9 @@ public final class AdaptiveFlightEngine {
         int verticalInput = Finite.clamp(s.stockVerticalSpeed(), 0, 64, 0) == 0 ? 0
             : input.jump() ? 1 : input.sneak() ? -1 : 0;
         AdaptiveFlightStep.Boost boost = updateBoost(requested, verticalInput);
+        // The step works in shares of what the adaptive engine can attain; a cap above that is no limit.
+        double horizon = AdaptiveFlightStep.maximumSpeed(s.braking(), s.lookahead(), s.margin());
+        double verticalHorizon = Math.min(horizon, s.verticalMaximum());
         // Only a deliberate descent is worth a floor scan; Meteor's small fall-multiplier glide lands harmlessly.
         boolean descending = requested.y() < -.05 || controller.output().y() < -.05;
         var blend = new AdaptiveFlightStep.Blend(s.verticalMaximum(), s.verticalAcceleration(), s.verticalRampStep(),
@@ -117,8 +123,8 @@ public final class AdaptiveFlightEngine {
             Math.max(Math.abs(requested.y()), Finite.clamp(s.stockVerticalSpeed(), 0, 64, 0) * 0.5),
             input.body(), input.probe(), s.lookahead(), s.margin(),
             new AdaptiveFlightStep.Controls(sprinting,
-                (sprinting ? s.sprint() : s.cruise()) / 100,
-                (sprinting ? s.verticalSprint() : s.verticalCruise()) / 100,
+                share(sprinting ? s.sprint() : s.cruise(), horizon),
+                share(sprinting ? s.verticalSprint() : s.verticalCruise(), verticalHorizon),
                 verticalInput, releaseSafeCollisions, input.glide(), releaseSpeed, blend, boost));
         Motion actual = step.motion();
         contactResolved = false;
@@ -254,23 +260,29 @@ public final class AdaptiveFlightEngine {
         return new Motion(x, Finite.clamp(y, -64, 64, 0), z);
     }
 
-    /** Sprint percentages scale each boost ramp's top speed, as they scale adaptive Sprint. */
+    /** The Sprint caps stop each boost ramp short without reshaping its curve. */
     private void configureRamps() {
         Settings s = settings;
-        double horizontalMaximum = s.boostTop() * s.sprint() / 100;
-        double verticalMaximum = s.verticalMaximum() * s.verticalSprint() / 100;
-        horizontalRamp.configure(new BoostRamp.Settings(Math.min(s.boostStart(), horizontalMaximum),
-            horizontalMaximum, s.boostRampStep(), s.rewindTicks(), s.setbackHoldTicks()));
+        horizontalRamp.configure(new BoostRamp.Settings(s.boostStart(), s.boostTop(), s.boostRampStep(),
+            s.rewindTicks(), s.setbackHoldTicks(), Finite.clamp(s.sprint(), 0, Double.MAX_VALUE, 0)));
         // The ramp needs a positive step; with vertical-ramp-step at zero, vertical boost holds its start speed.
-        verticalRamp.configure(new BoostRamp.Settings(Math.min(s.boostVerticalStart(), verticalMaximum),
-            verticalMaximum, Math.max(1e-6, s.verticalRampStep()), s.rewindTicks(), s.setbackHoldTicks()));
+        verticalRamp.configure(new BoostRamp.Settings(s.boostVerticalStart(), s.verticalMaximum(),
+            Math.max(1e-6, s.verticalRampStep()), s.rewindTicks(), s.setbackHoldTicks(),
+            Finite.clamp(s.verticalSprint(), 0, Double.MAX_VALUE, 0)));
+    }
+
+    /** A speed cap as a share of what the adaptive engine can attain, at most all of it. */
+    private static double share(double cap, double attainable) {
+        if (!(attainable > 0) || !(cap > 0)) return 0;
+        return Math.min(1, cap / attainable);
     }
 
     private static AdaptiveFlightController.Settings controllerSettings(Settings s) {
         return new AdaptiveFlightController.Settings(s.acceleration(), s.braking(), s.turnRate(),
             Math.max(0, Math.min(s.lookahead(), FlightCorridor.MAX_DISTANCE) - s.margin()),
-            // Without unlimited boost, braking stays constant, exactly as adaptive flight always braked.
-            s.unlimitedBoost() ? s.boostTop() * s.sprint() / 100 : 0);
+            // Without unlimited boost, braking stays constant, exactly as adaptive flight always braked. A Sprint
+            // cap never moves this: braking is planned from the ramp's own top speed.
+            s.unlimitedBoost() ? s.boostTop() : 0);
     }
 
     private static double difference(Motion a, Motion b) {

@@ -146,10 +146,78 @@ class AdaptiveFlightEngineTest {
         }
     }
 
-    /** The defaults with another boost top speed and total boost ceiling. */
-    private static AdaptiveFlightEngine.Settings boosting(double top, double ceiling) {
+    @Test void aBoostCapStopsTheUnchangedCurveInsteadOfTaperingTowardsIt() {
+        double cap = 10; // 200 b/s
+        AdaptiveFlightEngine.Settings capped = boosting(DEFAULTS.boostTop(), cap, ServerMoveLimit.SINGLE);
+        AdaptiveFlightEngine free = new AdaptiveFlightEngine(DEFAULTS), limited = new AdaptiveFlightEngine(capped);
+        int reached = -1;
+        for (int tick = 0; tick < 400; tick++) {
+            fly(free, true);
+            Motion motion = fly(limited, capped, true, false);
+            assertEquals(Math.min(cap, free.horizontalBoost()), limited.horizontalBoost(), EPSILON,
+                "tick " + tick + ": the same acceleration curve, stopped at the cap");
+            assertTrue(motion.horizontalLength() <= cap + EPSILON, "tick " + tick + ": " + motion.horizontalLength());
+            if (reached < 0 && limited.horizontalBoost() >= cap - EPSILON) reached = tick;
+        }
+        assertTrue(reached > 0, "reaches the cap");
+        assertEquals(cap, limited.output().horizontalLength(), EPSILON, "and holds exactly the cap");
+        assertEquals(cap, limited.horizontalBoostCeiling(), EPSILON);
+    }
+
+    @Test void aBoostSetbackAtTheCapRewindsAlongTheOriginalCurve() {
+        double cap = 10;
+        AdaptiveFlightEngine.Settings capped = boosting(DEFAULTS.boostTop(), cap, ServerMoveLimit.SINGLE);
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(capped);
+        for (int tick = 0; tick < 200; tick++) fly(engine, capped, true, false);
+        engine.setback(false);
+        assertEquals(BoostRamp.rewind(cap, DEFAULTS.boostRampStep(), DEFAULTS.boostTop(), DEFAULTS.boostStart(),
+            DEFAULTS.rewindTicks()), engine.horizontalBoost(), EPSILON);
+    }
+
+    @Test void cruiseSettlesOnItsCapAndNeverPassesIt() {
         AdaptiveFlightEngine.Settings d = DEFAULTS;
-        return new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(), d.turnRate(), d.cruise(), d.sprint(),
+        double cap = 1; // 20 b/s
+        AdaptiveFlightEngine.Settings slow = new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(),
+            d.turnRate(), cap, d.sprint(), d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(),
+            d.verticalAcceleration(), d.verticalRampStep(), d.unlimitedBoost(), d.boostTop(), d.boostStart(),
+            d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(), d.setbackHoldTicks(), d.boostCeiling(),
+            d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(), d.stockHorizontalSpeed(),
+            d.stockVerticalSpeed(), d.fallMultiplier());
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(slow);
+        for (int tick = 0; tick < 200; tick++) {
+            Motion motion = fly(engine, slow, false, false);
+            assertTrue(motion.horizontalLength() <= cap + EPSILON, "tick " + tick + ": " + motion.horizontalLength());
+        }
+        assertEquals(cap, engine.output().horizontalLength(), 1e-9);
+    }
+
+    @Test void verticalBoostStopsAtItsCap() {
+        AdaptiveFlightEngine.Settings d = DEFAULTS;
+        double cap = 2; // 40 b/s
+        AdaptiveFlightEngine.Settings capped = new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(),
+            d.turnRate(), d.cruise(), d.sprint(), d.verticalMaximum(), d.verticalCruise(), cap,
+            d.verticalAcceleration(), d.verticalRampStep(), d.unlimitedBoost(), d.boostTop(), d.boostStart(),
+            d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(), d.setbackHoldTicks(), d.boostCeiling(),
+            d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(), d.stockHorizontalSpeed(),
+            d.stockVerticalSpeed(), d.fallMultiplier());
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(capped);
+        for (int tick = 0; tick < 200; tick++) {
+            Motion motion = fly(engine, capped, true, true);
+            assertTrue(motion.y() <= cap + EPSILON, "tick " + tick + ": " + motion.y());
+        }
+        assertEquals(cap, engine.verticalBoost(), EPSILON);
+        assertEquals(cap, engine.output().y(), EPSILON);
+    }
+
+    /** The defaults with another boost top speed (Sprint capped there too) and total boost ceiling. */
+    private static AdaptiveFlightEngine.Settings boosting(double top, double ceiling) {
+        return boosting(top, top, ceiling);
+    }
+
+    /** The defaults with another boost curve top, horizontal Sprint cap and total boost ceiling. */
+    private static AdaptiveFlightEngine.Settings boosting(double top, double cap, double ceiling) {
+        AdaptiveFlightEngine.Settings d = DEFAULTS;
+        return new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(), d.turnRate(), d.cruise(), cap,
             d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(), d.verticalAcceleration(), d.verticalRampStep(),
             d.unlimitedBoost(), top, d.boostStart(), d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(),
             d.setbackHoldTicks(), ceiling, d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(),
