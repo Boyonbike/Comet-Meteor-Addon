@@ -5,6 +5,7 @@ import com.mojang.brigadier.tree.ArgumentCommandNode;
 import com.mojang.brigadier.tree.CommandNode;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.tntcoating.TntCoatingAddon;
+import dev.tntcoating.core.ChatClan;
 import dev.tntcoating.core.ChatCommandTemplate;
 import dev.tntcoating.core.ChatHomeNames;
 import dev.tntcoating.core.ChatHomeEdit;
@@ -32,11 +33,14 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.GuiThemes;
+import meteordevelopment.meteorclient.gui.screens.settings.ColorSettingScreen;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.mixin.MinecraftServerAccessor;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.settings.StringListSetting;
@@ -44,10 +48,10 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.KeybindSetting;
 import meteordevelopment.meteorclient.settings.StringSetting;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import meteordevelopment.meteorclient.systems.friends.Friend;
-import meteordevelopment.meteorclient.systems.config.Config;
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.gui.components.toasts.SystemToast;
@@ -77,7 +81,18 @@ public final class ChatTools extends Module {
     private final Setting<Boolean> autoDetect = general.add(new BoolSetting.Builder().name("auto-detect")
         .description("Add commands from the server's command tree whose next argument accepts a player name.").defaultValue(true).build());
     private final Setting<Boolean> highlightFriendNames = general.add(new BoolSetting.Builder().name("highlight-friends")
-        .description("Highlight whole Meteor friend names in chat using Meteor's friend colour.").defaultValue(true).build());
+        .description("Colour Meteor friends' names in chat.").defaultValue(true).build());
+    private final Setting<SettingColor> friendChatColor = general.add(new ColorSetting.Builder().name("friend-chat-color")
+        .description("Colour of Meteor friends' names in chat and in the Chat Tools window.").defaultValue(new SettingColor(0, 255, 180)).build());
+    private final Setting<Boolean> highlightFriendsTab = general.add(new BoolSetting.Builder().name("highlight-friends-tab")
+        .description("Colour Meteor friends' names in the tab list.").defaultValue(true).build());
+    private final Setting<SettingColor> friendTabColor = general.add(new ColorSetting.Builder().name("friend-tab-color")
+        .description("Colour of Meteor friends' names in the tab list.").defaultValue(new SettingColor(0, 255, 180)).build());
+    private final Setting<Boolean> highlightFriendRows = general.add(new BoolSetting.Builder().name("highlight-friend-rows")
+        .description("Highlight Meteor friends' rows in the tab list with a coloured bar behind them.").defaultValue(false).build());
+    private final Setting<SettingColor> friendRowColor = general.add(new ColorSetting.Builder().name("friend-row-color")
+        .description("Colour of the bar behind Meteor friends' rows in the tab list. Its alpha sets how strong the bar is.")
+        .defaultValue(new SettingColor(0, 255, 180, 96)).build());
     private final Setting<Boolean> runOnClick = general.add(new BoolSetting.Builder().name("run-complete-commands")
         .description("Run complete player commands immediately. Off fills the Chat Tools input for confirmation.").defaultValue(false).build());
     private final Setting<List<String>> configured = general.add(new StringListSetting.Builder().name("command-options")
@@ -119,6 +134,23 @@ public final class ChatTools extends Module {
     private final Setting<List<String>> outgoingPatterns = messaging.add(new StringListSetting.Builder().name("outgoing-dm-patterns")
         .description("Extra full-line regexes for server echoes: group 1 username, group 2 message.")
         .defaultValue().onChanged(ignored -> refreshMessagePatterns()).build());
+    private final SettingGroup clan = settings.createGroup("Clan");
+    private final Setting<List<String>> clanMembers = clan.add(new StringListSetting.Builder().name("clan-members")
+        .description("Usernames of your clan members. Also added, imported from CSV and removed in the Chat Tools Clan tab.")
+        .defaultValue().build());
+    private final Setting<Boolean> highlightClanChat = clan.add(new BoolSetting.Builder().name("highlight-clan-chat")
+        .description("Colour clan members' names in chat. Clan members who are Meteor friends get the friend colour while that is on.").defaultValue(true).build());
+    private final Setting<SettingColor> clanChatColor = clan.add(new ColorSetting.Builder().name("clan-chat-color")
+        .description("Colour of clan members' names in chat and in the Chat Tools window.").defaultValue(new SettingColor(255, 170, 60)).build());
+    private final Setting<Boolean> highlightClanTab = clan.add(new BoolSetting.Builder().name("highlight-clan-tab")
+        .description("Colour clan members' names in the tab list.").defaultValue(true).build());
+    private final Setting<SettingColor> clanTabColor = clan.add(new ColorSetting.Builder().name("clan-tab-color")
+        .description("Colour of clan members' names in the tab list.").defaultValue(new SettingColor(255, 170, 60)).build());
+    private final Setting<Boolean> highlightClanRows = clan.add(new BoolSetting.Builder().name("highlight-clan-rows")
+        .description("Highlight clan members' rows in the tab list with a coloured bar behind them.").defaultValue(false).build());
+    private final Setting<SettingColor> clanRowColor = clan.add(new ColorSetting.Builder().name("clan-row-color")
+        .description("Colour of the bar behind clan members' rows in the tab list. Its alpha sets how strong the bar is.")
+        .defaultValue(new SettingColor(255, 170, 60, 96)).build());
 
     private final ChatMessages messages = new ChatMessages();
     private final ChatRecentPlayers recentPlayers = new ChatRecentPlayers();
@@ -136,8 +168,9 @@ public final class ChatTools extends Module {
     private long homeRequestedAt;
     private ChatHomeEdit pendingHomeEdit;
     private long homeEditExpires;
-    private Set<String> friendNames = Set.of();
-    private int friendColor;
+    private Set<String> friendNames = Set.of(), clanNames = Set.of();
+    private int friendColor, clanColor;
+    private boolean friendsInChat, clanInChat;
     private int friendRefreshTicks;
     private String savedKey;
     private ChatSavedCooldowns.Saved saved = ChatSavedCooldowns.Saved.NONE;
@@ -188,7 +221,30 @@ public final class ChatTools extends Module {
             PlayerInfo info = mc.getConnection() == null ? null : mc.getConnection().getPlayerInfoIgnoreCase(player);
             Friends.get().add(new Friend(player, info == null ? null : info.getProfile().id()));
         }
-        refreshFriendHighlights();
+        refreshHighlights();
+    }
+
+    /** Clan members to list, in saved order, without yourself. */
+    public List<String> clanMembers() {
+        return ChatClan.members(clanMembers.get()).stream().filter(name -> !isSelf(name)).toList();
+    }
+    public ChatClan.Groups clanGroups() { return ChatClan.groups(clanMembers(), this::isFriend, this::online); }
+    public boolean inClan(String player) { return ChatClan.contains(clanMembers.get(), player); }
+    /** Adds the usernames not already in the clan and returns how many that was. */
+    public int addToClan(List<String> names) {
+        List<String> updated = ChatClan.add(clanMembers.get(), names);
+        int added = updated.size() - clanMembers.get().size();
+        if (added > 0) { clanMembers.set(updated); refreshHighlights(); }
+        return added;
+    }
+    public void removeFromClan(String player) {
+        if (!inClan(player)) return;
+        clanMembers.set(ChatClan.remove(clanMembers.get(), player));
+        refreshHighlights();
+    }
+    public void toggleClan(String player) {
+        if (inClan(player)) removeFromClan(player);
+        else if (ChatMessages.validName(player) && !isSelf(player)) addToClan(List.of(player));
     }
 
     public void rememberPlayer(String player) { if (!isSelf(player)) recentPlayers.touch(player); }
@@ -233,9 +289,30 @@ public final class ChatTools extends Module {
     }
 
     public boolean onlineContact(String player) { return online(player); }
-    public int friendColor() { return 0xff000000 | friendColor; }
+    public int friendColor() { return 0xff000000 | friendChatColor.get().getPacked(); }
+    public int friendTabColor() { return 0xff000000 | friendTabColor.get().getPacked(); }
     public boolean friendHighlighting() { return highlightFriendNames.get(); }
-    public void toggleFriendHighlighting() { highlightFriendNames.set(!highlightFriendNames.get()); refreshFriendHighlights(); }
+    public void toggleFriendHighlighting() { highlightFriendNames.set(!highlightFriendNames.get()); refreshHighlights(); }
+    public boolean friendTabHighlighting() { return highlightFriendsTab.get(); }
+    public void toggleFriendTabHighlighting() { highlightFriendsTab.set(!highlightFriendsTab.get()); }
+    public int friendRowColor() { return 0xff000000 | friendRowColor.get().getPacked(); }
+    public boolean friendRowHighlighting() { return highlightFriendRows.get(); }
+    public void toggleFriendRowHighlighting() { highlightFriendRows.set(!highlightFriendRows.get()); }
+    public int clanColor() { return 0xff000000 | clanChatColor.get().getPacked(); }
+    public int clanTabColor() { return 0xff000000 | clanTabColor.get().getPacked(); }
+    public boolean clanChatHighlighting() { return highlightClanChat.get(); }
+    public void toggleClanChatHighlighting() { highlightClanChat.set(!highlightClanChat.get()); refreshHighlights(); }
+    public boolean clanTabHighlighting() { return highlightClanTab.get(); }
+    public void toggleClanTabHighlighting() { highlightClanTab.set(!highlightClanTab.get()); }
+    public int clanRowColor() { return 0xff000000 | clanRowColor.get().getPacked(); }
+    public boolean clanRowHighlighting() { return highlightClanRows.get(); }
+    public void toggleClanRowHighlighting() { highlightClanRows.set(!highlightClanRows.get()); }
+    public void pickFriendColor(boolean tab) { pickColor(tab ? friendTabColor : friendChatColor); }
+    public void pickClanColor(boolean tab) { pickColor(tab ? clanTabColor : clanChatColor); }
+    public void pickFriendRowColor() { pickColor(friendRowColor); }
+    public void pickClanRowColor() { pickColor(clanRowColor); }
+    /** Opens Meteor's colour picker, which returns to the current screen when closed. */
+    private void pickColor(Setting<SettingColor> setting) { mc.setScreen(new ColorSettingScreen(GuiThemes.get(), setting)); }
     public boolean messageNotifications() { return messageToasts.get(); }
     public void toggleMessageNotifications() { messageToasts.set(!messageToasts.get()); }
     public boolean hidingMessages() { return hideMessages.get(); }
@@ -361,9 +438,43 @@ public final class ChatTools extends Module {
 
     public static long now() { return System.nanoTime() / 1_000_000; }
 
-    public Component highlightFriends(Component message) {
-        if (!highlightFriendNames.get() || friendNames.isEmpty()) return message;
-        return ChatFriendHighlight.apply(message, name -> friendNames.contains(name.toLowerCase(Locale.ROOT)), friendColor);
+    /** Meteor friends take the friend colour, other clan members the clan colour. */
+    public Component highlightNames(Component message) {
+        boolean clan = clanInChat && !clanNames.isEmpty(), friends = friendsInChat && !friendNames.isEmpty();
+        if (!clan && !friends) return message;
+        return ChatFriendHighlight.apply(message, name -> {
+            String key = name.toLowerCase(Locale.ROOT);
+            return friends && friendNames.contains(key) ? Integer.valueOf(friendColor) : clan && clanNames.contains(key) ? Integer.valueOf(clanColor) : null;
+        });
+    }
+
+    /** The colour from whichever switched-on setting applies to this player, or null; as in chat, friends come first. */
+    private Integer tabColor(PlayerInfo info, Setting<Boolean> friendOn, Setting<SettingColor> friend, Setting<Boolean> clanOn,
+                             Setting<SettingColor> clan) {
+        String player = info.getProfile().name();
+        if (player == null) return null;
+        String key = player.toLowerCase(Locale.ROOT);
+        Setting<SettingColor> setting = friendOn.get() && friendNames.contains(key) ? friend : clanOn.get() && clanNames.contains(key) ? clan : null;
+        return setting == null ? null : setting.get().getPacked();
+    }
+
+    /**
+     * Colours a friend's or clan member's username inside the tab list name the server or Meteor's Better Tab produced,
+     * keeping prefixes and suffixes; a name that never spells out the username, such as a nickname, is coloured whole.
+     */
+    public Component highlightTabName(PlayerInfo info, Component name) {
+        Integer tint = tabColor(info, highlightFriendsTab, friendTabColor, highlightClanTab, clanTabColor);
+        if (tint == null) return name;
+        int color = tint;
+        String player = info.getProfile().name();
+        Component result = ChatFriendHighlight.apply(name, found -> found.equalsIgnoreCase(player) ? Integer.valueOf(color) : null);
+        return result != name ? result : ChatFriendHighlight.recolor(name, color);
+    }
+
+    /** The bar to draw behind a tab list row, with its colour's own alpha, or 0 for none. */
+    public int tabHighlight(PlayerInfo info) {
+        Integer color = tabColor(info, highlightFriendRows, friendRowColor, highlightClanRows, clanRowColor);
+        return color == null ? 0 : color;
     }
 
     public boolean canCancelHome() { checkSession(); return teleports.canCancel(ChatTeleportState.Kind.Home, now()); }
@@ -379,19 +490,20 @@ public final class ChatTools extends Module {
         return "/tpacancel";
     }
 
-    @Override public void onActivate() { resetSession(); refreshMessagePatterns(); refreshCooldowns(); friendRefreshTicks = 0; refreshFriendHighlights(); }
+    @Override public void onActivate() { resetSession(); refreshMessagePatterns(); refreshCooldowns(); friendRefreshTicks = 0; refreshHighlights(); }
     @Override public void onDeactivate() {
         if (popup != null && mc.screen == popup) popup.onClose();
         resetSession();
         friendNames = Set.of();
+        clanNames = Set.of();
         if (mc.gui != null) mc.gui.getChat().rescaleChat();
     }
     @EventHandler private void onTick(TickEvent.Pre event) {
         checkSession();
-        // Friend list and colour edits are rare; a one-second refresh keeps highlighting current without per-tick work.
+        // Friend, clan and colour edits are rare; a one-second refresh keeps highlighting current without per-tick work.
         if (++friendRefreshTicks >= FRIEND_REFRESH_TICKS) {
             friendRefreshTicks = 0;
-            refreshFriendHighlights();
+            refreshHighlights();
         }
     }
 
@@ -404,16 +516,23 @@ public final class ChatTools extends Module {
         syncSavedCooldowns();
     }
 
-    private void refreshFriendHighlights() {
-        Set<String> names = new HashSet<>();
-        if (highlightFriendNames.get() && Friends.get() != null) {
-            for (var friend : Friends.get()) names.add(friend.getName().toLowerCase(Locale.ROOT));
-        }
-        int color = Config.get() == null ? 0x00ffb4 : Config.get().friendColor.get().getPacked() & 0xffffff;
-        if (names.equals(friendNames) && color == friendColor) return;
-        friendNames = Set.copyOf(names);
-        friendColor = color;
-        if (mc.gui != null) mc.gui.getChat().rescaleChat();
+    private void refreshHighlights() {
+        Set<String> friends = new HashSet<>();
+        if (Friends.get() != null) for (var friend : Friends.get()) friends.add(friend.getName().toLowerCase(Locale.ROOT));
+        Set<String> clan = ChatClan.keys(clanMembers.get());
+        int friendRgb = friendChatColor.get().getPacked() & 0xffffff, clanRgb = clanChatColor.get().getPacked() & 0xffffff;
+        boolean friendsShown = highlightFriendNames.get(), clanShown = highlightClanChat.get();
+        // The tab list reads these names every frame; only chat lines are wrapped once and need rebuilding.
+        boolean chatChanged = friendsShown != friendsInChat || clanShown != clanInChat
+            || friendsShown && (!friends.equals(friendNames) || friendRgb != friendColor)
+            || clanShown && (!clan.equals(clanNames) || clanRgb != clanColor);
+        friendNames = Set.copyOf(friends);
+        friendColor = friendRgb;
+        friendsInChat = friendsShown;
+        clanNames = clan;
+        clanColor = clanRgb;
+        clanInChat = clanShown;
+        if (chatChanged && mc.gui != null) mc.gui.getChat().rescaleChat();
     }
 
     private void resetSession() {

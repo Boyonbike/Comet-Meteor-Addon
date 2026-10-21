@@ -69,6 +69,34 @@ final class ChatFriendHighlightTest {
         assertEquals(0x123456, styles(ChatFriendHighlight.apply(original, name -> true, 0x88123456)).getFirst().getColor().getValue());
     }
 
+    @Test void eachNameCanTakeItsOwnColourInOnePass() {
+        int clan = 0xffaa3c;
+        var message = Component.literal("Alice and Bob met Carol").withColor(ORIGINAL);
+        var result = ChatFriendHighlight.apply(message, name -> name.equals("Alice") ? Integer.valueOf(FRIEND)
+            : name.equals("Bob") ? Integer.valueOf(clan) : null);
+        var styles = styles(result);
+        assertEquals(message.getString(), result.getString());
+        assertEquals(FRIEND, styles.get(0).getColor().getValue());
+        assertEquals(ORIGINAL, styles.get(6).getColor().getValue());
+        assertEquals(clan, styles.get(10).getColor().getValue());
+        assertEquals(ORIGINAL, styles.get(18).getColor().getValue());
+    }
+
+    @Test void recolourPaintsEveryPartButKeepsFormattingAndInteractions() {
+        var click = new ClickEvent.SuggestCommand("/msg Nick ");
+        var name = Component.literal("[VIP] ").withColor(ORIGINAL)
+            .append(Component.literal("Nick").withStyle(Style.EMPTY.withBold(true).withClickEvent(click)));
+        var result = ChatFriendHighlight.recolor(name, 0x88123456);
+        assertEquals(name.getString(), result.getString());
+        var before = styles(name);
+        var after = styles(result);
+        for (int i = 0; i < after.size(); i++) {
+            assertEquals(0x123456, after.get(i).getColor().getValue());
+            assertEquals(before.get(i).isBold(), after.get(i).isBold());
+            assertEquals(before.get(i).getClickEvent(), after.get(i).getClickEvent());
+        }
+    }
+
     private static Component highlight(Component message) {
         return ChatFriendHighlight.apply(message, name -> name.equalsIgnoreCase("Alice"), FRIEND);
     }

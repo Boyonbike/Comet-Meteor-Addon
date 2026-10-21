@@ -1,5 +1,6 @@
 package dev.tntcoating.gui;
 
+import dev.tntcoating.core.ChatClan;
 import dev.tntcoating.core.ChatCountdowns;
 import dev.tntcoating.core.ChatMessages;
 import dev.tntcoating.core.ChatPlayerSearch;
@@ -9,6 +10,9 @@ import dev.tntcoating.core.ChatTeleportState;
 import dev.tntcoating.core.ChatToolsLayout;
 import dev.tntcoating.core.ChatTpaRequests;
 import dev.tntcoating.modules.ChatTools;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -24,7 +28,10 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
+import org.lwjgl.PointerBuffer;
 import org.lwjgl.glfw.GLFW;
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import static dev.tntcoating.gui.ChatToolsStyle.*;
 
@@ -33,15 +40,16 @@ import static dev.tntcoating.gui.ChatToolsStyle.*;
  * the body in place. Every page is built from the same parts: a toolbar, captions, grouped lists, tiles and buttons.
  */
 public final class ChatToolsScreen extends Screen {
-    private enum Page { Home, Players, Homes, Hotspot, Settings, Conversation }
+    private enum Page { Home, Players, Clan, Homes, Hotspot, Settings, Conversation }
     private enum Tone { Primary, Secondary, Ghost, Danger }
     private record Bubble(boolean incoming, List<FormattedCharSequence> lines, int width, int height) {}
     private record Hit(int x, int y, int w, int h, Runnable action) {
         boolean contains(double mx, double my) { return mx >= x && mx < x + w && my >= y && my < y + h; }
     }
-    private static final Page[] TABS = {Page.Home, Page.Players, Page.Homes, Page.Hotspot, Page.Settings};
-    private static final String[] TAB_LABELS = {"Overview", "Players", "Homes", "Hotspot", "Settings"};
+    private static final Page[] TABS = {Page.Home, Page.Players, Page.Clan, Page.Homes, Page.Hotspot, Page.Settings};
+    private static final String[] TAB_LABELS = {"Overview", "Players", "Clan", "Homes", "Hotspot", "Settings"};
     private static final long NOTICE_MILLIS = 4_000;
+    private static final long MAX_IMPORT_BYTES = 1 << 20;
     private static final String DOT = " · ";
     private final ChatTools tools;
     private final List<Hit> hits = new ArrayList<>();
@@ -51,11 +59,11 @@ public final class ChatToolsScreen extends Screen {
     private Page page = Page.Home;
     private Page conversationBack = Page.Players;
     private String recipient, selectedPlayer;
-    private EditBox input, homeSearch, playerSearch, visibleSearch;
+    private EditBox input, homeSearch, playerSearch, clanField, visibleSearch;
     private int x = -1, y, w, h, bodyTop, bodyBottom, cursor, scroll, maxScroll;
     private int cx, cw;
     private ChatToolsLayout.Frame layout;
-    private boolean dragging, resizing, content;
+    private boolean dragging, resizing, content, choosingFile;
     private double dragX, dragY;
     private String notice = "";
     private long noticeAt;
@@ -78,8 +86,10 @@ public final class ChatToolsScreen extends Screen {
             input = field("Chat or /command", 256);
             homeSearch = field("Search players", 16);
             playerSearch = field("Search players", 16);
+            clanField = field("Search or add members", 256);
             homeSearch.setResponder(ignored -> hits.clear());
             playerSearch.setResponder(ignored -> { scroll = 0; hits.clear(); selectedPlayer = null; });
+            clanField.setResponder(ignored -> { scroll = 0; hits.clear(); });
         }
         if (x < 0) {
             w = Math.min(660, width - 16);
@@ -167,7 +177,7 @@ public final class ChatToolsScreen extends Screen {
 
     private List<String> matchingPlayers(String query) {
         return ChatPlayerSearch.matching(query, tools.recentPlayers(), tools.friends(), tools.onlinePlayers(),
-            requests.stream().map(ChatTpaRequests.Request::player).toList());
+            requests.stream().map(ChatTpaRequests.Request::player).toList(), tools.clanMembers());
     }
 
     private void fill(String command) {
@@ -216,6 +226,7 @@ public final class ChatToolsScreen extends Screen {
         switch (page) {
             case Home -> overview(delta);
             case Players -> players(delta);
+            case Clan -> clan(delta);
             case Homes -> homes();
             case Hotspot -> hotspot();
             case Settings -> settings();
@@ -358,7 +369,9 @@ public final class ChatToolsScreen extends Screen {
             var options = tools.options(selectedPlayer);
             String player = selectedPlayer;
             menuRow(tools.isFriend(player) ? "Remove Meteor friend" : "Add Meteor friend", "Meteor friends", "Update Meteor's shared Friends list",
-                true, options.isEmpty(), false, () -> tools.toggleFriend(player));
+                true, false, false, () -> tools.toggleFriend(player));
+            menuRow(tools.inClan(player) ? "Remove from clan" : "Add to clan", "Clan", "Update the members listed in the Clan tab",
+                false, options.isEmpty(), false, () -> tools.toggleClan(player));
             for (int i = 0; i < options.size(); i++) {
                 var option = options.get(i);
                 menuRow(option.label(), option.command().strip(), option.command(), false, i == options.size() - 1, false, () -> {
@@ -367,6 +380,102 @@ public final class ChatToolsScreen extends Screen {
             }
             cursor += PAD;
         }
+    }
+
+    /** One field both narrows the list and adds the names typed into it; friends come first, then online members. */
+    private void clan(float delta) {
+        String typed = clanField.getValue().strip();
+        var entered = ChatClan.typed(typed).names().stream().filter(name -> !tools.inClan(name)).toList();
+        var actions = new Actions(cx + cw, cursor)
+            .add("Import CSV", choosingFile ? "Waiting for the file picker" : "Add members from a .csv file, or drop one on this window",
+                Tone.Secondary, !choosingFile, this::importCsv)
+            .add("Add", entered.isEmpty() ? "Type usernames to add, separated by commas"
+                    : "Add " + (entered.size() == 1 ? entered.getFirst() : entered.size() + " players") + " to the clan",
+                Tone.Primary, !entered.isEmpty(), this::addTyped);
+        search(clanField, delta, cx, cursor, actions.left() - GAP - cx);
+        cursor += CONTROL + PAD;
+        var groups = tools.clanGroups();
+        if (groups.isEmpty()) {
+            emptyRow("No clan members yet", "Type names above, import a CSV, or drop a .csv file on this window.");
+            return;
+        }
+        String query = ChatMessages.validName(typed) ? typed : "";
+        var friends = ChatPlayerSearch.matching(query, groups.friends());
+        var online = ChatPlayerSearch.matching(query, groups.online());
+        var offline = ChatPlayerSearch.matching(query, groups.offline());
+        if (friends.isEmpty() && online.isEmpty() && offline.isEmpty()) {
+            emptyRow("No matching clan members", entered.isEmpty() ? "Clear the search to see every member." : "Press Enter to add " + typed + " to the clan.");
+            return;
+        }
+        clanGroup("Friends", friends);
+        clanGroup("Online", online);
+        clanGroup("Offline", offline);
+    }
+
+    private void clanGroup(String label, List<String> names) {
+        if (names.isEmpty()) return;
+        caption(label, String.valueOf(names.size()), null, null, null);
+        playerList(names, true);
+    }
+
+    private void addTyped() {
+        var typed = ChatClan.typed(clanField.getValue());
+        int added = tools.addToClan(typed.names());
+        notice(ChatClan.summary(added, typed.names().size() - added, typed.invalid()));
+        if (added > 0) clanField.setValue("");
+        focus(clanField);
+    }
+
+    /**
+     * Meteor's own Import buttons use this native picker too. It waits on its own thread, because blocking the game
+     * thread while the player browses would also stop keep-alive replies to the server.
+     */
+    private void importCsv() {
+        if (choosingFile) return;
+        choosingFile = true;
+        var mc = Minecraft.getInstance();
+        Thread picker = new Thread(() -> {
+            Path chosen = null;
+            boolean failed = false;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                PointerBuffer filters = stack.pointers(stack.UTF8("*.csv"), stack.UTF8("*.txt"));
+                String path = TinyFileDialogs.tinyfd_openFileDialog("Import clan members", null, filters, "CSV files", false);
+                if (path != null) chosen = Path.of(path);
+            } catch (RuntimeException | LinkageError e) {
+                failed = true;
+            }
+            Path file = chosen;
+            boolean error = failed;
+            mc.execute(() -> {
+                choosingFile = false;
+                if (error) notice("Could not open a file picker. Drop the .csv file on this window instead.");
+                else if (file != null) importFiles(List.of(file));
+            });
+        }, "Comet clan import");
+        picker.setDaemon(true);
+        picker.start();
+    }
+
+    private void importFiles(List<Path> files) {
+        if (page != Page.Clan) navigate(Page.Clan);
+        List<String> names = List.of();
+        int invalid = 0;
+        for (Path file : files) {
+            String name = String.valueOf(file.getFileName());
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (!lower.endsWith(".csv") && !lower.endsWith(".txt")) { notice(name + " is not a .csv file."); return; }
+            try {
+                if (Files.size(file) > MAX_IMPORT_BYTES) { notice(name + " is too large for a clan list."); return; }
+                var result = ChatClan.csv(ChatClan.decode(Files.readAllBytes(file)));
+                names = ChatClan.add(names, result.names());
+                invalid += result.invalid();
+            } catch (IOException | RuntimeException e) {
+                notice("Could not read " + name + ".");
+                return;
+            }
+        }
+        int added = tools.addToClan(names);
+        notice(ChatClan.summary(added, names.size() - added, invalid));
     }
 
     private void homes() {
@@ -414,9 +523,22 @@ public final class ChatToolsScreen extends Screen {
     private void settings() {
         if (settingsPath.isEmpty()) {
             caption("Preferences", null, null, null, null);
-            toggleRow("Friend highlighting", "Colour Meteor friends' names in chat", tools.friendHighlighting(), tools::toggleFriendHighlighting, true, false);
-            toggleRow("DM notifications", "Pop up a notice when a message arrives", tools.messageNotifications(), tools::toggleMessageNotifications, false, false);
+            toggleRow("DM notifications", "Pop up a notice when a message arrives", tools.messageNotifications(), tools::toggleMessageNotifications, true, false);
             toggleRow("Hide DMs from chat", "Recognised private messages only appear here", tools.hidingMessages(), tools::toggleHidingMessages, false, true);
+            cursor += PAD;
+            caption("Name colours", null, "Clan members", "Open Clan", () -> navigate(Page.Clan));
+            toggleRow("Friend names in chat", "Colour Meteor friends' names in chat, over the clan colour", tools.friendHighlighting(),
+                tools::toggleFriendHighlighting, tools.friendColor(), () -> tools.pickFriendColor(false), true, false);
+            toggleRow("Friend names in tab list", "Colour Meteor friends' names in the player list", tools.friendTabHighlighting(),
+                tools::toggleFriendTabHighlighting, tools.friendTabColor(), () -> tools.pickFriendColor(true), false, false);
+            toggleRow("Friend rows in tab list", "Highlight Meteor friends' rows in the player list", tools.friendRowHighlighting(),
+                tools::toggleFriendRowHighlighting, tools.friendRowColor(), tools::pickFriendRowColor, false, false);
+            toggleRow("Clan names in chat", "Colour clan members' names in chat", tools.clanChatHighlighting(),
+                tools::toggleClanChatHighlighting, tools.clanColor(), () -> tools.pickClanColor(false), false, false);
+            toggleRow("Clan names in tab list", "Colour clan members' names in the player list", tools.clanTabHighlighting(), tools::toggleClanTabHighlighting,
+                tools.clanTabColor(), () -> tools.pickClanColor(true), false, false);
+            toggleRow("Clan rows in tab list", "Highlight clan members' rows in the player list", tools.clanRowHighlighting(),
+                tools::toggleClanRowHighlighting, tools.clanRowColor(), tools::pickClanRowColor, false, true);
             cursor += PAD;
             caption("Teleport cooldowns", "This account on this server", null, null, null);
             cooldownRow("Home cooldown", ChatTeleportState.Kind.Home, true, false);
@@ -461,16 +583,16 @@ public final class ChatToolsScreen extends Screen {
         cursor = bodyTop + PAD;
         int top = cursor;
         boolean friend = tools.isFriend(recipient), online = tools.onlineContact(recipient);
-        int tint = friend ? tools.friendColor() : accent();
+        int tint = nameColor(recipient, accent());
         iconButton(BACK, "Back (Esc)", cx, top + 2, SECONDARY, () -> navigate(conversationBack));
         avatar(recipient, cx + CONTROL + GAP, top, 24, tint, online, BACKGROUND);
         var actions = new Actions(cx + cw, top + 2)
             .add(friend ? "Unfriend" : "Add friend", "Update Meteor friendship", Tone.Secondary, true, () -> tools.toggleFriend(recipient))
             .add("TP", "/tpa " + recipient, Tone.Secondary, true, () -> { tools.requestTeleport(recipient); notice("Teleport request sent to " + recipient); });
         int tx = cx + CONTROL + GAP + 32;
-        text(graphics, recipient, tx, top + 3, actions.left() - GAP - tx, friend ? tools.friendColor() : TEXT);
+        text(graphics, recipient, tx, top + 3, actions.left() - GAP - tx, nameColor(recipient, TEXT));
         String countdown = ChatCountdowns.player(recipient, timers, List.of(), ChatTools.now());
-        small(graphics, countdown.isEmpty() ? (online ? "Online" : "Offline") + (friend ? DOT + "Friend" : "") : countdown,
+        small(graphics, countdown.isEmpty() ? status(recipient, online, false) : countdown,
             tx, top + 16, actions.left() - GAP - tx, countdown.isEmpty() ? MUTED : AMBER);
         cursor += 24 + PAD;
         graphics.fill(cx, cursor - PAD / 2, cx + cw, cursor - PAD / 2 + 1, DIVIDER);
@@ -579,32 +701,45 @@ public final class ChatToolsScreen extends Screen {
         cursor += ROW + PAD;
     }
 
-    private void playerList(List<String> names) {
-        for (int i = 0; i < names.size(); i++) playerRow(names.get(i), i == 0, i == names.size() - 1);
+    private void playerList(List<String> names) { playerList(names, false); }
+    /** Rows on the Clan page also get a button that removes the player from the clan. */
+    private void playerList(List<String> names, boolean clanPage) {
+        for (int i = 0; i < names.size(); i++) playerRow(names.get(i), i == 0, i == names.size() - 1, clanPage);
         cursor += PAD;
     }
 
-    private void playerRow(String name, boolean first, boolean last) {
+    /** Meteor friends show in the friend colour and other clan members in the clan colour. */
+    private int nameColor(String name, int otherwise) {
+        return tools.isFriend(name) ? tools.friendColor() : tools.inClan(name) ? tools.clanColor() : otherwise;
+    }
+    private String status(String name, boolean online, boolean clanPage) {
+        return (online ? "Online" : "Offline") + (tools.isFriend(name) ? DOT + "Friend" : "") + (!clanPage && tools.inClan(name) ? DOT + "Clan" : "");
+    }
+
+    private void playerRow(String name, boolean first, boolean last, boolean clanPage) {
         var incoming = requests.stream().filter(r -> r.player().equalsIgnoreCase(name)).findFirst().orElse(null);
         int ry = cursor, height = incoming == null ? ROW : ROW + 26;
         cursor += height;
         if (!visible(ry, height)) return;
         row(ry, height, first, last, false);
-        boolean friend = tools.isFriend(name), online = tools.onlineContact(name);
-        avatar(name, cx + 7, ry + 6, 22, friend ? tools.friendColor() : accent(), online, SURFACE);
-        var actions = new Actions(cx + cw - 7, ry + 7)
-            .icon(MORE, "More actions for " + name, () -> findPlayer(name))
+        boolean online = tools.onlineContact(name);
+        avatar(name, cx + 7, ry + 6, 22, nameColor(name, accent()), online, SURFACE);
+        var actions = new Actions(cx + cw - 7, ry + 7);
+        if (clanPage) actions.icon(CLOSE, "Remove " + name + " from the clan", () -> {
+            tools.removeFromClan(name);
+            notice("Removed " + name + " from the clan.");
+        });
+        actions.icon(MORE, "More actions for " + name, () -> findPlayer(name))
             .add("TP", "/tpa " + name, Tone.Secondary, true, () -> { tools.requestTeleport(name); notice("Teleport request sent to " + name); })
             .add("Message", "Message " + name, Tone.Secondary, true, () -> openConversation(name));
         int tx = cx + 37, textWidth = actions.left() - GAP - tx;
         int unread = tools.messages().unread(name);
         int badge = unread > 0 ? badgeWidth(unread) + 5 : 0;
         float scale = bodyScale();
-        text(graphics, name, tx, ry + 8, textWidth - badge, friend ? tools.friendColor() : TEXT);
+        text(graphics, name, tx, ry + 8, textWidth - badge, nameColor(name, TEXT));
         if (badge > 0) badge(String.valueOf(unread), tx + Math.min(width(name, scale), textWidth - badge) + 5, ry + 8 + capHeight(scale) / 2);
         String countdown = ChatCountdowns.player(name, timers, List.of(), ChatTools.now());
-        small(graphics, countdown.isEmpty() ? (online ? "Online" : "Offline") + (friend ? DOT + "Friend" : "") : countdown,
-            tx, ry + 20, textWidth, countdown.isEmpty() ? MUTED : AMBER);
+        small(graphics, countdown.isEmpty() ? status(name, online, clanPage) : countdown, tx, ry + 20, textWidth, countdown.isEmpty() ? MUTED : AMBER);
         if (incoming != null) {
             int sy = ry + ROW - 2;
             var answer = new Actions(cx + cw - 7, sy)
@@ -714,14 +849,26 @@ public final class ChatToolsScreen extends Screen {
     }
 
     private void toggleRow(String label, String description, boolean checked, Runnable action, boolean first, boolean last) {
+        toggleRow(label, description, checked, action, 0, null, first, last);
+    }
+    /** A switch row; with {@code pick}, a swatch of {@code color} beside the switch opens a colour picker. */
+    private void toggleRow(String label, String description, boolean checked, Runnable action, int color, Runnable pick, boolean first, boolean last) {
         int ry = cursor;
         cursor += ROW;
         if (!visible(ry, ROW)) return;
         boolean hover = over(cx, ry, cw, ROW);
         row(ry, ROW, first, last, hover);
-        text(graphics, label, cx + 12, ry + 8, cw - 64, TEXT);
-        small(graphics, description, cx + 12, ry + 20, cw - 64, MUTED);
-        int sx = cx + cw - 38, sy = ry + (ROW - 14) / 2;
+        int sx = cx + cw - 38, sy = ry + (ROW - 14) / 2, textWidth = cw - 64;
+        if (pick != null) {
+            int px = sx - GAP - CONTROL, py = ry + (ROW - CONTROL) / 2;
+            panel(graphics, px, py, CONTROL, CONTROL, 4, over(px, py, CONTROL, CONTROL) ? mix(BORDER, TEXT, 0.4) : BORDER, SURFACE);
+            round(graphics, px + 3, py + 3, CONTROL - 6, CONTROL - 6, 2, checked ? color : mix(SURFACE, color, 0.35));
+            // Registered before the row, so a click on the swatch picks a colour instead of flipping the switch.
+            register(px, py, CONTROL, CONTROL, "Change colour", true, pick);
+            textWidth -= CONTROL + GAP;
+        }
+        text(graphics, label, cx + 12, ry + 8, textWidth, TEXT);
+        small(graphics, description, cx + 12, ry + 20, textWidth, MUTED);
         round(graphics, sx, sy, 26, 14, 7, checked ? accent() : BORDER);
         round(graphics, sx + (checked ? 14 : 2), sy + 2, 10, 10, 5, checked ? onAccent() : SECONDARY);
         register(cx, ry, cw, ROW, null, true, action);
@@ -887,6 +1034,7 @@ public final class ChatToolsScreen extends Screen {
 
     private void focus(EditBox box) {
         input.setFocused(box == input); homeSearch.setFocused(box == homeSearch); playerSearch.setFocused(box == playerSearch);
+        clanField.setFocused(box == clanField);
     }
     @Override public boolean mouseClicked(MouseButtonEvent event, boolean doubled) {
         if (event.button() != 0) return true;
@@ -925,7 +1073,9 @@ public final class ChatToolsScreen extends Screen {
         }
         if (event.key() == GLFW.GLFW_KEY_TAB) { focus(input.isFocused() && visibleSearch != null ? visibleSearch : input); return true; }
         if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
-            if (visibleSearch != null && visibleSearch.isFocused()) findPlayer(visibleSearch.getValue()); else sendInput();
+            if (visibleSearch == clanField && clanField.isFocused()) addTyped();
+            else if (visibleSearch != null && visibleSearch.isFocused()) findPlayer(visibleSearch.getValue());
+            else sendInput();
             return true;
         }
         if (input.isFocused()) return input.keyPressed(event);
@@ -935,6 +1085,7 @@ public final class ChatToolsScreen extends Screen {
         if (input.isFocused()) return input.charTyped(event);
         return visibleSearch != null && visibleSearch.isFocused() && visibleSearch.charTyped(event);
     }
+    @Override public void onFilesDrop(List<Path> files) { importFiles(files); }
     @Override public void tick() { if (!tools.isActive() || Minecraft.getInstance().getConnection() == null) Minecraft.getInstance().setScreen(null); }
     @Override public void removed() { saveDraft(); dragging = resizing = false; if (input != null) focus(null); }
     @Override public void onClose() { Minecraft.getInstance().setScreen(Minecraft.getInstance().level == null ? null : parent); }

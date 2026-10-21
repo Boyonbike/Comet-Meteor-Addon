@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/Magnus-Krill/THM-Addons",
+  "branch": "26.2",
+  "commit": "e952b86ff4e3836ba5c7db982fad22205126ef3a",
+  "files": {
+    "src/main/java/xyz/thm/addon/modules/Speedmine.java": "b716a4100a8c2c4773eb5960e9778146cb5ac48c456499f96a735b15db48d234",
+    "src/main/java/xyz/thm/addon/mixin/PlayerAirMiningMixin.java": "54e2121047e1e249caa18c24e3ce13905700aedf43aa4395e7ca3b91a227ab62",
+    "src/main/java/xyz/thm/addon/mixin/ClientLevelBlockUpdateMixin.java": "1c4a3ebda9142b7dc55dd31812ddb16e5bd84ca4ff965b4e4ee5873385768bf1",
+    "src/main/java/xyz/thm/addon/mixin/accessor/ClientLevelPredictionAccessor.java": "97362943a3f942030c02985ed56d2c33f4595a5f5708102cfa117ecedb20b4df",
+    "src/main/java/xyz/thm/addon/mixin/accessor/ClientPlayerInteractionManagerTHMAccessor.java": "dc9f83f0f499a163a7f85dedd5a855c7ef8038d3892ab344afa1b6b53de52f62",
+    "src/main/java/xyz/thm/addon/mixin/accessor/PlayerInventoryAccessor.java": "5670d7bdf1b8b8de2f14e8bea0f79d056ffa47bd38abe05e2fdd8cd02819aabe",
+    "src/main/java/xyz/thm/addon/mixin/accessor/InputAccessor.java": "ad29cb8ea6b7b322da68b4860f39ce6682eddb7d1f6ad5b34f4e0f00ec9515f1",
+    "src/main/java/xyz/thm/addon/mixin/accessor/UpdateSelectedSlotS2CPacketAccessor.java": "aed30141d605133af56bd6128746c2dc36a4693e140384c329949820f87f16a7",
+    "src/main/java/xyz/thm/addon/settings/DescribedOption.java": "1dc94bbfc4335f9dc1e51a97aa5d931f7af8a41fb1203713816d8c7f018e0eb0",
+    "src/main/java/xyz/thm/addon/utils/InventoryManager.java": "6ed1535742ac9e9237a7ca7f81c62a627da421a4a4f422211b5be3db7753f825",
+    "src/main/java/xyz/thm/addon/utils/RangeUtils.java": "037c608c616e9fe3cb23fb434590109420252e956d179ed0aa375b2148729e91",
+    "src/main/java/xyz/thm/addon/utils/RenderUtilsTHM.java": "c96226af0540f7700fd08b727da8431897ea921da34e8b753333877cd71bda15",
+    "src/test/java/xyz/thm/addon/modules/SpeedmineTest.java": "66ad33368ac11a066befaf7559527ee26dffed73f451de492188985d96d322ad",
+    "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+  }
+}
