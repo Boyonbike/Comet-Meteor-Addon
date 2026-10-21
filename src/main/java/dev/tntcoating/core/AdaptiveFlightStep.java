@@ -66,7 +66,7 @@ public final class AdaptiveFlightStep {
      * The blended vertical system. Vertical percentages are of {@code verticalMaximum}; climbing and descending
      * speed up by at least {@code verticalAcceleration} and along the boost curve with {@code rampStep}, and slow
      * down along its mirror; momentum above a lowered ceiling (such as just after boost) brakes down to it instead
-     * of snapping. Descent towards a floor {@code floorClearance} blocks below slows to {@link #LANDING_SPEED}
+     * of snapping. The opposite Jump/Sneak key reverses at once, from a standstill. Descent towards a floor {@code floorClearance} blocks below slows to {@link #LANDING_SPEED}
      * before touchdown.
      */
     public record Blend(double verticalMaximum, double verticalAcceleration, double rampStep, double floorClearance) {
@@ -193,30 +193,33 @@ public final class AdaptiveFlightStep {
         double horizontalFactor = horizontal > horizontalHardCeiling ? horizontalHardCeiling / horizontal : 1;
 
         double target = requested.y();
-        boolean slowing = Math.abs(target) < Math.abs(previous.y()) || target * previous.y() < 0;
+        // Pressing the opposite vertical key turns around at once: the old direction's momentum is dropped and
+        // the new direction speeds up from a standstill this tick, instead of braking through zero first.
+        double previousY = controls.verticalInput() * previous.y() < 0 ? 0 : previous.y();
+        boolean slowing = Math.abs(target) < Math.abs(previousY) || target * previousY < 0;
         double delta;
         if (slowing) {
             delta = Math.min(controller.settings().braking(), 2 * blend.verticalAcceleration());
             // Slowing mirrors the vertical ramp: firm from fast climbs and dives, gentle near a stop.
-            delta = Math.max(delta, blend.rampStep() * Math.abs(previous.y()) / blend.verticalMaximum());
+            delta = Math.max(delta, blend.rampStep() * Math.abs(previousY) / blend.verticalMaximum());
         } else if (boostVertical) {
             delta = Double.POSITIVE_INFINITY; // The vertical boost ramp is the acceleration limit.
         } else {
             delta = Math.min(controller.settings().acceleration(), blend.verticalAcceleration());
-            delta = Math.max(delta, BoostRamp.gain(Math.abs(previous.y()), blend.rampStep(), blend.verticalMaximum()));
+            delta = Math.max(delta, BoostRamp.gain(Math.abs(previousY), blend.rampStep(), blend.verticalMaximum()));
         }
-        double y = previous.y() + Math.max(-delta, Math.min(delta, target - previous.y()));
+        double y = previousY + Math.max(-delta, Math.min(delta, target - previousY));
         double up, down;
         if (boostVertical) up = down = boost.vertical();
         else {
-            up = decaying(verticalBase, y, previous.y());
-            down = decaying(verticalBase, -y, -previous.y());
+            up = decaying(verticalBase, y, previousY);
+            down = decaying(verticalBase, -y, -previousY);
         }
         y = !verticalEnabled || verticalFraction == 0 ? 0 : Math.max(-down, Math.min(up, y));
         // Soft landing: brake a descent as the floor approaches, as hard as needed, and touch down slowly.
         if (y < 0 && Double.isFinite(blend.floorClearance())) {
             double descent = Math.max(LANDING_SPEED, controller.settings().brakingModel()
-                .allowed(Math.max(0, -previous.y()), blend.floorClearance()));
+                .allowed(Math.max(0, -previousY), blend.floorClearance()));
             y = Math.max(y, -descent);
         }
         Motion limited = new Motion(blended.x() * horizontalFactor, y, blended.z() * horizontalFactor);

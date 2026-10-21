@@ -59,14 +59,38 @@ class AdaptiveFlightVerticalTest {
         }
     }
 
-    @Test void changingVerticalDirectionBrakesThroughExistingMomentum() {
+    @Test void theOppositeVerticalKeyTurnsAroundAtOnceFromAStandstill() {
+        for (int direction : new int[] {-1, 1}) {
+            AdaptiveFlightController controller = controller();
+            controller.accept(new Motion(0, -direction * .4, 0));
+
+            Motion motion = move(controller, new Motion(0, direction * .1, 0), 0, .1,
+                TestControls.of(true, 1, 1, direction, false, null, blend(.6))).motion();
+
+            assertEquals(direction * .05, motion.y(), EPSILON,
+                "the old direction's momentum is dropped and the new one starts at vertical-acceleration");
+        }
+    }
+
+    @Test void theOppositeVerticalKeyTurnsABoostedClimbAroundAtTheBoostSpeed() {
+        AdaptiveFlightController controller = controller();
+        controller.accept(new Motion(0, 3, 0));
+
+        Motion motion = move(controller, new Motion(0, -.1, 0), 0, .1,
+            new Controls(true, 1, 1, -1, false, null, AdaptiveFlightStep.SAFE_MANEUVER_SPEED,
+                new Blend(3, .05, .5), new AdaptiveFlightStep.Boost(0, 1.5))).motion();
+
+        assertEquals(-1.5, motion.y(), EPSILON, "a 60 b/s climb becomes a 30 b/s boosted descent in one tick");
+    }
+
+    @Test void releasingTheVerticalKeyStillBrakesThroughTheSink() {
         AdaptiveFlightController controller = controller();
         controller.accept(new Motion(0, .4, 0));
 
-        Motion motion = move(controller, new Motion(0, -.1, 0), 0, .1,
-            TestControls.of(true, 1, 1, -1, false, null, blend(.6))).motion();
+        Motion motion = move(controller, new Motion(0, -.02, 0), 0, .1,
+            TestControls.of(false, 1, 1, 0, false, null, blend(.6))).motion();
 
-        assertEquals(.3, motion.y(), EPSILON);
+        assertEquals(.3, motion.y(), EPSILON, "only a deliberate reversal skips braking, not the passive sink");
     }
 
     @Test void diagonalFlightRespectsBothPercentagesWithinTheEngineMaximum() {

@@ -4,42 +4,54 @@ import java.util.List;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
+import meteordevelopment.meteorclient.settings.EnumSetting;
+import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.settings.Settings;
+import meteordevelopment.meteorclient.systems.hud.Alignment;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
+import meteordevelopment.meteorclient.systems.hud.elements.TextHud;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 
-/** The compact panel look shared by Comet's HUD elements: background, accent bar, optional title and text lines. */
-final class PanelStyle {
-    private static final double PADDING = 4;
-    private static final double ACCENT_WIDTH = 2;
-
-    private final Setting<Boolean> shadow, background, customScale;
+/**
+ * The look of Meteor's own text HUD elements, such as FPS and Speed: shadowed text in the HUD's text-colors with no
+ * background, and the same shadow, alignment, border, scale and background settings as Meteor's elements.
+ */
+final class MeteorTextStyle {
+    private final Setting<Boolean> shadow, customScale, background;
+    private final Setting<Alignment> alignment;
+    private final Setting<Integer> border;
     private final Setting<Double> scale;
-    private final Setting<SettingColor> textColor, accentColor, backgroundColor;
+    private final Setting<SettingColor> backgroundColor;
 
-    PanelStyle(Settings settings) {
+    MeteorTextStyle(Settings settings) {
         SettingGroup general = settings.getDefaultGroup();
-        textColor = general.add(new ColorSetting.Builder().name("text-color").description("Colour of the text.")
-            .defaultValue(new SettingColor(238, 238, 238)).build());
-        accentColor = general.add(new ColorSetting.Builder().name("accent-color").description("Colour of the title and side bar.")
-            .defaultValue(new SettingColor(85, 170, 255)).build());
-        shadow = general.add(new BoolSetting.Builder().name("shadow").description("Draw a shadow behind the text.").defaultValue(true).build());
-        SettingGroup look = settings.createGroup("Background and Scale");
-        background = look.add(new BoolSetting.Builder().name("background").description("Draw the panel background and side bar.")
+        shadow = general.add(new BoolSetting.Builder().name("shadow").description("Renders shadow behind text.")
             .defaultValue(true).build());
-        backgroundColor = look.add(new ColorSetting.Builder().name("background-color").description("Colour of the panel background.")
-            .defaultValue(new SettingColor(0, 0, 0, 176)).visible(background::get).build());
-        customScale = look.add(new BoolSetting.Builder().name("custom-scale").description("Use a scale other than the HUD's text scale.")
+        alignment = general.add(new EnumSetting.Builder<Alignment>().name("alignment").description("Horizontal alignment.")
+            .defaultValue(Alignment.Auto).build());
+        border = general.add(new IntSetting.Builder().name("border").description("How much space to add around the element.")
+            .defaultValue(0).build());
+        SettingGroup scaling = settings.createGroup("Scale");
+        customScale = scaling.add(new BoolSetting.Builder().name("custom-scale")
+            .description("Applies a custom scale to this hud element.").defaultValue(false).build());
+        scale = scaling.add(new DoubleSetting.Builder().name("scale").description("Custom scale.")
+            .visible(customScale::get).defaultValue(1).min(0.5).sliderRange(0.5, 3).build());
+        SettingGroup look = settings.createGroup("Background");
+        background = look.add(new BoolSetting.Builder().name("background").description("Displays background.")
             .defaultValue(false).build());
-        scale = look.add(new DoubleSetting.Builder().name("scale").description("Text scale used while custom-scale is on.")
-            .defaultValue(1).min(0.5).sliderRange(0.5, 3).visible(customScale::get).build());
+        backgroundColor = look.add(new ColorSetting.Builder().name("background-color").description("Color used for the background.")
+            .visible(background::get).defaultValue(new SettingColor(25, 25, 25, 50)).build());
     }
 
-    /** Sizes the element to fit, then draws it at its current position. A null title draws only the lines. */
+    /**
+     * Sizes the element to fit, then draws it at its current position. As in Meteor's "Speed: #1{...}" presets, a
+     * line's label up to its first ": " takes the first text colour and the rest the second; a line without a label
+     * is all value. A null title draws only the lines; a title is all label.
+     */
     void render(HudElement element, HudRenderer renderer, String title, List<String> lines) {
         double textScale = customScale.get() ? scale.get() : Hud.get().getTextScale();
         boolean textShadow = shadow.get();
@@ -47,21 +59,31 @@ final class PanelStyle {
         int rows = lines.size() + (title == null ? 0 : 1);
         double width = title == null ? 0 : renderer.textWidth(title, textShadow, textScale);
         for (String line : lines) width = Math.max(width, renderer.textWidth(line, textShadow, textScale));
-        element.setSize(width + PADDING * 2 + ACCENT_WIDTH, lineHeight * rows + PADDING * 2);
+        int space = border.get();
+        element.setSize(width + space * 2, lineHeight * rows + space * 2);
 
-        double x = element.x, y = element.y;
         if (background.get()) {
-            renderer.quad(x, y, element.getWidth(), element.getHeight(), backgroundColor.get());
-            renderer.quad(x, y, ACCENT_WIDTH, element.getHeight(), accentColor.get());
+            renderer.quad(element.x, element.y, element.getWidth(), element.getHeight(), backgroundColor.get());
         }
-        double textX = x + ACCENT_WIDTH + PADDING, textY = y + PADDING;
+        double y = element.y + space;
         if (title != null) {
-            renderer.text(title, textX, textY, accentColor.get(), textShadow, textScale);
-            textY += lineHeight;
+            row(element, renderer, title, "", y, textShadow, textScale);
+            y += lineHeight;
         }
         for (String line : lines) {
-            renderer.text(line, textX, textY, textColor.get(), textShadow, textScale);
-            textY += lineHeight;
+            int colon = line.indexOf(": ");
+            int split = colon < 0 ? 0 : colon + 2;
+            row(element, renderer, line.substring(0, split), line.substring(split), y, textShadow, textScale);
+            y += lineHeight;
         }
+    }
+
+    private void row(HudElement element, HudRenderer renderer, String label, String value, double y,
+                     boolean textShadow, double textScale) {
+        int space = border.get();
+        double x = element.x + space + element.box.alignX(element.getWidth() - space * 2,
+            renderer.textWidth(label + value, textShadow, textScale), alignment.get());
+        if (!label.isEmpty()) x = renderer.text(label, x, y, TextHud.getSectionColor(0), textShadow, textScale);
+        if (!value.isEmpty()) renderer.text(value, x, y, TextHud.getSectionColor(1), textShadow, textScale);
     }
 }

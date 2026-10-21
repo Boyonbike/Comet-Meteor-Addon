@@ -11,7 +11,7 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 public final class TeleportCountdownHud extends HudElement {
     public static final HudElementInfo<TeleportCountdownHud> INFO = new HudElementInfo<>(CometHud.GROUP,
         "tp-home-countdown", "Chat Tools home / TP countdowns, cooldowns and incoming request expiry.", TeleportCountdownHud::new);
-    private final PanelStyle style = new PanelStyle(settings);
+    private final MeteorTextStyle style = new MeteorTextStyle(settings);
     private TeleportCountdownHud() { super(INFO); }
     @Override public void render(HudRenderer renderer) {
         ChatTools tools = Modules.get().get(ChatTools.class);

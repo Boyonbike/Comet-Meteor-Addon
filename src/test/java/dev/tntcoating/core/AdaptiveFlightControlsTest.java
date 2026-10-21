@@ -98,7 +98,7 @@ class AdaptiveFlightControlsTest {
         }
     }
 
-    @Test void sprintVerticalMovementAcceleratesAndReversesWithinTheVectorBudget() {
+    @Test void sprintVerticalMovementAcceleratesWithinTheVectorBudgetAndReversesAtOnce() {
         AdaptiveFlightController controller = controller(.25, .5);
         Probe probe = new Probe();
         Motion previous = Motion.ZERO;
@@ -112,8 +112,7 @@ class AdaptiveFlightControlsTest {
 
         var reversed = AdaptiveFlightStep.move(controller, new Motion(0, -.1, 0),
             0, .1, BODY, probe, 64, .35, TestControls.of(true, 1, -1, false));
-        assertEquals(.25, reversed.motion().y(), EPSILON);
-        assertEquals(.5, difference(previous, reversed.motion()), EPSILON);
+        assertEquals(-.25, reversed.motion().y(), EPSILON, "reversing restarts from a standstill, without braking first");
 
         var released = AdaptiveFlightStep.move(controller, Motion.ZERO,
             0, .1, BODY, probe, 64, .35, TestControls.of(true, 1, 0, false));

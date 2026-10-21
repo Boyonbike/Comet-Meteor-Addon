@@ -45,7 +45,7 @@ public final class PlayerSpeedHud extends HudElement {
     private final Setting<Integer> smoothing = measurement.add(new IntSetting.Builder()
         .name("smoothing").description("Number of ticks used to smooth the displayed speed. One is immediate.")
         .defaultValue(5).range(1, 40).sliderRange(1, 20).build());
-    private final PanelStyle style = new PanelStyle(settings);
+    private final MeteorTextStyle style = new MeteorTextStyle(settings);
 
     private final SpeedSampler sampler = new SpeedSampler();
     private LocalPlayer player;

@@ -14,7 +14,7 @@ public final class DubCounterHud extends HudElement {
 
     private static final List<String> PREVIEW = List.of("Dubs: 0", "Enable the dub-counter module");
 
-    private final PanelStyle style = new PanelStyle(settings);
+    private final MeteorTextStyle style = new MeteorTextStyle(settings);
 
     private DubCounterHud() {
         super(INFO);

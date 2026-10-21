@@ -150,6 +150,9 @@ final class FlightFeelScenarios {
             t < 60, t >= 90 && t < 150, false)));
         list.add(new Scenario("vertical-boost", open, 220, t -> Keys.of(t < 120 ? 1 : 0, 0,
             t >= 20 && t < 100, t >= 140 && t < 190, t >= 20 && t < 190)));
+        // Jump straight to Sneak and back, cruising and then boosting: each switch turns around the next tick.
+        list.add(new Scenario("vertical-reversal", open, 200, t -> Keys.of(1, 0,
+            t < 50 || t >= 90 && t < 140, t >= 50 && t < 90 || t >= 140, t >= 90)));
         list.add(new Scenario("climb-boost-only", open, 140, t -> Keys.of(0, 0, t < 80, false, t < 80)));
         list.add(new Scenario("wall-cruise-crawl", open.wall(40.5).vanilla(.3), 220,
             t -> Keys.of(1, 0, false, false, false)));

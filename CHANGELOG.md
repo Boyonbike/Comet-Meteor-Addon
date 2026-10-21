@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.25.1
+
+- **Adaptive Elytra Fly instant vertical reversal:** switching straight from Jump to Sneak, or back, now turns around on the very next tick instead of first braking through zero (about 6 ticks, 0.3 s, with the defaults). The old direction's momentum is dropped and the new direction speeds up from a standstill: cruise goes from a 21 b/s climb to a 10 b/s descent and reaches 21 b/s within 3 ticks, and Sprint goes from a 60 b/s climb straight to a 30 b/s boosted descent, then follows the vertical boost curve. Releasing Jump or Sneak still brakes smoothly. Pressing Jump while sinking on Meteor's glide also climbs one tick sooner. A new sixteenth recorded flight, **vertical-reversal**, locks this in; the other recorded flights are unchanged apart from that first climbing tick in **vertical-boost**.
+- **Meteor-style HUD elements:** every Comet HUD element (**adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown** and **dub-counter**) now looks like Meteor's own text elements: shadowed text with no background or side bar, each label in the first of the HUD's **text-colors** and its value in the second, so they match FPS, TPS and Speed and follow your colour choices. Their settings match Meteor's elements too: **shadow**, **alignment** and **border** in General, **custom-scale** and **scale** under Scale, and **background** (off) and **background-color** under Background. The **text-color** and **accent-color** settings are gone. Elements placed beside Meteor's may need a nudge in the HUD editor to line up again, since they lost their 6-pixel inner padding.
+
 ## 0.25.0
 
 - **Removed Phase:** the **phase** module (Pearl, Clip, Normal, Sand and Climb modes) and its push-out hook are gone.

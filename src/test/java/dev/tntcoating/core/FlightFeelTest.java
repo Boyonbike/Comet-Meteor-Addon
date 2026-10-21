@@ -61,6 +61,12 @@ class FlightFeelTest {
                         case "cruise-release" -> assertEquals(0, last.motion().horizontalLength(), 1e-9);
                         case "climb-boost-only" -> assertTrue(verticalRamp > 2, "vertical boost ramps");
                         case "vertical-cruise", "vertical-boost" -> assertTrue(climb > .5, scenario.name() + " climbs");
+                        case "vertical-reversal" -> {
+                            for (int tick : new int[] {50, 90, 140}) {
+                                double before = frames.get(tick - 1).motion().y(), after = frames.get(tick).motion().y();
+                                assertTrue(Math.abs(before) > .5 && before * after < 0, "turns around at once at tick " + tick);
+                            }
+                        }
                         case "wall-cruise-crawl", "wall-boost", "wall-glide-guard", "chunk-edge-stop" ->
                             assertTrue(last.motion().horizontalLength() < .7, scenario.name() + " stops or crawls at the edge");
                         case "chunk-edge-fly-into" -> assertTrue(last.motion().horizontalLength() > 14, "flies on into missing chunks");

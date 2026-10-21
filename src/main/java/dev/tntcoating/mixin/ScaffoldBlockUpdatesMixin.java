@@ -5,6 +5,7 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.movement.Scaffold;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -28,6 +29,15 @@ public abstract class ScaffoldBlockUpdatesMixin {
         if (Modules.get() == null) return;
         if (Modules.get().get(Scaffold.class) instanceof ScaffoldPlacementFeedback feedback && ((Scaffold) feedback).isActive()) {
             packet.runUpdates(feedback::comet$serverBlockUpdate);
+        }
+    }
+
+    // The client never updates its last reported position here, so at TAIL both the target and the rejected position are known.
+    @Inject(method = "handleMovePlayer", at = @At("TAIL"))
+    private void comet$setback(ClientboundPlayerPositionPacket packet, CallbackInfo ci) {
+        if (Modules.get() == null) return;
+        if (Modules.get().get(Scaffold.class) instanceof ScaffoldPlacementFeedback feedback && ((Scaffold) feedback).isActive()) {
+            feedback.comet$serverSetback();
         }
     }
 }

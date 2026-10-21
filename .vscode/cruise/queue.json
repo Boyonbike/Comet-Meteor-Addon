@@ -1,0 +1,8 @@
+{
+  "tasks": [],
+  "isProcessing": false,
+  "currentTaskId": null,
+  "errorRecovery": "retry-once",
+  "maxRetries": 3,
+  "contextGroupSessions": {}
+}
