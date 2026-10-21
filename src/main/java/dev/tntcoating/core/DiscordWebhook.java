@@ -20,8 +20,11 @@ public final class DiscordWebhook {
     static final int CALL_TO_ARMS_COLOR = 0xE8432E;
     /** The stash report's side bar, chest gold. */
     static final int STASH_REPORT_COLOR = 0xD4A017;
-    /** How the stash bot tells a stash report from a call to arms posted through the same webhook. */
-    public static final String STASH_REPORT_FOOTER = "Comet stash report";
+    /**
+     * How the stash bot tells a stash report from a call to arms posted through the same webhook. It reads "grief alert"
+     * because the bot already deployed matches the footer of the single module that came before the split.
+     */
+    public static final String STASH_REPORT_FOOTER = "Comet grief alert";
     static final String CALL_TO_ARMS_FOOTER = "Comet call to arms";
     /** The attached screenshot's file name, which the embed shows by referring to it. */
     public static final String SCREENSHOT = "screenshot.png";
@@ -95,7 +98,7 @@ public final class DiscordWebhook {
 
     /**
      * A stash report for the clan's stash bot, which credits the stash to the Discord account and logs the dubs, so both
-     * are always included. Nothing in it pings anyone.
+     * are always included. Like /submit-stash it never carries coordinates, and nothing in it pings anyone.
      */
     public static JsonObject stashReport(Alert alert, Set<Part> parts, Instant time) {
         JsonObject payload = new JsonObject();
@@ -107,7 +110,6 @@ public final class DiscordWebhook {
         fields.add(field("💬 Discord", "<@" + alert.discordId() + ">", true));
         fields.add(dubs(alert));
         if (parts.contains(Part.DIMENSION)) fields.add(dimension(alert));
-        if (parts.contains(Part.COORDINATES)) fields.add(coordinates(alert));
         return finish(payload, embed, fields, STASH_REPORT_FOOTER, alert, parts, time);
     }
 

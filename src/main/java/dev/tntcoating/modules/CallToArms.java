@@ -21,7 +21,7 @@ public final class CallToArms extends DiscordWebhookModule {
     {
         show(Part.NAME, "show-name", "Show your in-game name.");
         show(Part.FACE, "show-face", "Show your skin's face as the thumbnail.");
-        show(Part.COORDINATES, "show-coordinates", "Show your block coordinates.");
+        show(Part.COORDINATES, "show-coordinates", "Show your block coordinates. Off by default; while on, posting always asks first and shows them.");
         show(Part.DIMENSION, "show-dimension", "Show which dimension you're in.");
         show(Part.DUBS, "show-dubs", "Show the dubs in your loaded chunks.");
         show(Part.TPA, "show-tpa", "Show a copyable /tpa command with your name.");
@@ -43,7 +43,6 @@ public final class CallToArms extends DiscordWebhookModule {
         String mention = DiscordWebhook.mention(ping.get());
         prompt.title("Send call to arms?").message(mention.isEmpty() ? "This posts a call to arms to Discord without a ping."
             : "This posts a call to arms to Discord and pings " + (mention.startsWith("<@&") ? "your role" : mention) + ".");
-        if (shown(Part.COORDINATES)) prompt.message("Everyone who can see the channel will get your coordinates.");
         if (shown(Part.SCREENSHOT)) prompt.message("A screenshot of your view, without the HUD, is attached.");
     }
 

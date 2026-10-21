@@ -123,7 +123,7 @@ class DiscordWebhookTest {
         JsonObject embed = embed(DiscordWebhook.stashReport(ALERT, ALL, TIME));
         assertEquals("📦 Stash report", embed.get("title").getAsString());
         assertEquals(DiscordWebhook.STASH_REPORT_COLOR, embed.get("color").getAsInt());
-        assertEquals("Comet stash report · 6b6t.org", footer(embed));
+        assertEquals("Comet grief alert · 6b6t.org", footer(embed));
         assertFalse(embed.has("description"));
         JsonArray fields = embed.getAsJsonArray("fields");
         // The stash bot finds each field by a word in its name.
@@ -131,8 +131,8 @@ class DiscordWebhookTest {
         assertEquals("<@998877665544332211>", valueNamed(fields, "Discord"));
         assertEquals("**12.5**", valueNamed(fields, "Dubs"));
         assertEquals("Overworld", valueNamed(fields, "Dimension"));
-        assertEquals("`1234 64 -5678`", valueNamed(fields, "Coordinates"));
-        assertEquals(5, fields.size(), "No /tpa or call to action in a stash report.");
+        assertEquals(4, fields.size(), "No coordinates, /tpa or call to action in a stash report.");
+        assertFalse(DiscordWebhook.stashReport(ALERT, ALL, TIME).toString().contains("1234"), "Coordinates never leave the game in a stash report, as with /submit-stash.");
     }
 
     @Test void stashReportAlwaysKeepsTheDiscordAccountAndDubs() {
@@ -141,7 +141,7 @@ class DiscordWebhookTest {
         assertEquals(2, fields.size());
         assertEquals("<@998877665544332211>", valueNamed(fields, "Discord"));
         assertEquals("**12.5**", valueNamed(fields, "Dubs"));
-        assertEquals("Comet stash report", footer(embed));
+        assertEquals("Comet grief alert", footer(embed));
         assertFalse(embed.has("thumbnail"));
     }
 

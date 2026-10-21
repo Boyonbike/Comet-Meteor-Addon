@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.25.10
+
+- **Stash reports never carry coordinates:** like `/submit-stash`, a stash report no longer has a coordinates field or a **show-coordinates** switch, so coordinates never reach the stash bot's channel, its #basehunting-finds post or its records. Two reports of one stash are logged as two entries; an admin removes the extra with `/delete-stash`. The call to arms keeps **show-coordinates**, off by default and always confirmed.
+
+## 0.25.9
+
+- **Coordinates off by default:** **show-coordinates** now starts off in both **call-to-arms** and **stash-report**. While it is on, pressing the key always opens the confirmation prompt, even with **confirm** off, and the prompt asks "Are you sure?" with the exact coordinates about to be posted. Existing setups switch to off as well, because Meteor only saves settings changed from their default and on was the old default. Without coordinates the stash bot can't recognise repeat reports of one stash, so each is logged separately.
+
+## 0.25.8
+
+- **Stash Report works with the stash bot as already set up:** the stash report's footer starts with `Comet grief alert` again, the text the deployed stash bot looks for, so the bot needs no change. A call to arms still says `Comet call to arms` and is never logged as a stash.
+
 ## 0.25.7
 
 - **Grief Alert split into Call to Arms and Stash Report:** **call-to-arms** is the old ping (@everyone by default, call to action, `/tpa`, coordinates, dubs, screenshot) without the Discord account. The new **stash-report** logs the stash with the clan's stash bot and pings nobody: it always carries your Discord account (**discord-user-id**, required) and the dub count, plus your name, coordinates, dimension and screenshot, and refuses to send while no chests are loaded. Each has its own **webhook-url**; **cooldown-seconds** and **confirm** moved to a **Sending** group. The stash bot logs only messages with the stash report's footer, so a call to arms is never counted as a stash. **grief-alert** is gone: re-enter your webhook URL, ping and other settings in the new modules.

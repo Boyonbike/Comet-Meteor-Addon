@@ -1,4 +1,4 @@
-# Comet by Boyonabike — 0.25.7
+# Comet by Boyonabike — 0.25.10
 
 Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
@@ -9,7 +9,7 @@ Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. 
 - **Diagnostics:** **home-packet-log**.
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown** and **dub-counter**. See [HUD elements](#hud-elements).
 
-Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.7.jar`.
+Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.10.jar`.
 
 **Scaffold**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
@@ -161,15 +161,15 @@ The count refreshes five times a second from the chunks' block-entity lists, wit
 Two one-press modules post to Discord through channel webhooks. Bind each to a key: a press posts once, then the module switches itself off again.
 
 - **call-to-arms** pings the clan (@everyone by default) to join a live grief. It shows your name and face, coordinates, dimension, the dubs in your loaded chunks, a `/tpa <your name>` code block to copy into chat, the **call-to-action** text and a screenshot.
-- **stash-report** logs the stash around you with the clan's stash bot and pings nobody. It shows your Discord account and the dubs, always, plus your name and face, coordinates, dimension and a screenshot. The bot credits the stash to your Discord account, counts it in `/stats`, `/mystats` and `/leaderboard`, and reacts to the report once it is logged. A call to arms is never logged as a stash, even when both use the same webhook.
+- **stash-report** logs the stash around you with the clan's stash bot and pings nobody. It shows your Discord account and the dubs, always, plus your name and face, dimension and a screenshot. Like `/submit-stash`, it never includes coordinates. The bot credits the stash to your Discord account, counts it in `/stats`, `/mystats` and `/leaderboard`, and reacts to the report once it is logged. A call to arms is never logged as a stash, even when both use the same webhook.
 
 Dubs are counted the same way as **dub-counter**, at the moment you press, whether or not Dub Counter is on.
 
 Settings both share:
 
 - **webhook-url**: in Discord, open the channel's settings → **Integrations** → **Webhooks**, create one and use **Copy Webhook URL**. Each module has its own, so the call to arms can go to a ping channel and the stash report to the channel the stash bot reads. Only Discord webhook URLs are accepted, so a typo can't send your coordinates anywhere else. Anyone with the URL can post in that channel, and Meteor saves it in its config folder, so don't share your config.
-- **Sending** group: **cooldown-seconds** (default 30) ignores presses for that long after one is sent, so a double press doesn't post twice; a failed post clears it. **confirm** (default on) asks first: **Send call to arms?** says who will be pinged and that your coordinates will be shared, and **Report stash?** says how many dubs will be reported. Missing settings, the cooldown and a post still sending are reported before the prompt opens.
-- **Contents** group: a **show-** switch for each optional part, all on by default. With **show-name** off, the call to arms' ping line reads "join now!" without your name; its `/tpa` still contains it unless **show-tpa** is off too.
+- **Sending** group: **cooldown-seconds** (default 30) ignores presses for that long after one is sent, so a double press doesn't post twice; a failed post clears it. **confirm** (default on) asks first: **Send call to arms?** says who will be pinged, and **Report stash?** says how many dubs will be reported. While the call to arms' **show-coordinates** is on, its prompt always appears, even with **confirm** off, and asks "Are you sure?" with the exact coordinates about to be posted. Missing settings, the cooldown and a post still sending are reported before the prompt opens.
+- **Contents** group: a **show-** switch for each optional part, all on by default except the call to arms' **show-coordinates**, which starts off. With **show-name** off, the call to arms' ping line reads "join now!" without your name; its `/tpa` still contains it unless **show-tpa** is off too.
 
 Call to Arms only:
 
@@ -179,7 +179,7 @@ Call to Arms only:
 Stash Report only:
 
 - **discord-user-id** (required): your Discord user ID, shown as your clickable name without pinging you. Turn on Developer Mode, then click your name and choose **Copy User ID**; pasting your `<@id>` mention also works. Nothing is sent until it is set, or while no chests are loaded around you.
-- Keep **show-screenshot** on: the stash bot only logs reports with a screenshot, as `/submit-stash` needs an image. **show-coordinates** lets it recognise repeat reports of one stash.
+- Keep **show-screenshot** on: the stash bot only logs reports with a screenshot, as `/submit-stash` needs an image. Two reports of one stash are logged as two entries, as two `/submit-stash` runs would be; an admin removes the extra with `/delete-stash`.
 
 **Screenshot:** with **show-screenshot** on, the module waits for you to close any open menu (the confirmation prompt closes by itself), hides the GUI for one frame exactly as F1 does, photographs that frame and puts the GUI back. That hides the hotbar, chat, hand, crosshair, Meteor's HUD and tracers. Outlines drawn into the world, such as ESP boxes, still show. Screens wider than 2560 pixels are scaled down to stay inside Discord's upload limit. If a menu stays open for 10 seconds, or the picture can't be taken, the message goes without it and chat says so.
 
@@ -420,7 +420,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.7.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.10.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
 
 Automated tests cover:
 

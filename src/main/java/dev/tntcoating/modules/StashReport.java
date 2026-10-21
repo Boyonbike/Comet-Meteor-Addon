@@ -19,14 +19,13 @@ public final class StashReport extends DiscordWebhookModule {
     {
         show(Part.NAME, "show-name", "Show your in-game name.");
         show(Part.FACE, "show-face", "Show your skin's face as the thumbnail.");
-        show(Part.COORDINATES, "show-coordinates", "Show your block coordinates. The stash bot uses them to recognise repeat reports of one stash.");
         show(Part.DIMENSION, "show-dimension", "Show which dimension you're in.");
         show(Part.SERVER, "show-server", "Show the server address in the footer.");
         show(Part.SCREENSHOT, "show-screenshot", "Attach a screenshot of your view, taken without the HUD, chat or hand, as F1 does. The stash bot only logs reports with one.");
     }
 
     public StashReport() {
-        super("stash-report", "Reports the stash around you to the clan's stash bot with your Discord account, dub count, coordinates and a screenshot, without pinging anyone, then turns itself off. Bind it to a key.",
+        super("stash-report", "Reports the stash around you to the clan's stash bot with your Discord account, dub count and a screenshot, without pinging anyone, then turns itself off. Bind it to a key.",
             "stash report", "Discord webhook of the channel the clan's stash bot reads.");
     }
 

@@ -76,7 +76,7 @@ abstract class DiscordWebhookModule extends Module {
             .description("Ignore presses for this long after one is sent, so a double press doesn't post twice. Zero disables the cooldown.")
             .defaultValue(30).range(0, 600).sliderRange(0, 120).build());
         confirm = sendingGroup.add(new BoolSetting.Builder().name("confirm")
-            .description("Ask before posting, so a stray key press doesn't post anything.")
+            .description("Ask before posting, so a stray key press doesn't post anything. While show-coordinates is on, it always asks.")
             .defaultValue(true).build());
         contents = settings.createGroup("Contents");
         // Also runs from the main menu, to say there's nothing to report instead of firing on the next join.
@@ -100,21 +100,28 @@ abstract class DiscordWebhookModule extends Module {
     @Override public void onActivate() {
         toggle();
         if (!ready()) return;
-        if (!confirm.get()) {
+        // Coordinates can't be taken back once posted, so sharing them always asks first.
+        boolean coordinates = shown(DiscordWebhook.Part.COORDINATES);
+        if (!confirm.get() && !coordinates) {
             send();
             return;
         }
         YesNoPrompt prompt = YesNoPrompt.create().dontShowAgainCheckboxVisible(false);
         ask(prompt);
+        if (coordinates) {
+            BlockPos pos = mc.player.blockPosition();
+            prompt.message("Are you sure? Your coordinates, %d %d %d, will be posted for everyone who can see the channel.", pos.getX(), pos.getY(), pos.getZ());
+        }
         prompt.onYes(() -> {
             // Checked again: you may have left the world while the prompt was open.
             if (ready()) send();
         }).onNo(() -> info("Cancelled; nothing was posted.")).show();
     }
 
-    /** Adds a Contents switch for one part of the message, on by default. */
+    /** Adds a Contents switch for one part of the message. Coordinates start off; everything else starts on. */
     protected void show(DiscordWebhook.Part part, String name, String description) {
-        shown.put(part, contents.add(new BoolSetting.Builder().name(name).description(description).defaultValue(true).build()));
+        boolean on = part != DiscordWebhook.Part.COORDINATES;
+        shown.put(part, contents.add(new BoolSetting.Builder().name(name).description(description).defaultValue(on).build()));
     }
 
     protected boolean shown(DiscordWebhook.Part part) {
