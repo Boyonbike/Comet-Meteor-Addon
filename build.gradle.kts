@@ -93,6 +93,9 @@ tasks {
     jar {
         inputs.property("archivesName", archivesBaseName)
 
+        from("LICENSE-Speedmine")
+        from("THIRD_PARTY_NOTICES.md")
+
         from("LICENSE") {
             rename { "${it}_$archivesBaseName" }
         }

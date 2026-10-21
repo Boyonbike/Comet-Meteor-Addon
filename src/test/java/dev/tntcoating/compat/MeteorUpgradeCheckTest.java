@@ -42,7 +42,7 @@ class MeteorUpgradeCheckTest {
     }
 
     @Test void minecraftHooksFitThePinnedMinecraftBuild() throws Exception {
-        for (String name : List.of("NoHurtCamMixin", "SmartElytraSwapMixin")) {
+        for (String name : List.of("NoHurtCamMixin", "SmartElytraSwapMixin", "SpeedmineAirMixin", "SpeedmineBlockUpdateMixin", "SpeedminePredictionAccessor", "GameModeInvoker")) {
             ClassNode mixin = read("dev/tntcoating/mixin/" + name);
             assertNotNull(mixin);
             assertEquals(List.of(), MeteorUpgradeCheck.problems(mixin, MeteorUpgradeCheckTest::read), name);

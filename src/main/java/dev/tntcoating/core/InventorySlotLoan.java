@@ -40,6 +40,8 @@ public final class InventorySlotLoan {
     /** Inventory automation must not move either endpoint of a temporary tool or weapon loan. */
     public boolean isBorrowing() { return owner != null; }
 
+    public boolean isBorrowing(Owner requestedBy) { return owner == requestedBy; }
+
     /** Restore any earlier exchange before a module examines the inventory for its next action. */
     public boolean prepare() {
         if (InventoryWeaponAttack.INSTANCE.isPending()) return false;

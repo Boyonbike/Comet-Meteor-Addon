@@ -20,6 +20,7 @@ import dev.tntcoating.gui.ShulkerIconRulesSetting;
 import dev.tntcoating.hud.CometHud;
 import dev.tntcoating.render.ShulkerIconRenderer;
 import dev.tntcoating.modules.SmartSponge;
+import dev.tntcoating.modules.Speedmine;
 import dev.tntcoating.modules.WaypointDelete;
 import dev.tntcoating.modules.XaeroWaypoints;
 import java.util.ArrayList;
@@ -78,6 +79,7 @@ public final class TntCoatingAddon extends MeteorAddon {
         upgraded(ordered, modules.get(Scaffold.class), "ScaffoldMixin");
         ordered.add(new BlockCoat());
         ordered.add(new SmartSponge());
+        ordered.add(new Speedmine());
         ordered.add(new SafeFastUse());
         ordered.add(new AntiSpawnSet());
         // Combat and inventory.
