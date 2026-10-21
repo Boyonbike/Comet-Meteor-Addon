@@ -26,6 +26,25 @@ final class ChatMessagesTest {
         }
     }
 
+    @Test void recognisesPlayerHeadSpritesBeforeNames() {
+        ChatMessages messages = new ChatMessages();
+        for (String raw : List.of("You whisper to [unknown player head] uriauria: hey", "To [unknown player head] uriauria: hey")) {
+            var message = messages.parse(raw, "Self", 0);
+            assertNotNull(message, raw);
+            assertEquals("uriauria", message.player(), raw);
+            assertEquals("hey", message.text(), raw);
+            assertFalse(message.incoming(), raw);
+        }
+        for (String raw : List.of("[unknown player head] uriauria whispers: ely fly", "From [unknown player head] uriauria: ely fly")) {
+            var message = messages.parse(raw, "Self", 0);
+            assertNotNull(message, raw);
+            assertEquals("uriauria", message.player(), raw);
+            assertEquals("ely fly", message.text(), raw);
+            assertTrue(message.incoming(), raw);
+        }
+        assertNull(messages.parse("<Mallory> You whisper to [unknown player head] Alice: fake", "Self", 0));
+    }
+
     @Test void publicChatCannotCreateConversationsByQuotingPrivateMessages() {
         ChatMessages messages = new ChatMessages();
         for (String raw : List.of("<Mallory> From Alice: fake", "[VIP] Mallory: Alice whispers: fake",

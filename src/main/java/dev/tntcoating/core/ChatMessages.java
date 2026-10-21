@@ -11,14 +11,16 @@ import java.util.regex.PatternSyntaxException;
 /** Session-local DM history. Only anchored private-message formats are accepted, never public chat bodies. */
 public final class ChatMessages {
     private static final String NAME = "([A-Za-z0-9_]{1,16})";
-    private static final String PREFIX = "^(?:\\[[^]\\r\\n]{1,40}]\\s*)*";
+    /** Bracketed ranks, and the player-head sprite servers such as 6b6t put before names, which reads "[unknown player head]". */
+    private static final String TAGS = "(?:\\[[^]\\r\\n]{1,40}]\\s*)*";
+    private static final String PREFIX = "^" + TAGS;
     private static final List<String> INCOMING = List.of(
-        PREFIX + "from\\s+" + NAME + "\\s*[:»›]\\s*(.*)$",
+        PREFIX + "from\\s+" + TAGS + NAME + "\\s*[:»›]\\s*(.*)$",
         PREFIX + NAME + "\\s+whispers(?:\\s+to\\s+you)?\\s*[:»›]\\s*(.*)$",
         "^\\[" + NAME + "\\s*(?:->|→|»)\\s*(?:me|you)]\\s*(.*)$");
     private static final List<String> OUTGOING = List.of(
-        PREFIX + "to\\s+" + NAME + "\\s*[:»›]\\s*(.*)$",
-        PREFIX + "you\\s+whisper\\s+to\\s+" + NAME + "\\s*[:»›]\\s*(.*)$",
+        PREFIX + "to\\s+" + TAGS + NAME + "\\s*[:»›]\\s*(.*)$",
+        PREFIX + "you\\s+whisper\\s+to\\s+" + TAGS + NAME + "\\s*[:»›]\\s*(.*)$",
         "^\\[(?:me|you)\\s*(?:->|→|»)\\s*" + NAME + "]\\s*(.*)$");
     public static final int MAX_CONVERSATIONS = 100;
     public static final int MAX_MESSAGES = 250;

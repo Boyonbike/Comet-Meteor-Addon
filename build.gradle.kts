@@ -101,6 +101,10 @@ tasks {
         }
     }
 
+    withType<org.gradle.api.tasks.bundling.AbstractArchiveTask>().configureEach {
+        archiveVersion.set("${project.version}-mc${libs.versions.minecraft.get()}")
+    }
+
     withType<JavaCompile>().configureEach {
         options.compilerArgs.addAll(
             listOf(

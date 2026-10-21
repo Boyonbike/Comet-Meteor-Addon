@@ -42,7 +42,8 @@ import static dev.tntcoating.gui.ChatToolsStyle.*;
 public final class ChatToolsScreen extends Screen {
     private enum Page { Home, Players, Clan, Homes, Hotspot, Settings, Conversation }
     private enum Tone { Primary, Secondary, Ghost, Danger }
-    private record Bubble(boolean incoming, List<FormattedCharSequence> lines, int width, int height) {}
+    /** A pending bubble is a whisper still queued or not yet echoed by the server. */
+    private record Bubble(boolean incoming, boolean pending, List<FormattedCharSequence> lines, int width, int height) {}
     private record Hit(int x, int y, int w, int h, Runnable action) {
         boolean contains(double mx, double my) { return mx >= x && mx < x + w && my >= y && my < y + h; }
     }
@@ -72,6 +73,7 @@ public final class ChatToolsScreen extends Screen {
     private List<ChatTeleportState.Timer> timers = List.of();
     private List<ChatTpaRequests.Request> requests = List.of();
     private List<ChatMessages.Message> cachedMessages = List.of();
+    private List<String> cachedPending = List.of();
     private final List<Bubble> bubbles = new ArrayList<>();
     private boolean conversationVisible;
     private String cachedRecipient;
@@ -192,13 +194,17 @@ public final class ChatToolsScreen extends Screen {
         String text = input.getValue();
         var mc = Minecraft.getInstance();
         if (text.isBlank() || mc.getConnection() == null) return;
-        boolean sent = true;
-        if (text.startsWith("/")) { if (text.length() > 1) tools.send(text); else sent = false; }
-        else if (page == Page.Conversation) sent = tools.sendPrivate(recipient, text);
+        boolean sent = true, whisper = false;
+        if (text.startsWith("/")) {
+            if (text.length() > 1) { whisper = tools.isWhisper(text); sent = tools.sendCommand(text); } else sent = false;
+        }
+        else if (page == Page.Conversation) { whisper = true; sent = tools.sendPrivate(recipient, text); }
         else { mc.getConnection().sendChat(text); mc.gui.getChat().addRecentChat(text); }
         if (sent) {
             input.setValue(""); drafts.put(draftKey(), "");
-            notice("Sent. Waiting for the server's response.");
+            long wait = whisper ? tools.whisperWait() : 0;
+            notice(wait > 0 ? "Queued for the server's whisper delay: sends in " + ChatTeleportState.remaining(wait) + "."
+                : "Sent. Waiting for the server's response.");
             conversationScroll = 0;
         } else notice("Could not send. Check the message length or message-command setting.");
         focus(input);
@@ -318,10 +324,10 @@ public final class ChatToolsScreen extends Screen {
     // Pages.
 
     private void overview(float delta) {
-        int reply = buttonWidth("Reply");
-        search(homeSearch, delta, cx, cursor, cw - reply - GAP);
-        button("Reply", tools.replyPlayer() != null ? "Reply to " + tools.replyPlayer() : "Reply to your last private message",
-            cx + cw - reply, cursor, reply, Tone.Secondary, true, this::reply);
+        var actions = new Actions(cx + cw, cursor).add("Reply",
+            tools.replyPlayer() != null ? "Reply to " + tools.replyPlayer() : "Reply to your last private message", Tone.Secondary, true, this::reply);
+        if (tools.commandAvailable("hotspot")) actions.add("Go to hotspot", "/hotspot", Tone.Secondary, true, () -> command("/hotspot"));
+        search(homeSearch, delta, cx, cursor, actions.left() - GAP - cx);
         cursor += CONTROL + PAD;
         timerList();
 
@@ -603,20 +609,16 @@ public final class ChatToolsScreen extends Screen {
         float scale = bodyScale();
         conversationVisible = transcriptHeight >= capHeight(scale) + 16;
         var messages = tools.messages().conversation(recipient).messages();
-        if (messages != cachedMessages || cw != cachedWidth || scale != cachedScale || !recipient.equals(cachedRecipient)) {
+        var pending = tools.pendingWhispers(recipient);
+        if (messages != cachedMessages || !pending.equals(cachedPending) || cw != cachedWidth || scale != cachedScale
+            || !recipient.equals(cachedRecipient)) {
             int previousHeight = transcriptHeight(bubbles);
             boolean keepReadingPosition = conversationScroll > 0 && recipient.equals(cachedRecipient) && cw == cachedWidth;
             bubbles.clear();
-            int maximum = Math.max(60, cw * 3 / 4);
-            var font = Minecraft.getInstance().font;
-            for (var message : messages) {
-                var lines = wrap(message.text(), maximum - 18, scale);
-                int textWidth = (int) Math.ceil(lines.stream().mapToInt(font::width).max().orElse(10) * scale);
-                bubbles.add(new Bubble(message.incoming(), lines, Math.min(cw, Math.max(28, textWidth + 18)),
-                    (lines.size() - 1) * lineHeight(scale) + capHeight(scale) + 13));
-            }
+            for (var message : messages) bubbles.add(bubble(message.text(), message.incoming(), false, scale));
+            for (String text : pending) bubbles.add(bubble(text, false, true, scale));
             if (keepReadingPosition) conversationScroll += Math.max(0, transcriptHeight(bubbles) - previousHeight);
-            cachedMessages = messages; cachedWidth = cw; cachedScale = scale; cachedRecipient = recipient;
+            cachedMessages = messages; cachedPending = pending; cachedWidth = cw; cachedScale = scale; cachedRecipient = recipient;
         }
         int total = transcriptHeight(bubbles);
         conversationScroll = Math.clamp(conversationScroll, 0, Math.max(0, total - transcriptHeight));
@@ -631,20 +633,31 @@ public final class ChatToolsScreen extends Screen {
         }
         // Latest bubble sits on the bottom edge; scrolling up reveals older messages.
         int by = transcriptBottom - total + conversationScroll;
-        int outgoing = mix(BACKGROUND, accent(), 0.3);
+        int outgoing = mix(BACKGROUND, accent(), 0.3), queued = mix(BACKGROUND, accent(), 0.12);
+        long wait = tools.whisperWait();
+        String pendingTip = wait > 0 ? "Queued for the server's whisper delay" + DOT + "sends in " + ChatTeleportState.remaining(wait)
+            : "Waiting for the server to confirm";
         for (int i = 0; i < bubbles.size(); i++) {
             Bubble bubble = bubbles.get(i);
             if (i > 0) by += bubbles.get(i - 1).incoming() == bubble.incoming() ? 3 : 9;
             int bx = bubble.incoming() ? cx : cx + cw - bubble.width();
             if (by + bubble.height() > transcriptTop && by < bodyBottom) {
-                round(graphics, bx, by, bubble.width(), bubble.height(), RADIUS, bubble.incoming() ? RAISED : outgoing);
+                round(graphics, bx, by, bubble.width(), bubble.height(), RADIUS, bubble.incoming() ? RAISED : bubble.pending() ? queued : outgoing);
                 int ly = by + 7;
-                for (var text : bubble.lines()) { line(text, bx + 9, ly, TEXT, scale); ly += lineHeight(scale); }
+                for (var text : bubble.lines()) { line(text, bx + 9, ly, bubble.pending() ? SECONDARY : TEXT, scale); ly += lineHeight(scale); }
+                if (bubble.pending() && by >= transcriptTop) register(bx, by, bubble.width(), bubble.height(), pendingTip, false, null);
             }
             by += bubble.height();
         }
         graphics.disableScissor();
         if (reading(recipient)) tools.messages().read(recipient);
+    }
+
+    private Bubble bubble(String text, boolean incoming, boolean pending, float scale) {
+        var lines = wrap(text, Math.max(60, cw * 3 / 4) - 18, scale);
+        int textWidth = (int) Math.ceil(lines.stream().mapToInt(Minecraft.getInstance().font::width).max().orElse(10) * scale);
+        return new Bubble(incoming, pending, lines, Math.min(cw, Math.max(28, textWidth + 18)),
+            (lines.size() - 1) * lineHeight(scale) + capHeight(scale) + 13);
     }
 
     private static int transcriptHeight(List<Bubble> bubbles) {

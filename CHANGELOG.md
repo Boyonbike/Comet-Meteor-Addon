@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.25.12
+
+- **Chat Tools remembers recent players:** the recent players on Overview and Players are now saved per server and account (hidden **recent-players** setting, up to 100), so they are still there after rejoining a server or restarting the game. Conversations themselves still last for the current connection.
+- **Chat Tools shows your sent DMs:** 6b6t echoes a whisper as `You whisper to [unknown player head] Name: …`, with a player-head sprite before the name, so the echo was never recognised and your own messages never appeared in the conversation. They now show as outgoing bubbles. `From`/`To` formats accept the sprite too.
+- **Whisper queue:** 6b6t refuses a whisper sent too soon after the last one (`Please wait 2 seconds before sending another whisper!`). DMs from a Chat Tools conversation, and `/msg`, `/w`, `/tell`, `/whisper`, `/r` or `/reply` typed in its composer, now wait in a queue instead. A refused whisper is sent again as soon as the wait is over (up to three tries) and the refusal is hidden, and the reported delay then spaces out later whispers so they are not refused at all. Queued messages show as dimmed bubbles until the server echoes them. Whispers typed in normal chat are still sent straight away, but count towards the delay.
+- **Whisper delay no longer reads as a teleport cooldown:** within five seconds of `/home` or `/tpa`, that refusal used to replace the teleport's countdown with a 2-second cooldown.
+- **Go to hotspot on Overview:** a **Go to hotspot** button beside **Reply** sends `/hotspot`. It is shown when the server offers the command.
+- **Crystal Aura crash guard:** Meteor's **crystal-aura** skips its tick handlers, including the late rotation one, while there is no player or world, for example after another listener disconnects you during the same tick.
+
 ## 0.25.11
 
 - **Release refresh:** packages the current modules for Minecraft 26.1.2, including Speedmine, Call to Arms and Stash Report, plus Chat Tools clan management and friend/clan name and tab-row highlighting.

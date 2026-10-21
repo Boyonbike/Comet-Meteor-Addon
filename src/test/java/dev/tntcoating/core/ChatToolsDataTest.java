@@ -88,6 +88,27 @@ final class ChatToolsDataTest {
         assertTrue(recents.names().isEmpty());
     }
 
+    @Test void savedRecentsStayWithTheirServerAndAccountInOrder() {
+        var entries = ChatRecentPlayers.write(List.of(), "6b6t.org/account-1", List.of("Alice", "Bob"));
+        entries = ChatRecentPlayers.write(entries, "other.net/account-1", List.of("Charlie"));
+        assertEquals(List.of("Alice", "Bob"), ChatRecentPlayers.read(entries, "6b6t.org/account-1"));
+        assertEquals(List.of("Charlie"), ChatRecentPlayers.read(entries, "other.net/account-1"));
+        assertTrue(ChatRecentPlayers.read(entries, "6b6t.org/account-2").isEmpty());
+        entries = ChatRecentPlayers.write(entries, "6b6t.org/account-1", List.of("Bob", "Alice", "bad name"));
+        assertEquals(List.of("Bob", "Alice"), ChatRecentPlayers.read(entries, "6b6t.org/account-1"), "Rewriting replaces the old order");
+        assertEquals(List.of("Charlie"), ChatRecentPlayers.read(entries, "other.net/account-1"));
+
+        var recents = new ChatRecentPlayers();
+        recents.touch("Stale");
+        recents.restore(List.of("Bob", "Alice", "BOB"));
+        assertEquals(List.of("Bob", "Alice"), recents.names(), "Restoring replaces the session list and keeps the newest spelling");
+        recents.touch("Dave");
+        assertEquals(List.of("Dave", "Bob", "Alice"), recents.names());
+        var many = new java.util.ArrayList<String>();
+        for (int i = 0; i < ChatRecentPlayers.MAX + 5; i++) many.add("Player" + i);
+        assertEquals(ChatRecentPlayers.MAX, ChatRecentPlayers.read(ChatRecentPlayers.write(List.of(), "a", many), "a").size());
+    }
+
     @Test void countdownsStayAttachedToTheMatchingPlayerOrHome() {
         var home = new ChatTeleportState.Timer(ChatTeleportState.Kind.Home, ChatTeleportState.Phase.Teleport, "Alice", 5_000, 20_000);
         var tpa = new ChatTeleportState.Timer(ChatTeleportState.Kind.TPA, ChatTeleportState.Phase.Request, "Bob", 30_000, 30_000);

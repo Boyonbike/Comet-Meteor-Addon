@@ -17,6 +17,7 @@ import dev.tntcoating.core.ChatMessages;
 import dev.tntcoating.core.ChatHomeFavorites;
 import dev.tntcoating.core.ChatSavedCooldowns;
 import dev.tntcoating.core.ChatRecentPlayers;
+import dev.tntcoating.core.ChatWhisperQueue;
 import dev.tntcoating.core.ChatCountdowns;
 import dev.tntcoating.gui.ChatToolsScreen;
 import dev.tntcoating.mixin.EntityArgumentAccessor;
@@ -134,6 +135,9 @@ public final class ChatTools extends Module {
     private final Setting<List<String>> outgoingPatterns = messaging.add(new StringListSetting.Builder().name("outgoing-dm-patterns")
         .description("Extra full-line regexes for server echoes: group 1 username, group 2 message.")
         .defaultValue().onChanged(ignored -> refreshMessagePatterns()).build());
+    private final Setting<List<String>> savedRecents = messaging.add(new StringListSetting.Builder().name("recent-players")
+        .description("Recently contacted players for each server and account, so the Chat Tools list survives rejoins and restarts.")
+        .defaultValue().visible(() -> false).build());
     private final SettingGroup clan = settings.createGroup("Clan");
     private final Setting<List<String>> clanMembers = clan.add(new StringListSetting.Builder().name("clan-members")
         .description("Usernames of your clan members. Also added, imported from CSV and removed in the Chat Tools Clan tab.")
@@ -154,6 +158,7 @@ public final class ChatTools extends Module {
 
     private final ChatMessages messages = new ChatMessages();
     private final ChatRecentPlayers recentPlayers = new ChatRecentPlayers();
+    private final ChatWhisperQueue whispers = new ChatWhisperQueue();
     private String replyPlayer;
     private final List<String> hotspotDetails = new ArrayList<>();
     private long hotspotReadingUntil;
@@ -172,7 +177,7 @@ public final class ChatTools extends Module {
     private int friendColor, clanColor;
     private boolean friendsInChat, clanInChat;
     private int friendRefreshTicks;
-    private String savedKey;
+    private String savedKey, recentKey;
     private ChatSavedCooldowns.Saved saved = ChatSavedCooldowns.Saved.NONE;
 
     public ChatTools() {
@@ -247,8 +252,25 @@ public final class ChatTools extends Module {
         else if (ChatMessages.validName(player) && !isSelf(player)) addToClan(List.of(player));
     }
 
-    public void rememberPlayer(String player) { if (!isSelf(player)) recentPlayers.touch(player); }
-    public List<String> recentPlayers() { checkSession(); return recentPlayers.names(); }
+    public void rememberPlayer(String player) {
+        checkSession();
+        if (isSelf(player) || !syncRecentPlayers()) return;
+        recentPlayers.touch(player);
+        List<String> updated = ChatRecentPlayers.write(savedRecents.get(), recentKey, recentPlayers.names());
+        if (!updated.equals(savedRecents.get())) savedRecents.set(updated);
+    }
+    public List<String> recentPlayers() { checkSession(); syncRecentPlayers(); return recentPlayers.names(); }
+
+    /** Loads this server/account's saved recents into a fresh session; false until the account is known. */
+    private boolean syncRecentPlayers() {
+        if (mc.player == null) return false;
+        String key = homeServerKey();
+        if (!key.equals(recentKey)) {
+            recentKey = key;
+            recentPlayers.restore(ChatRecentPlayers.read(savedRecents.get(), key));
+        }
+        return true;
+    }
     public List<String> onlinePlayers() {
         if (mc.getConnection() == null) return List.of();
         return mc.getConnection().getOnlinePlayers().stream().map(info -> info.getProfile().name())
@@ -336,22 +358,60 @@ public final class ChatTools extends Module {
         syncSavedCooldowns();
     }
 
-    /** Outgoing DMs enter history only when the server echoes them, so rejected sends never look delivered. */
+    /**
+     * Outgoing DMs enter history only when the server echoes them, so rejected sends never look delivered. Until then
+     * they wait in the whisper queue, which holds them back while the server's whisper delay runs.
+     */
     public boolean sendPrivate(String player, String text) {
         if (!ChatMessages.validName(player) || text.isBlank() || text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0) return false;
         String template = messageCommand.get().strip();
         if (!template.contains("{player}") || template.indexOf('\n') >= 0 || template.indexOf('\r') >= 0) return false;
         String command = template.replace("{player}", player) + " " + text;
-        if (withoutSlash(command).length() > 256 || mc.getConnection() == null) return false;
+        if (withoutSlash(command).length() > 256) return false;
+        return queueWhisper(new ChatWhisperQueue.Whisper(player, text, command));
+    }
+
+    /** Runs a command typed in the Chat Tools composer; a whisper such as /msg or /r waits its turn like a DM. */
+    public boolean sendCommand(String command) {
+        var whisper = ChatWhisperQueue.parse(command, messageCommand.get());
+        if (whisper != null) return queueWhisper(whisper);
         send(command);
         return true;
+    }
+    public boolean isWhisper(String command) { return ChatWhisperQueue.parse(command, messageCommand.get()) != null; }
+
+    private boolean queueWhisper(ChatWhisperQueue.Whisper whisper) {
+        checkSession();
+        if (mc.getConnection() == null || !whispers.add(whisper)) return false;
+        if (whisper.player() != null) rememberPlayer(whisper.player());
+        sendWhispers();
+        return true;
+    }
+
+    /** Sends the next queued whisper once the server's delay allows it; never mid-transfer, when there is no world. */
+    private void sendWhispers() {
+        if (mc.player == null || mc.level == null || mc.getConnection() == null) return;
+        var next = whispers.poll(now());
+        if (next != null) send(next.command());
+    }
+
+    /** How long queued whispers still wait for the server's delay, or 0 when none are waiting. */
+    public long whisperWait() { checkSession(); return whispers.waiting(now()); }
+    /** Texts of whispers to this player that are queued or not yet echoed by the server, oldest first. */
+    public List<String> pendingWhispers(String player) {
+        checkSession();
+        return whispers.pending(player, now()).stream().map(ChatWhisperQueue.Whisper::text).toList();
     }
 
     @EventHandler private void onMessage(ReceiveMessageEvent event) {
         if (mc.player == null || mc.getConnection() == null) return;
         checkSession();
-        ChatMessages.Message message = messages.parse(event.getMessage().getString(), mc.player.getGameProfile().name(), now());
+        String text = event.getMessage().getString();
+        // The refused whisper goes again once the wait is over, so the server's refusal would only be noise.
+        if (whispers.refused(text, now())) { event.cancel(); return; }
+        ChatMessages.Message message = messages.parse(text, mc.player.getGameProfile().name(), now());
         if (message == null) return;
+        if (!message.incoming()) whispers.delivered(message.player());
         rememberPlayer(message.player());
         if (message.incoming()) replyPlayer = message.player();
         boolean read = mc.screen == popup && popup != null && popup.reading(message.player());
@@ -500,6 +560,7 @@ public final class ChatTools extends Module {
     }
     @EventHandler private void onTick(TickEvent.Pre event) {
         checkSession();
+        sendWhispers();
         // Friend, clan and colour edits are rare; a one-second refresh keeps highlighting current without per-tick work.
         if (++friendRefreshTicks >= FRIEND_REFRESH_TICKS) {
             friendRefreshTicks = 0;
@@ -539,6 +600,8 @@ public final class ChatTools extends Module {
         if (popup != null && mc.screen == popup) mc.setScreen(null);
         messages.clear();
         recentPlayers.clear();
+        recentKey = null;
+        whispers.clear();
         replyPlayer = null;
         hotspotDetails.clear();
         hotspotReadingUntil = 0;
@@ -570,6 +633,7 @@ public final class ChatTools extends Module {
             String[] parts = WHITESPACE.split(command.strip());
             String verb = parts[0].substring(parts[0].lastIndexOf(':') + 1).toLowerCase(Locale.ROOT);
             if (parts.length > 1 && Set.of("msg", "w", "whisper", "tell", "tpa", "tpahere").contains(verb)) rememberPlayer(parts[1]);
+            if (ChatWhisperQueue.isWhisper(command, messageCommand.get())) whispers.sent(command, now());
             syncSavedCooldowns();
             teleports.sent(command, now());
             incomingRequests.sent(command, now());
@@ -596,9 +660,10 @@ public final class ChatTools extends Module {
                 if (!isActive() || mc.getConnection() == null || event.connection != mc.getConnection().getConnection()) return;
                 checkSession();
                 String text = packet.content().getString();
-                // Whispers, including echoes to offline recipients, must never change server command state.
+                // Whispers, including echoes to offline recipients, must never change server command state. Nor may the
+                // whisper delay: "Please wait 2 seconds before..." would otherwise read as a home or TP cooldown.
                 String self = mc.player == null ? null : mc.player.getGameProfile().name();
-                if (messages.parse(text, self, now()) != null) return;
+                if (messages.parse(text, self, now()) != null || ChatWhisperQueue.isRefusal(text)) return;
                 // Another player's chat must never move timers, requests or homes, even if it imitates a server reply.
                 if (ChatSender.fromPlayer(text, this::online)) return;
                 if (now() < hotspotReadingUntil || text.toLowerCase(Locale.ROOT).contains("hotspot")) {
