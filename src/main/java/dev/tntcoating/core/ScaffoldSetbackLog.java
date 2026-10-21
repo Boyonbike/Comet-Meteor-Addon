@@ -12,9 +12,12 @@ import java.util.ArrayDeque;
  * seconds before it, so each setback can be matched to the move, rotation or placement the server rejected.
  */
 public final class ScaffoldSetbackLog {
-    /** One client tick: Scaffold's placements, then the position, rotation and ground flag the client reported. */
+    /**
+     * One client tick: Scaffold's placements, then the position, rotation and ground flag the client reported.
+     * Each rotated placement after the first in a tick cost Meteor its own rotation packet.
+     */
     public record Tick(long tick, double x, double y, double z, float yaw, float pitch, boolean onGround,
-                       boolean towering, int placed, int paced) {}
+                       boolean towering, int placed, int paced, int rotated) {}
 
     private record Placement(long tick, long position) {}
 
@@ -50,14 +53,16 @@ public final class ScaffoldSetbackLog {
         record.addProperty("ticksSinceLastSetback", lastSetbackTick < 0 ? -1 : tick - lastSetbackTick);
         lastSetbackTick = tick;
 
-        int placed = 0, paced = 0;
+        int placed = 0, paced = 0, extraRotations = 0;
         for (Tick t : ticks) {
             if (tick - t.tick() >= 20) continue;
             placed += t.placed();
             paced += t.paced();
+            extraRotations += Math.max(0, t.rotated() - 1);
         }
         record.addProperty("placedLastSecond", placed);
         record.addProperty("pacedLastSecond", paced);
+        record.addProperty("extraRotationPacketsLastSecond", extraRotations);
         long supportPlaced = -1;
         for (Placement placement : placements) if (placement.position() == support) supportPlaced = tick - placement.tick();
         // Standing on a block the server never accepted is one way to be set back.
@@ -90,6 +95,7 @@ public final class ScaffoldSetbackLog {
             entry.addProperty("pitch", round(t.pitch(), 10));
             entry.addProperty("placed", t.placed());
             entry.addProperty("paced", t.paced());
+            entry.addProperty("rotated", t.rotated());
             entry.addProperty("tower", t.towering());
             timeline.add(entry);
         }

@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ScaffoldSetbackLogTest {
     private static ScaffoldSetbackLog.Tick tick(long tick, double y, float yaw, boolean ground, boolean tower, int placed) {
-        return new ScaffoldSetbackLog.Tick(tick, 0, y, 0, yaw, 80, ground, tower, placed, 0);
+        return new ScaffoldSetbackLog.Tick(tick, 0, y, 0, yaw, 80, ground, tower, placed, 0, placed);
     }
 
     @Test void findsTheMoveAfterTheSetbackTargetAndItsRotationSnap() {
@@ -30,6 +30,7 @@ class ScaffoldSetbackLogTest {
         assertEquals(20, record.get("rejectedYawStep").getAsDouble(), 1e-9);
         assertTrue(record.get("rejectedTowering").getAsBoolean());
         assertEquals(2, record.get("placedLastSecond").getAsInt());
+        assertEquals(0, record.get("extraRotationPacketsLastSecond").getAsInt());
         assertEquals(4, record.getAsJsonArray("timeline").size());
         assertEquals(1, record.getAsJsonArray("timeline").get(3).getAsJsonObject().get("dy").getAsDouble(), 1e-9);
     }
@@ -49,6 +50,17 @@ class ScaffoldSetbackLogTest {
         assertEquals(3, next.get("ticksSinceLastSetback").getAsLong());
         assertEquals(-1, next.get("supportPlacedTicksAgo").getAsLong());
         assertEquals(2, next.get("setback").getAsInt());
+    }
+
+    @Test void countsRotationPacketsBeyondTheFirstRotatedPlacementOfEachTick() {
+        var log = new ScaffoldSetbackLog();
+        log.tick(new ScaffoldSetbackLog.Tick(1, 0, 64, 0, 0, 80, true, false, 8, 0, 8));
+        log.tick(new ScaffoldSetbackLog.Tick(2, 0, 64, 0, 0, 80, true, false, 1, 0, 1));
+        log.tick(new ScaffoldSetbackLog.Tick(3, 0, 64, 0, 0, 80, true, false, 3, 0, 0));
+        var record = new JsonObject();
+        log.describe(record, 3, 0, 64, 0, 0);
+        assertEquals(7, record.get("extraRotationPacketsLastSecond").getAsInt());
+        assertEquals(8, record.getAsJsonArray("timeline").get(0).getAsJsonObject().get("rotated").getAsInt());
     }
 
     @Test void historyIsBoundedAndCloseStartsOver() {
