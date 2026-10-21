@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.25.11
+
+- **Release refresh:** packages the current modules for Minecraft 26.1.2, including Speedmine, Call to Arms and Stash Report, plus Chat Tools clan management and friend/clan name and tab-row highlighting.
+- **Discord reporting:** Stash Report never includes coordinates and pings nobody; Call to Arms leaves coordinates off by default and always asks for confirmation when sharing them. These behaviours are carried forward from 0.25.10.
+- **Metadata:** the addon description now includes clan management and both Discord reporting modules. No gameplay code changed in this release.
+
 ## 0.25.10
 
 - **Stash reports never carry coordinates:** like `/submit-stash`, a stash report no longer has a coordinates field or a **show-coordinates** switch, so coordinates never reach the stash bot's channel, its #basehunting-finds post or its records. Two reports of one stash are logged as two entries; an admin removes the extra with `/delete-stash`. The call to arms keeps **show-coordinates**, off by default and always confirmed.
