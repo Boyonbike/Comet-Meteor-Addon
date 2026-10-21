@@ -3,6 +3,6 @@
   "package": "dev.tntcoating.mixin",
   "plugin": "dev.tntcoating.compat.CometMixinPlugin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["GameModeInvoker", "EntityArgumentAccessor", "ChatScreenMixin", "ChatFriendHighlightMixin", "CometModuleOrderMixin", "CometModuleSettingsMixin", "MoveEntityPacketAccessor", "FireworkRocketAccessor", "FastUseMixin", "NoHurtCamMixin", "PhasePlayerMixin", "AutoReplenishMixin", "ElytraFlyMixin", "SmartElytraSwapMixin", "AutoToolMixin", "AutoWeaponMixin", "ScaffoldMixin", "ScaffoldBlockUpdatesMixin", "InventoryTweaksMixin", "TrajectoriesMixin", "TrajectoriesPathMixin", "TrajectoriesWorldUpdatesMixin", "ShulkerIconsMixin", "ShulkerIconRenderStateMixin", "ShulkerIconAtlasMixin", "ShulkerIconOversizedMixin"],
+  "client": ["GameModeInvoker", "EntityArgumentAccessor", "ChatScreenMixin", "ChatFriendHighlightMixin", "CometModuleOrderMixin", "CometModuleSettingsMixin", "MoveEntityPacketAccessor", "FireworkRocketAccessor", "FastUseMixin", "NoHurtCamMixin", "AutoReplenishMixin", "ElytraFlyMixin", "SmartElytraSwapMixin", "LocalPlayerAccessor", "SplitMoveMixin", "AutoToolMixin", "AutoWeaponMixin", "ScaffoldMixin", "ScaffoldBlockUpdatesMixin", "InventoryTweaksMixin", "ShulkerIconsMixin", "ShulkerIconRenderStateMixin", "ShulkerIconAtlasMixin", "ShulkerIconOversizedMixin"],
   "injectors": { "defaultRequire": 1 }
 }
