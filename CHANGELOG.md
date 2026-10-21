@@ -1,7 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.25.6
 
+- **Grief Alert for the stash bot:** the new required **discord-user-id** setting puts your Discord account in every alert (shown as your name, never pinged), so the clan's stash bot can credit you. The alert won't send until it is set.
+- **Grief Alert screenshot:** new **show-screenshot** (Contents, on by default) attaches a screenshot of your view, taken in F1 mode without the HUD, chat, hand or Meteor's HUD, shown as the embed's image. The alert waits for open menus to close, scales screens wider than 2560 pixels down, and goes without the screenshot if it can't be taken.
+
+## 0.25.5
+
+- **Grief Alert confirmation:** new **confirm** setting (on by default) opens a **Send grief alert?** prompt before posting, saying who will be pinged and that your coordinates will be shared. **Yes** sends, **No** cancels. Turn it off to send on the key press as before.
+
+## 0.25.4
+
+- **Grief Alert contents:** a new **Contents** group switches each part of the alert on or off: **show-name**, **show-face**, **show-coordinates**, **show-dimension**, **show-dubs**, **show-tpa**, **show-call-to-action** and **show-server**, all on by default so alerts look the same until you change one. Dubs are only counted when **show-dubs** is on.
+
+## 0.25.3
+
+- **Grief Alert pings @everyone:** the **ping** setting replaces **ping-role-id** and defaults to `everyone`. It also takes `here` (members online now), a role's ID or `<@&id>` mention, or blank for no ping. Re-enter a role ID you had set.
+
+## 0.25.2
+
+- **Grief Alert:** the new **grief-alert** module posts a live grief alert to a Discord webhook when you press its key, then turns itself off. It pings your grief role (**ping-role-id**) and shows an embed with your in-game name and face, coordinates, dimension, the dubs in your loaded chunks, a copyable `/tpa <name>` and your **call-to-action** text. Only Discord webhook URLs are accepted, only the configured role can be pinged, and **cooldown-seconds** (30) stops a double press from pinging twice. See [Grief Alert](README.md#grief-alert).
 - **Speedmine:** ported THM Addons' existing miner to Minecraft 26.1.2 under Comet, including queue/double break, rebreak, prediction, silent swapping, air mining and optional auto targeting. Server-supported bedrock mining uses normal mining actions plus hand swings. Phase candidates require actual hitbox overlap, bedrock is processed independently of the ordinary-block budget, and eligible bedrock targets retain progress. Existing self-protection remains enabled; debug output explains skipped phase targets. THM clan and packet-limiter dependencies are removed; upstream credits and GPL terms are packaged. Live 6b6t behaviour has not been verified.
 
 - **Chat Tools clan tab:** a new **Clan** tab lists your clan members: Meteor friends first, then online members, then everyone else. Add members by typing names (comma-separated lists work), with **Import CSV**, or by dropping a `.csv` file on the window; a header row such as `Username` or `IGN` picks the right column of a spreadsheet export. Each row has Message, TP, more actions and a remove button, and the Players actions menu gains **Add to clan** / **Remove from clan**. Clan members' names are coloured in chat and in the tab list, each with its own switch and colour (**Clan** settings group, or **Settings → Clan highlighting** in the window). The tab list colour works alongside Meteor's Better Tab.

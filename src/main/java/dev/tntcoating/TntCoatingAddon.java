@@ -12,6 +12,7 @@ import dev.tntcoating.modules.BlockCoat;
 import dev.tntcoating.modules.ChatTools;
 import dev.tntcoating.modules.DubCounter;
 import dev.tntcoating.modules.ElytraLog;
+import dev.tntcoating.modules.GriefAlert;
 import dev.tntcoating.modules.HomePacketLog;
 import dev.tntcoating.modules.FastStorageESP;
 import dev.tntcoating.modules.SafeFastUse;
@@ -75,6 +76,7 @@ public final class TntCoatingAddon extends MeteorAddon {
         ordered.add(new XaeroWaypoints());
         ordered.add(new WaypointDelete());
         ordered.add(new ChatTools());
+        ordered.add(new GriefAlert());
         // Building and block use.
         upgraded(ordered, modules.get(Scaffold.class), "ScaffoldMixin");
         ordered.add(new BlockCoat());

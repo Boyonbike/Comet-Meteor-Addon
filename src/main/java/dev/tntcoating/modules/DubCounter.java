@@ -45,12 +45,19 @@ public final class DubCounter extends Module {
         for (ChunkAccess chunk : Utils.chunks()) {
             if (!(chunk instanceof LevelChunk levelChunk)) continue;
             loaded++;
-            for (BlockEntity entity : levelChunk.getBlockEntities().values()) {
-                // Trapped and copper chests are other blocks and do not count.
-                if (!entity.isRemoved() && entity.getBlockState().is(Blocks.CHEST)) chestBlocks++;
-            }
+            chestBlocks += chestBlocks(levelChunk);
         }
         set(chestBlocks, loaded);
+    }
+
+    /** Ordinary chest blocks in one loaded chunk. */
+    public static int chestBlocks(LevelChunk chunk) {
+        int chestBlocks = 0;
+        for (BlockEntity entity : chunk.getBlockEntities().values()) {
+            // Trapped and copper chests are other blocks and do not count.
+            if (!entity.isRemoved() && entity.getBlockState().is(Blocks.CHEST)) chestBlocks++;
+        }
+        return chestBlocks;
     }
 
     private void clear() { set(0, 0); }
