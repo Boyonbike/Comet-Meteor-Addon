@@ -1,15 +1,15 @@
-# Comet by Boyonabike — 0.25.6
+# Comet by Boyonabike — 0.25.7
 
 Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
 - **Flight and movement:** **adaptive-elytra-fly**, **baritone-elytra**, **elytra-log**, **angle-calculator**.
-- **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**, **grief-alert**.
+- **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**, **call-to-arms**, **stash-report**.
 - **Building:** **scaffold**, **block-coat**, **smart-sponge**, **speedmine**, **safe-fast-use**, **anti-spawn-set**.
 - **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**, **auto-replenish**.
 - **Diagnostics:** **home-packet-log**.
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown** and **dub-counter**. See [HUD elements](#hud-elements).
 
-Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.6.jar`.
+Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.7.jar`.
 
 **Scaffold**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
@@ -156,30 +156,34 @@ Enable **dub-counter** to count the ordinary chest blocks in every chunk your cl
 
 The count refreshes five times a second from the chunks' block-entity lists, without reading blocks or allocating anything per chest. It resets when you leave a world or disable the module. Ported from Majkey's DubCounter 1.0.0 addon; remove `DubCounter-1.0.0-mc26.1.2.jar` when you install Comet, because both register **dub-counter** and Meteor keeps whichever loads last.
 
-## Grief Alert
+## Call to Arms and Stash Report
 
-Bind **grief-alert** to a key. Each press posts a live grief alert to a Discord channel, then the module switches itself off again. The alert pings @everyone (or whoever **ping** names) and shows an embed with:
+Two one-press modules post to Discord through channel webhooks. Bind each to a key: a press posts once, then the module switches itself off again.
 
-- your in-game name, with your skin's face as the thumbnail, and your Discord account;
-- your block coordinates and dimension;
-- the dubs in your loaded chunks, counted the same way as **dub-counter** at the moment you press, whether or not Dub Counter is on;
-- a `/tpa <your name>` code block that others can copy into chat;
-- the **call-to-action** text, the server address and the time;
-- a screenshot of your view, taken without the HUD.
+- **call-to-arms** pings the clan (@everyone by default) to join a live grief. It shows your name and face, coordinates, dimension, the dubs in your loaded chunks, a `/tpa <your name>` code block to copy into chat, the **call-to-action** text and a screenshot.
+- **stash-report** logs the stash around you with the clan's stash bot and pings nobody. It shows your Discord account and the dubs, always, plus your name and face, coordinates, dimension and a screenshot. The bot credits the stash to your Discord account, counts it in `/stats`, `/mystats` and `/leaderboard`, and reacts to the report once it is logged. A call to arms is never logged as a stash, even when both use the same webhook.
 
-Setup:
+Dubs are counted the same way as **dub-counter**, at the moment you press, whether or not Dub Counter is on.
 
-- **webhook-url**: in Discord, open the channel's settings → **Integrations** → **Webhooks**, create one and use **Copy Webhook URL**. Only Discord webhook URLs are accepted, so a typo can't send your coordinates anywhere else. Anyone with the URL can post in that channel, and Meteor saves it in its config folder, so don't share your config.
-- **discord-user-id** (required): your Discord user ID. The clan's stash bot credits the alert to this account, and the alert shows it as your clickable Discord name without pinging you. Turn on Developer Mode (Discord **Settings** → **Advanced**), then click your name and choose **Copy User ID**. Pasting your `<@id>` mention also works. The alert won't send until this is set.
-- **ping** (default `everyone`): who gets notified. `everyone` pings every member who can see the channel, `here` only those online right now, and a role's ID pings just that role: turn on Developer Mode (Discord **Settings** → **Advanced**), right-click the role and choose **Copy Role ID**, or paste the `<@&id>` mention. Leave it blank to post without a ping. If a role shows in the alert but nobody gets notified, turn on **Allow anyone to @mention this role** for it (**Server Settings** → **Roles**).
-- **call-to-action**: the line under the alert's title.
-- **cooldown-seconds** (default 30): presses during this time after an alert are ignored, so a double press doesn't ping twice. A failed alert clears the cooldown.
-- **confirm** (default on): pressing the key first opens a **Send grief alert?** prompt saying who will be pinged and that your coordinates will be shared. **Yes** posts the alert, **No** cancels it. Turn it off to send straight away. Missing settings, the cooldown and an alert still sending are reported before the prompt opens, so you're never asked to confirm an alert that can't go out.
-- **Contents** group: switch any part of the alert off with **show-name**, **show-face**, **show-coordinates**, **show-dimension**, **show-dubs**, **show-tpa**, **show-call-to-action**, **show-server** and **show-screenshot**. All are on by default. The Discord account is always included, because the stash bot needs it. With **show-name** off, the ping line reads "join now!" without your name; the `/tpa` command still contains it unless **show-tpa** is off too.
+Settings both share:
 
-**Screenshot:** with **show-screenshot** on, the alert waits for you to close any open menu (the confirmation prompt closes by itself), hides the GUI for one frame exactly as F1 does, photographs that frame and puts the GUI back. That hides the hotbar, chat, hand, crosshair, Meteor's HUD and tracers. Outlines drawn into the world, such as ESP boxes, still show. Screens wider than 2560 pixels are scaled down to stay inside Discord's upload limit. If a menu stays open for 10 seconds, or the picture can't be taken, the alert is sent without it and chat says so.
+- **webhook-url**: in Discord, open the channel's settings → **Integrations** → **Webhooks**, create one and use **Copy Webhook URL**. Each module has its own, so the call to arms can go to a ping channel and the stash report to the channel the stash bot reads. Only Discord webhook URLs are accepted, so a typo can't send your coordinates anywhere else. Anyone with the URL can post in that channel, and Meteor saves it in its config folder, so don't share your config.
+- **Sending** group: **cooldown-seconds** (default 30) ignores presses for that long after one is sent, so a double press doesn't post twice; a failed post clears it. **confirm** (default on) asks first: **Send call to arms?** says who will be pinged and that your coordinates will be shared, and **Report stash?** says how many dubs will be reported. Missing settings, the cooldown and a post still sending are reported before the prompt opens.
+- **Contents** group: a **show-** switch for each optional part, all on by default. With **show-name** off, the call to arms' ping line reads "join now!" without your name; its `/tpa` still contains it unless **show-tpa** is off too.
 
-With a role or no ping, an `@everyone` typed into the call to action is shown but does not ping. Chat says whether the alert was sent, or why Discord refused it (a deleted webhook, rate limiting, no connection). Sending happens in the background, so the game doesn't pause while it waits. Meteor's toggled on/off messages are off for this module by default.
+Call to Arms only:
+
+- **ping** (default `everyone`): `everyone` pings every member who can see the channel, `here` only those online right now, and a role's ID pings just that role: turn on Developer Mode (Discord **Settings** → **Advanced**), right-click the role and choose **Copy Role ID**, or paste the `<@&id>` mention. Leave it blank to post without a ping. If a role shows but nobody gets notified, turn on **Allow anyone to @mention this role** for it (**Server Settings** → **Roles**). With a role or no ping, an `@everyone` typed into the call to action is shown but does not ping.
+- **call-to-action**: the line under the title.
+
+Stash Report only:
+
+- **discord-user-id** (required): your Discord user ID, shown as your clickable name without pinging you. Turn on Developer Mode, then click your name and choose **Copy User ID**; pasting your `<@id>` mention also works. Nothing is sent until it is set, or while no chests are loaded around you.
+- Keep **show-screenshot** on: the stash bot only logs reports with a screenshot, as `/submit-stash` needs an image. **show-coordinates** lets it recognise repeat reports of one stash.
+
+**Screenshot:** with **show-screenshot** on, the module waits for you to close any open menu (the confirmation prompt closes by itself), hides the GUI for one frame exactly as F1 does, photographs that frame and puts the GUI back. That hides the hotbar, chat, hand, crosshair, Meteor's HUD and tracers. Outlines drawn into the world, such as ESP boxes, still show. Screens wider than 2560 pixels are scaled down to stay inside Discord's upload limit. If a menu stays open for 10 seconds, or the picture can't be taken, the message goes without it and chat says so.
+
+Chat says whether each post went out, or why Discord refused it (a deleted webhook, rate limiting, no connection). Sending happens in the background, so the game doesn't pause while it waits. Meteor's toggled on/off messages are off for both modules by default.
 
 ## Safe Fast Use
 
@@ -416,7 +420,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.6.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.7.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
 
 Automated tests cover:
 

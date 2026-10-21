@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.25.7
+
+- **Grief Alert split into Call to Arms and Stash Report:** **call-to-arms** is the old ping (@everyone by default, call to action, `/tpa`, coordinates, dubs, screenshot) without the Discord account. The new **stash-report** logs the stash with the clan's stash bot and pings nobody: it always carries your Discord account (**discord-user-id**, required) and the dub count, plus your name, coordinates, dimension and screenshot, and refuses to send while no chests are loaded. Each has its own **webhook-url**; **cooldown-seconds** and **confirm** moved to a **Sending** group. The stash bot logs only messages with the stash report's footer, so a call to arms is never counted as a stash. **grief-alert** is gone: re-enter your webhook URL, ping and other settings in the new modules.
+
 ## 0.25.6
 
 - **Grief Alert for the stash bot:** the new required **discord-user-id** setting puts your Discord account in every alert (shown as your name, never pinged), so the clan's stash bot can credit you. The alert won't send until it is set.
