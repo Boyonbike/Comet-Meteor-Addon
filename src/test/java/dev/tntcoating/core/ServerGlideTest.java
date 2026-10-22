@@ -147,6 +147,33 @@ class ServerGlideTest {
         assertTrue(ServerGlide.clear(boosted, BODY, Motion.ZERO, world).motion().x() < 0);
     }
 
+    @Test void steeringLeavesSafeHeadingsAlone() {
+        World open = new World().wall(30);
+        assertNull(ServerGlide.steer(open.glide(new Motion(1.5, -.15, 0)), BODY, chunksOnly(open)));
+
+        World wall = new World().wall(1);
+        assertNull(ServerGlide.steer(wall.glide(new Motion(-1.5, -.15, 0), 0, 90), BODY, chunksOnly(wall)),
+            "facing and gliding away from the wall");
+    }
+
+    @Test void steeringReportsALevelHeadingStraightAwayFromAWallAhead() {
+        World world = new World().wall(2.5); // outside the current reach, inside the settled glide's lookahead
+        ServerGlide.Context glide = world.glide(new Motion(1.5, -.15, 0), 20, EAST);
+        assertEquals(0, ServerGlide.tick(glide, BODY).damage());
+        ServerGlide.Rotation steer = ServerGlide.steer(glide, BODY, chunksOnly(world));
+        assertNotNull(steer);
+        assertEquals(0, steer.pitch());
+        assertEquals(90, steer.yaw(), 1e-4, "west, straight back from the wall");
+    }
+
+    @Test void steeringTurnsSidewaysWhenTheWayBackIsBlocked() {
+        World world = new World().wall(1);
+        world.obstacles.add(new AABB(-1.5, 60, -20, .2, 80, 20)); // touching the body's back
+        ServerGlide.Rotation steer = ServerGlide.steer(world.glide(new Motion(.1, -.15, 0)), BODY, chunksOnly(world));
+        assertNotNull(steer);
+        assertEquals(0, steer.yaw(), 1e-4, "south, along both walls");
+    }
+
     @Test void rejectsInvalidContexts() {
         World world = new World();
         assertThrows(IllegalArgumentException.class,
@@ -197,6 +224,31 @@ class ServerGlideTest {
         assertTrue(gap > 1.5 && gap < 2.2, "stopped outside the 1.5-block glide reach: " + gap);
     }
 
+    @Test void steeringLetsFlightReachTheWallWithoutDamage() {
+        Flight flight = new Flight(true, glideFromRest(400, 0), 10, new Motion(2.06, 0, 0)).steering();
+        flight.fly(600);
+        assertEquals(0, flight.worstDamage, "no tick may let the server's glide hit the wall");
+        assertTrue(flight.steeredTicks > 0);
+        assertTrue(flight.serverGlide.x() < 0, "the hidden glide heads away from the wall");
+        assertFalse(flight.retreated, "never pushed back from the wall");
+        double gap = flight.world.wallX - flight.box.maxX;
+        assertTrue(gap < .01, "reaches the wall instead of being held outside the glide reach: " + gap);
+    }
+
+    @Test void steeringReplacesTheGuardsPushBackFromAGrowingGlide() {
+        // A young hidden glide keeps speeding up, so the guard alone keeps backing away as its reach grows.
+        Flight guarded = new Flight(true, glideFromRest(40, 0), 10, new Motion(2.06, 0, 0));
+        guarded.fly(600);
+        assertTrue(guarded.retreated);
+        assertTrue(guarded.world.wallX - guarded.box.maxX > 1.2);
+
+        Flight steered = new Flight(true, glideFromRest(40, 0), 10, new Motion(2.06, 0, 0)).steering();
+        steered.fly(600);
+        assertEquals(0, steered.worstDamage);
+        assertFalse(steered.retreated);
+        assertTrue(steered.world.wallX - steered.box.maxX < .01);
+    }
+
     @Test void harmlessServerGlideStillAllowsWallContactForTightSpaces() {
         // Shortly after takeoff the hidden glide is still slow; a harmless contact then keeps zeroing it.
         Flight flight = new Flight(true, new Motion(.1, -.05, 0), 1, Motion.ZERO);
@@ -204,6 +256,10 @@ class ServerGlideTest {
         assertEquals(0, flight.worstDamage);
         assertTrue(flight.world.wallX - flight.box.maxX < .01, "harmless contact reaches the wall");
         assertTrue(flight.serverGlide.horizontalLength() <= ServerGlide.HARMLESS_SPEED);
+    }
+
+    private static FlightCorridor.Probe chunksOnly(World world) {
+        return FlightCorridor.Probe.chunksOnly(world);
     }
 
     private static Motion glideFromRest(int ticks, float pitch) {
@@ -226,7 +282,8 @@ class ServerGlideTest {
         Motion lastMotion = Motion.ZERO;
         boolean lastGlideLimited;
         double worstDamage;
-        int glideLimitedTicks;
+        int glideLimitedTicks, steeredTicks;
+        boolean steer, retreated;
 
         Flight(boolean guard, Motion serverGlide, double gap, Motion output) {
             this.guard = guard;
@@ -235,16 +292,28 @@ class ServerGlideTest {
             controller.accept(output);
         }
 
+        /** Report the steering heading, as the module does, instead of always facing the wall. */
+        Flight steering() {
+            steer = true;
+            return this;
+        }
+
         void fly(int ticks) {
             for (int tick = 0; tick < ticks; tick++) {
                 controller.tick();
                 boolean release = AdaptiveFlightStep.harmless(controller.output());
                 ServerGlide.Context glide = world.glide(serverGlide);
+                ServerGlide.Rotation heading = steer ? ServerGlide.steer(glide, box, chunksOnly(world)) : null;
+                if (heading != null) {
+                    glide = world.glide(serverGlide, heading.pitch(), heading.yaw());
+                    steeredTicks++;
+                }
                 var step = AdaptiveFlightStep.move(controller, new Motion(1, 0, 0), 1, .5, box, world, 64, .35,
                     TestControls.of(false, .35, 0, release, guard ? glide : null));
                 if (step.glideLimited()) glideLimitedTicks++;
                 lastGlideLimited = step.glideLimited();
                 lastMotion = step.motion();
+                if (step.motion().x() < -1e-9) retreated = true;
                 Motion moved = world.collide(box, step.motion());
                 assertFalse(world.overlaps(box.move(moved.x(), moved.y(), moved.z())));
                 box = box.move(moved.x(), moved.y(), moved.z());

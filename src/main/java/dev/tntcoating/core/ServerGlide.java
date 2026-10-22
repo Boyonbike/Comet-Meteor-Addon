@@ -2,6 +2,7 @@ package dev.tntcoating.core;
 
 import dev.tntcoating.core.AdaptiveFlightController.Motion;
 import java.util.Objects;
+import net.minecraft.util.Mth;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -22,6 +23,11 @@ public final class ServerGlide {
     static final double REACH_PADDING = 0.03;
     static final int SEARCH_STEPS = 10;
     static final int STEADY_TICKS = 1200;
+    // Steering starts while a wall is within this many settled glide reaches, so the hidden glide has
+    // turned away by the time the guard would otherwise hold flight back from the wall.
+    static final double STEER_LOOKAHEAD = 2;
+    // Level headings to try, relative to the camera's: straight back first, then ever closer to the camera's.
+    private static final float[] STEER_TURNS = {180, 135, -135, 90, -90, 45, -45};
     private static final double HORIZONTAL_DRAG = 0.99F;
     private static final double VERTICAL_DRAG = 0.98F;
 
@@ -55,6 +61,9 @@ public final class ServerGlide {
 
     /** The movement to use instead, and the damage that could not be avoided. */
     public record Clearance(Motion motion, boolean limited, double damage) {}
+
+    /** A rotation to report to the server in place of the camera's. */
+    public record Rotation(float pitch, float yaw) {}
 
     /** Vanilla fly-into-wall damage for one horizontal collision. */
     public static double damage(double speedBefore, double speedAfter) {
@@ -166,6 +175,36 @@ public final class ServerGlide {
             else unsafe = middle;
         }
         return new Clearance(back.scaled(safe), true, 0);
+    }
+
+    /**
+     * The server's glide turns a tenth of the way towards the reported heading each tick and settles at a steady
+     * speed along it. While that glide facing the camera, or the current one, could reach a wall from here, this is
+     * a level heading, as near straight back as possible, whose settled glide cannot: reporting it turns the hidden
+     * glide away, so the guard need not hold the reported position back from the wall. Null when the camera's
+     * heading is safe, or when no heading is.
+     */
+    public static Rotation steer(Context camera, AABB box, FlightCorridor.Probe chunks) {
+        Objects.requireNonNull(camera, "camera");
+        Objects.requireNonNull(box, "box");
+        Motion level = steady(0, 0, camera.gravity(), camera.slowFalling());
+        double speed = level.horizontalLength();
+        if (risk(camera, box, Motion.ZERO, chunks) == 0 && risk(heading(camera, level.y(),
+            speed * STEER_LOOKAHEAD, camera.pitch(), camera.yaw()), box, Motion.ZERO, chunks) == 0) return null;
+        for (float turn : STEER_TURNS) {
+            float yaw = Mth.wrapDegrees(camera.yaw() + turn);
+            if (risk(heading(camera, level.y(), speed, 0, yaw), box, Motion.ZERO, chunks) == 0) {
+                return new Rotation(0, yaw);
+            }
+        }
+        return null;
+    }
+
+    /** This context gliding along the yaw at the given horizontal speed, facing the given rotation. */
+    private static Context heading(Context glide, double y, double speed, float pitch, float yaw) {
+        Motion look = look(0, yaw);
+        return new Context(new Motion(look.x() * speed, y, look.z() * speed), glide.rockets(), pitch, yaw,
+            glide.gravity(), glide.slowFalling(), glide.collider());
     }
 
     private static double risk(Context glide, AABB box, Motion movement, FlightCorridor.Probe chunks) {

@@ -48,6 +48,7 @@ import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraF
 import meteordevelopment.meteorclient.systems.modules.render.Freecam;
 import meteordevelopment.meteorclient.utils.misc.input.Input;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -180,6 +181,9 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Boolean> serverGlideGuard = terrain.add(new BoolSetting.Builder().name("server-glide-guard")
         .description("Keep walls out of reach of the server's own elytra glide. A vanilla server keeps simulating a normal glide from your reported position every tick, and that hidden speed, not your visible speed, deals fly-into-wall damage.")
         .defaultValue(true).build());
+    private final Setting<Boolean> steerServerGlide = terrain.add(new BoolSetting.Builder().name("steer-server-glide")
+        .description("Near a wall you face, report a level heading away from it, so the server's own glide turns away from the wall within about a third of a second. You can then fly right up to the wall without wall damage instead of being held about two blocks back by server-glide-guard. Your camera does not move; other players see your head turned away while it steers.")
+        .defaultValue(true).build());
     private final Setting<Boolean> logSetbacks = diagnostics.add(new BoolSetting.Builder().name("log-setbacks")
         .description("Write every server setback while flying to meteor-client/comet/setback-logs (one file per session, at most 4 MB): speed, boost, ping and whether terrain ahead was loaded, to compare flights by numbers instead of feel.")
         .defaultValue(true).build());
@@ -229,7 +233,10 @@ public final class AdaptiveElytraFly extends Module {
     private boolean groundedSinceReset, sentRotation;
     private float sentPitch, sentYaw;
     private int rockets, pendingRocketTicks;
-    private long glideLimitedTicks, glideHits;
+    private long glideLimitedTicks, glideHits, glideSteeredTicks;
+    private boolean glideSteering;
+    // The lowest priority is sent last, so the server's next glide tick uses this heading.
+    private static final int GLIDE_STEER_PRIORITY = Integer.MIN_VALUE;
     private ClientLevel world;
     private LocalPlayer player;
     private boolean controlling, checkBlocks;
@@ -489,8 +496,17 @@ public final class AdaptiveElytraFly extends Module {
             mode.handleAutopilot();
             int forward = (mc.options.keyUp.isDown() ? 1 : 0) - (mc.options.keyDown.isDown() ? 1 : 0);
             int right = (mc.options.keyRight.isDown() ? 1 : 0) - (mc.options.keyLeft.isDown() ? 1 : 0);
-            ServerGlide.Context glide = checkBlocks && serverGlideGuard.get() && serverGlide != null
-                ? glideContext(mc.player, mc.player.getXRot(), mc.player.getYRot()) : null;
+            ServerGlide.Context glide = serverGlide == null ? null
+                : glideContext(mc.player, mc.player.getXRot(), mc.player.getYRot());
+            ServerGlide.Rotation steer = glide != null && steerServerGlide.get()
+                ? ServerGlide.steer(glide, body, FlightCorridor.Probe.chunksOnly(probe)) : null;
+            glideSteering = steer != null;
+            if (glideSteering) {
+                Rotations.rotate(steer.yaw(), steer.pitch(), GLIDE_STEER_PRIORITY);
+                glide = glideContext(mc.player, steer.pitch(), steer.yaw());
+                glideSteeredTicks++;
+            }
+            if (!checkBlocks || !serverGlideGuard.get()) glide = null;
             AdaptiveFlightStep.Result step = engine.step(new AdaptiveFlightEngine.Input(forward, right,
                 mc.player.getYRot(), mc.options.keyJump.isDown(), mc.options.keyShift.isDown(), event.movement.y,
                 body, probe, () -> checkBlocks ? floorClearance() : Double.POSITIVE_INFINITY, glide,
@@ -686,6 +702,7 @@ public final class AdaptiveElytraFly extends Module {
 
     private void suspend(String why) {
         controlling = false;
+        glideSteering = false;
         engine.suspend();
         movementTick = Integer.MIN_VALUE;
         state = why;
@@ -702,7 +719,8 @@ public final class AdaptiveElytraFly extends Module {
         serverGlide = null;
         groundedSinceReset = sentRotation = false;
         rockets = pendingRocketTicks = 0;
-        glideLimitedTicks = glideHits = 0;
+        glideLimitedTicks = glideHits = glideSteeredTicks = 0;
+        glideSteering = false;
         controlling = false;
         world = null;
         player = null;
@@ -855,7 +873,8 @@ public final class AdaptiveElytraFly extends Module {
                 engine.adaptiveMaximum() * 20),
             boostLine(),
             String.format(Locale.ROOT, "Setbacks: %d | server glide %s", setbacks, serverGlide == null ? "idle"
-                : String.format(Locale.ROOT, "%.1f b/s", serverGlide.horizontalLength() * 20))
+                : String.format(Locale.ROOT, "%.1f b/s%s", serverGlide.horizontalLength() * 20,
+                    glideSteering ? " (steered away)" : ""))
         );
     }
 
@@ -892,10 +911,10 @@ public final class AdaptiveElytraFly extends Module {
             + " | chunk-limited ticks " + chunkLimitedTicks + " | obstacle-limited ticks " + obstacleLimitedTicks
             + (setbackLog == null ? "" : " | logging to " + setbackLog.path().getFileName()));
         if (glideLabel != null) glideLabel.set(String.format(Locale.ROOT,
-            "Server glide %s | glide-limited ticks %d | predicted server wall hits %d",
+            "Server glide %s | glide-limited ticks %d | steered ticks %d | predicted server wall hits %d",
             serverGlide == null ? "idle" : String.format(Locale.ROOT, "%.1f b/s%s",
                 serverGlide.horizontalLength() * 20, rockets > 0 ? " with rocket" : ""),
-            glideLimitedTicks, glideHits));
+            glideLimitedTicks, glideSteeredTicks, glideHits));
         if (checksLabel != null) checksLabel.set("This tick: " + (engine.chunkChecks() + floorChunkChecks)
             + " chunk checks, " + collisionChecks + " block checks");
         if (frameLabel != null) frameLabel.set(String.format(Locale.ROOT,
@@ -906,6 +925,11 @@ public final class AdaptiveElytraFly extends Module {
 
     @Override public WWidget getWidget(GuiTheme theme) {
         var list = theme.verticalList();
+        list.add(theme.label("Unlimited boost, setback rewind and soft landing"));
+        list.add(theme.label("based on VolytraFly"));
+        list.add(theme.label("Credit: Volizray"));
+        list.add(theme.label("Source: github.com/Volizray/VolytraFly-Addon"));
+        list.add(theme.label("VolytraFly licence: CC0 1.0 (public domain)"));
         var section = list.add(theme.section("Flight Diagnostics", false)).expandX().widget();
         var table = section.add(theme.table()).expandX().widget();
         statusLabel = table.add(theme.label("")).widget(); table.row();
@@ -917,7 +941,7 @@ public final class AdaptiveElytraFly extends Module {
         frameLabel = table.add(theme.label("")).widget(); table.row();
         table.add(theme.button("Reset Flight Diagnostics")).widget().action = () -> {
             chunkLimitedTicks = obstacleLimitedTicks = slowFrames = 0;
-            glideLimitedTicks = glideHits = 0;
+            glideLimitedTicks = glideHits = glideSteeredTicks = 0;
             frameAverageMs = framePeakMs = 0;
             measuredSpeed = 0;
             samplePosition = null;
