@@ -6,7 +6,8 @@
  * SPDX-License-Identifier: GPL-3.0-only
  *
  * Modified for Comet by Boyonabike on 2026-10-22: Minecraft 26.1.2 mappings,
- * local inventory integration, lifecycle/navigation guards and settings credits.
+ * local inventory integration, lifecycle/navigation guards and settings credits;
+ * block-keyed clearance and floor/ceiling caches shared by nearby samples.
  * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -38,9 +39,10 @@ public final class AutoWaspPathfinder {
 
     private final AutoWasp module;
     private final AutoWaspPathSearch search;
-    private final Map<Vec3, Boolean> clearanceCache = new HashMap<>();
-    private final Map<ColumnKey, Double> floorDistanceCache = new HashMap<>();
-    private final Map<ColumnKey, Double> ceilingDistanceCache = new HashMap<>();
+    // Per-tick caches keyed by blocks, so every sample covering the same blocks shares one lookup.
+    private final Map<ClearanceKey, Boolean> clearanceCache = new HashMap<>();
+    private final Map<ColumnKey, Double> floorCache = new HashMap<>();
+    private final Map<ColumnKey, Double> ceilingCache = new HashMap<>();
 
     private List<Vec3> currentPath = new ArrayList<>();
     private int currentWaypointIndex;
@@ -173,10 +175,6 @@ public final class AutoWaspPathfinder {
         if (module.client().level == null) return false;
         if (hasNetherFlightCap() && center.y > NETHER_MAX_FLIGHT_Y) return false;
 
-        Vec3 key = center;
-        Boolean cached = clearanceCache.get(key);
-        if (cached != null) return cached;
-
         double halfWidth = 0.35;
         double height = playerHeight();
         int minX = Mth.floor(center.x - halfWidth);
@@ -185,6 +183,10 @@ public final class AutoWaspPathfinder {
         int maxY = Mth.floor(center.y + height);
         int minZ = Mth.floor(center.z - halfWidth);
         int maxZ = Mth.floor(center.z + halfWidth);
+        // The answer depends only on the blocks the body covers.
+        ClearanceKey key = new ClearanceKey(minX, minY, minZ, maxX, maxY, maxZ);
+        Boolean cached = clearanceCache.get(key);
+        if (cached != null) return cached;
         BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos();
 
         for (int x = minX; x <= maxX; x++) {
@@ -215,23 +217,11 @@ public final class AutoWaspPathfinder {
     }
 
     public double distanceToSolidBelow(Vec3 pos, int maxDepth) {
-        ColumnKey key = new ColumnKey(Mth.floor(pos.x), Mth.floor(pos.z), pos.y, maxDepth);
-        Double cached = floorDistanceCache.get(key);
-        if (cached != null) return cached;
-
-        double value = pos.y - nearestSolidBelow(pos, maxDepth);
-        floorDistanceCache.put(key, value);
-        return value;
+        return pos.y - nearestSolidBelow(pos, maxDepth);
     }
 
     public double distanceToSolidAbove(Vec3 pos, int maxHeight) {
-        ColumnKey key = new ColumnKey(Mth.floor(pos.x), Mth.floor(pos.z), pos.y, maxHeight);
-        Double cached = ceilingDistanceCache.get(key);
-        if (cached != null) return cached;
-
-        double value = nearestSolidAbove(pos, maxHeight) - (pos.y + playerHeight());
-        ceilingDistanceCache.put(key, value);
-        return value;
+        return nearestSolidAbove(pos, maxHeight) - (pos.y + playerHeight());
     }
 
     public int countLateralOpenings(Vec3 center, double distance) {
@@ -273,47 +263,65 @@ public final class AutoWaspPathfinder {
 
     private void clearCaches() {
         clearanceCache.clear();
-        floorDistanceCache.clear();
-        ceilingDistanceCache.clear();
+        floorCache.clear();
+        ceilingCache.clear();
     }
 
-    private record ColumnKey(int x, int z, double y, int range) {}
+    private record ClearanceKey(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {}
+
+    /** A column scan from block {@code y} over {@code range} blocks. */
+    private record ColumnKey(int x, int y, int z, int range) {}
 
     private boolean shouldTrimCaches() {
         return clearanceCache.size() > MAX_CACHE_ENTRIES
-            || floorDistanceCache.size() > MAX_CACHE_ENTRIES
-            || ceilingDistanceCache.size() > MAX_CACHE_ENTRIES;
+            || floorCache.size() > MAX_CACHE_ENTRIES
+            || ceilingCache.size() > MAX_CACHE_ENTRIES;
     }
 
     private double nearestSolidBelow(Vec3 pos, int maxDepth) {
         int x = Mth.floor(pos.x);
         int z = Mth.floor(pos.z);
         int yStart = Mth.floor(pos.y);
-        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos(x, yStart, z);
+        // The scan depends only on its starting block; NaN means nothing solid within range.
+        Double surface = floorCache.get(new ColumnKey(x, yStart, z, maxDepth));
+        if (surface == null) {
+            surface = scanBelow(x, yStart, z, maxDepth);
+            floorCache.put(new ColumnKey(x, yStart, z, maxDepth), surface);
+        }
+        return Double.isNaN(surface) ? pos.y - maxDepth : surface;
+    }
 
+    private double scanBelow(int x, int yStart, int z, int maxDepth) {
+        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos(x, yStart, z);
         for (int i = 0; i <= maxDepth; i++) {
             int y = yStart - i;
             if (module.client().level.isOutsideBuildHeight(y)) return y;
             mutable.set(x, y, z);
             if (isSolid(mutable)) return y + 1.0;
         }
-
-        return pos.y - maxDepth;
+        return Double.NaN;
     }
 
     private double nearestSolidAbove(Vec3 pos, int maxHeight) {
         int x = Mth.floor(pos.x);
         int z = Mth.floor(pos.z);
         int yStart = Mth.floor(pos.y + playerHeight());
-        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos(x, yStart, z);
+        Double surface = ceilingCache.get(new ColumnKey(x, yStart, z, maxHeight));
+        if (surface == null) {
+            surface = scanAbove(x, yStart, z, maxHeight);
+            ceilingCache.put(new ColumnKey(x, yStart, z, maxHeight), surface);
+        }
+        return Double.isNaN(surface) ? pos.y + maxHeight : surface;
+    }
 
+    private double scanAbove(int x, int yStart, int z, int maxHeight) {
+        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos(x, yStart, z);
         for (int i = 0; i <= maxHeight; i++) {
             int y = yStart + i;
             if (module.client().level.isOutsideBuildHeight(y)) return y;
             mutable.set(x, y, z);
             if (isSolid(mutable)) return y;
         }
-
-        return pos.y + maxHeight;
+        return Double.NaN;
     }
 }

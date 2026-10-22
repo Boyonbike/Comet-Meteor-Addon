@@ -34,6 +34,16 @@ DEVILS-specific logging/crash wrappers and hard-coded AutoArmor chat commands
 with Comet lifecycle guards and local chest-slot inventory swaps; added movement
 controller conflict handling, loaded-terrain checks, precise per-tick navigation
 caches, reachable path endpoints, and visible settings-menu attribution.
+Further modified for Comet 0.25.15 on 22 October 2026: a setback-aware speed
+ramp with rewind, hold and pinned-glide recovery, settling after elytra swaps,
+paced takeoff, heading limits, arrival braking, server speed caps, a server-glide
+wall guard, ping-aware target prediction, worn-out elytra handling, chest-swap
+hysteresis, block-keyed navigation caches and a time-budgeted path search.
+The new files modules/autowasp/{AutoWaspRamp.java, AutoWaspSwapDelay.java,
+AutoWaspTakeoff.java, AutoWaspChestSwap.java, AutoWaspSetbacks.java,
+AutoWaspSteering.java, AutoWaspTargetTracker.java, AutoWaspServerGlide.java,
+AutoWaspGlideTracker.java} and mixin/AutoWaspFireworkAccessor.java were written
+for Comet as part of this port and are distributed under the same GPL v3 terms.
 These modified files remain covered by GPL v3 and carry source/provenance notices.
 No warranty is provided, including merchantability or fitness for a particular purpose.
 

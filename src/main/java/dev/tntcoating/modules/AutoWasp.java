@@ -6,7 +6,9 @@
  * SPDX-License-Identifier: GPL-3.0-only
  *
  * Modified for Comet by Boyonabike on 2026-10-22: Minecraft 26.1.2 mappings,
- * local inventory integration, lifecycle/navigation guards and settings credits.
+ * local inventory integration, lifecycle/navigation guards and settings credits;
+ * speed ramp, setback and server-glide settings, ping-aware target prediction,
+ * worn-out elytra handling and chest-swap hysteresis.
  * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -15,13 +17,17 @@
 package dev.tntcoating.modules;
 
 import dev.tntcoating.TntCoatingAddon;
+import dev.tntcoating.modules.autowasp.AutoWaspChestSwap;
 import dev.tntcoating.modules.autowasp.AutoWaspFlightController;
 import dev.tntcoating.modules.autowasp.AutoWaspPathfinder;
+import dev.tntcoating.modules.autowasp.AutoWaspTargetTracker;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
+import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.settings.Vector3dSetting;
@@ -34,6 +40,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.network.protocol.common.ClientboundDisconnectPacket;
 import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
@@ -52,10 +59,12 @@ public class AutoWasp extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgChestSwap = settings.createGroup("Chest Swap");
+    private final SettingGroup sgRamp = settings.createGroup("Speed Ramp");
+    private final SettingGroup sgServerGlide = settings.createGroup("Server Glide");
 
     private final Setting<Double> horizontalSpeed = sgGeneral.add(new DoubleSetting.Builder()
         .name("horizontal-speed")
-        .description("Horizontal elytra speed.")
+        .description("Horizontal elytra speed in blocks per tick. Total speed never passes 17 blocks per tick, the most a vanilla server accepts.")
         .defaultValue(2.0)
         .min(0.14)
         .build()
@@ -63,7 +72,7 @@ public class AutoWasp extends Module {
 
     private final Setting<Double> verticalSpeed = sgGeneral.add(new DoubleSetting.Builder()
         .name("vertical-speed")
-        .description("Vertical elytra speed.")
+        .description("Vertical elytra speed in blocks per tick.")
         .defaultValue(3.0)
         .min(0.0)
         .build()
@@ -78,7 +87,7 @@ public class AutoWasp extends Module {
 
     private final Setting<Boolean> predictMovement = sgGeneral.add(new BoolSetting.Builder()
         .name("predict-movement")
-        .description("Tries to predict the targets position according to their movement.")
+        .description("Leads the target by its recent movement over your ping plus the time other players' movement takes to show, and matches its speed when flying straight at it.")
         .defaultValue(true)
         .build()
     );
@@ -155,8 +164,105 @@ public class AutoWasp extends Module {
         .build()
     );
 
+    private final Setting<Double> chestSwapHysteresis = sgChestSwap.add(new DoubleSetting.Builder()
+        .name("chest-swap-hysteresis")
+        .description("Once the chestplate is on, the target must move this many blocks beyond each range before the elytra goes back on, so a target at the edge of a range does not swap you back and forth.")
+        .defaultValue(1.5)
+        .range(0.0, 4.0)
+        .sliderRange(0.0, 4.0)
+        .visible(autoChestSwap::get)
+        .build()
+    );
+
+    private final Setting<Double> rampStartSpeed = sgRamp.add(new DoubleSetting.Builder()
+        .name("ramp-start-speed")
+        .description("Total speed, in blocks per tick, that pursuit starts from and that a setback never rewinds below. It then speeds up along the ramp to your speed caps.")
+        .defaultValue(1.0)
+        .range(0.1, 5.0)
+        .sliderRange(0.1, 3.0)
+        .build()
+    );
+
+    private final Setting<Double> rampStep = sgRamp.add(new DoubleSetting.Builder()
+        .name("ramp-step")
+        .description("Acceleration in blocks per tick squared at rest, tapering to zero at 15 blocks per tick (VolytraFly's 300 b/s curve). It also paces speeding up again after braking, a turn or a wall.")
+        .defaultValue(0.3)
+        .range(0.01, 5.0)
+        .sliderRange(0.05, 2.0)
+        .build()
+    );
+
+    private final Setting<Integer> setbackRewindTicks = sgRamp.add(new IntSetting.Builder()
+        .name("setback-rewind-ticks")
+        .description("A server setback rewinds the ramp by this many ticks of acceleration instead of restarting it.")
+        .defaultValue(15)
+        .range(0, 200)
+        .sliderRange(0, 60)
+        .build()
+    );
+
+    private final Setting<Integer> setbackHoldTicks = sgRamp.add(new IntSetting.Builder()
+        .name("setback-hold-ticks")
+        .description("After a setback, hold the rewound speed for this many ticks before accelerating again, so back-to-back setbacks cannot pin you in place.")
+        .defaultValue(1)
+        .range(0, 20)
+        .sliderRange(0, 10)
+        .build()
+    );
+
+    private final Setting<Integer> pinnedGlideTicks = sgRamp.add(new IntSetting.Builder()
+        .name("pinned-glide-ticks")
+        .description("When two setbacks in a row put you back on exactly the same spot, the server is rejecting every move from there. Glide with plain vanilla elytra physics for this many ticks so it accepts one, then ramp up again from the start speed. Zero disables.")
+        .defaultValue(10)
+        .range(0, 60)
+        .sliderRange(0, 40)
+        .build()
+    );
+
+    private final Setting<Double> turnRate = sgRamp.add(new DoubleSetting.Builder()
+        .name("turn-rate")
+        .description("How fast pursuit may swing its heading, in degrees per tick, rising with speed to double at horizontal-speed. Turning stays instant below 0.6 blocks per tick, a reversal of 135 degrees or more brakes first, and obstacle avoidance is never limited. Zero turns instantly.")
+        .defaultValue(30)
+        .range(0, 90)
+        .sliderRange(0, 90)
+        .build()
+    );
+
+    private final Setting<Double> braking = sgRamp.add(new DoubleSetting.Builder()
+        .name("braking")
+        .description("Deceleration in blocks per tick squared when arriving at the target or a waypoint and when reversing, so pursuit slows down instead of stopping dead or overshooting. Emergency braking near walls is never limited.")
+        .defaultValue(0.3)
+        .range(0.01, 2.0)
+        .sliderRange(0.05, 1.0)
+        .build()
+    );
+
+    private final Setting<Double> maneuverMaxSpeed = sgRamp.add(new DoubleSetting.Builder()
+        .name("maneuver-max-speed")
+        .description("Total speed cap, in blocks per tick, while moving horizontally, climbing or descending and turning at once. Only matters with speeds raised above it.")
+        .defaultValue(10.0)
+        .range(1.0, 17.0)
+        .sliderRange(1.0, 17.0)
+        .build()
+    );
+
+    private final Setting<Boolean> serverGlideGuard = sgServerGlide.add(new BoolSetting.Builder()
+        .name("server-glide-guard")
+        .description("Keep walls out of reach of the server's own elytra glide. A vanilla server keeps simulating a normal glide from your reported position every tick, and that hidden glide, not your visible speed, deals fly-into-wall damage.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> steerServerGlide = sgServerGlide.add(new BoolSetting.Builder()
+        .name("steer-server-glide")
+        .description("Near a wall the server's glide could reach, report a level heading away from it so the hidden glide turns away and pursuit can fly close to walls. Your camera does not move; other players see your head turned away while it steers.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final AutoWaspPathfinder pathfinder = new AutoWaspPathfinder(this);
     private final AutoWaspFlightController flightController = new AutoWaspFlightController(this, pathfinder);
+    private final AutoWaspTargetTracker targetTracker = new AutoWaspTargetTracker();
 
     private Player target;
     private int targetSearchTimer;
@@ -204,6 +310,7 @@ public class AutoWasp extends Module {
         targetSearchTimer = 0;
         waitingForElytra = false;
         chestSwapCooldown = 0;
+        targetTracker.reset();
         flightController.onDeactivate();
         pathfinder.onDeactivate();
     }
@@ -214,12 +321,29 @@ public class AutoWasp extends Module {
     }
 
     @EventHandler
+    private void onPostTick(TickEvent.Post event) {
+        if (mc.player != null && mc.level != null) flightController.postTick();
+    }
+
+    @EventHandler
     private void onMove(PlayerMoveEvent event) {
         onMoveSafe(event);
     }
 
+    // Runs on Netty: the flight controller only fills atomic mailboxes here.
+    @EventHandler
+    private void onReceive(PacketEvent.Receive event) {
+        flightController.onReceive(event.packet);
+    }
+
+    @EventHandler
+    private void onSend(PacketEvent.Send event) {
+        flightController.onSend(event.packet);
+    }
+
     private void onTickSafe() {
         if (mc.player == null || mc.level == null || !mc.player.isAlive() || mc.player.isSpectator()) return;
+        flightController.preTick(hasUsableElytra());
         if (meteordevelopment.meteorclient.systems.modules.Modules.get().isActive(
                 meteordevelopment.meteorclient.systems.modules.render.Freecam.class)) return;
 
@@ -256,15 +380,16 @@ public class AutoWasp extends Module {
             return;
         }
 
+        targetTracker.sample(target.getId(), target.position());
         boolean shouldUseElytra = tickAutoChestSwap();
-        if (!hasEquippedElytra()) {
+        if (!hasUsableElytra()) {
             if (!shouldUseElytra) {
                 waitingForElytra = false;
                 flightController.resetFlightTracking();
                 return;
             }
             if (!waitingForElytra) {
-                warning("No elytra equipped, waiting for swap...");
+                warning("No usable elytra equipped, waiting for swap...");
                 waitingForElytra = true;
             }
             flightController.resetFlightTracking();
@@ -287,10 +412,13 @@ public class AutoWasp extends Module {
         if (meteordevelopment.meteorclient.systems.modules.Modules.get().isActive(
                 meteordevelopment.meteorclient.systems.modules.render.Freecam.class)) return;
         if (target == null || target.level() != mc.level || target.isRemoved() || target.isDeadOrDying()) return;
-        if (!hasEquippedElytra() || !mc.player.isFallFlying()) return;
+        if (!hasUsableElytra() || !mc.player.isFallFlying()) return;
 
         Vec3 targetPos = getTargetPos();
-        flightController.onMove(event, pathfinder.steerTarget(targetPos));
+        Vec3 steer = pathfinder.steerTarget(targetPos);
+        // Only a straight approach matches the target's own movement; a waypoint is a fixed point to pass.
+        Vec3 lead = predictMovement.get() && steer == targetPos ? targetTracker.velocity() : Vec3.ZERO;
+        flightController.onMove(event, steer, lead);
     }
 
     private void findTarget() {
@@ -308,10 +436,17 @@ public class AutoWasp extends Module {
     private Vec3 getTargetPos() {
         if (target == null || mc.player == null) return mc.player != null ? mc.player.position() : Vec3.ZERO;
 
-        Vec3 targetPos = target.position().add(offset.get().x, offset.get().y, offset.get().z);
-        if (predictMovement.get()) targetPos = targetPos.add(target.getDeltaMovement());
+        Vec3 targetPos = target.position();
+        if (predictMovement.get()) targetPos = targetTracker.predict(targetPos, pingMs());
+        targetPos = targetPos.add(offset.get().x, offset.get().y, offset.get().z);
         if (avoidLanding.get()) targetPos = liftTargetIfOnGround(targetPos);
         return pathfinder.adjustToSafeCorridor(targetPos, mc.player.position());
+    }
+
+    private int pingMs() {
+        var connection = mc.getConnection();
+        var info = connection == null || mc.player == null ? null : connection.getPlayerInfo(mc.player.getUUID());
+        return info == null ? 0 : Math.max(0, info.getLatency());
     }
 
     private Vec3 liftTargetIfOnGround(Vec3 targetPos) {
@@ -336,15 +471,16 @@ public class AutoWasp extends Module {
     private boolean shouldSwapToChestplate() {
         if (!autoChestSwap.get() || mc.player == null || target == null) return false;
 
+        ItemStack worn = mc.player.getItemBySlot(EquipmentSlot.CHEST);
+        boolean wearingChestplate = !worn.isEmpty() && !worn.has(DataComponents.GLIDER);
+        double extra = wearingChestplate ? chestSwapHysteresis.get() : 0;
         double horizontalDistance = Math.hypot(mc.player.getX() - target.getX(), mc.player.getZ() - target.getZ());
-        if (horizontalDistance > chestSwapHorizontalRange.get()) return false;
-
         double verticalDistance = Math.abs(mc.player.getY() - target.getY());
-        if (verticalDistance > chestSwapVerticalRange.get()) return false;
-
-        int scanDepth = Math.max(3, Mth.ceil(chestSwapGroundDistance.get()) + 2);
+        int scanDepth = Math.max(3, Mth.ceil(chestSwapGroundDistance.get() + extra) + 2);
         double groundDistance = pathfinder.distanceToSolidBelow(mc.player.position(), scanDepth);
-        return groundDistance <= chestSwapGroundDistance.get();
+        return AutoWaspChestSwap.wearChestplate(wearingChestplate, horizontalDistance, verticalDistance, groundDistance,
+            chestSwapHorizontalRange.get(), chestSwapVerticalRange.get(), chestSwapGroundDistance.get(),
+            chestSwapHysteresis.get());
     }
 
     private void requestChestGear(boolean glider) {
@@ -353,11 +489,12 @@ public class AutoWasp extends Module {
             || !mc.player.inventoryMenu.getCarried().isEmpty()
             || dev.tntcoating.core.InventorySlotLoan.INSTANCE.isBorrowing()
             || dev.tntcoating.core.InventoryWeaponAttack.INSTANCE.isPending()) return;
-        var worn = mc.player.getItemBySlot(EquipmentSlot.CHEST);
-        if (!worn.isEmpty() && hasEquippedElytra() == glider) return;
+        ItemStack worn = mc.player.getItemBySlot(EquipmentSlot.CHEST);
+        // A worn-out elytra still counts as a glider but cannot glide, so it is replaced like a missing one.
+        if (glider ? isUsableGlider(worn) : !worn.isEmpty() && !worn.has(DataComponents.GLIDER)) return;
         var chestSlot = mc.player.inventoryMenu.getSlot(6);
         if (!chestSlot.mayPickup(mc.player)) return;
-        var candidates = new java.util.ArrayList<dev.tntcoating.core.SmartElytraSwap.Candidate>();
+        var candidates = new java.util.ArrayList<AutoWaspChestSwap.Candidate>();
         var inventory = mc.player.getInventory();
         for (int i = 0; i <= net.minecraft.world.entity.player.Inventory.INVENTORY_SIZE; i++) {
             int slot = i == net.minecraft.world.entity.player.Inventory.INVENTORY_SIZE
@@ -371,21 +508,30 @@ public class AutoWasp extends Module {
                 if (attribute.equals(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR)) armor[0] += modifier.amount();
                 else if (attribute.equals(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR_TOUGHNESS)) armor[1] += modifier.amount();
             });
-            int remaining = stack.isDamageableItem() ? stack.getMaxDamage() - stack.getDamageValue() : Integer.MAX_VALUE;
-            candidates.add(new dev.tntcoating.core.SmartElytraSwap.Candidate(slot, glider, remaining, armor[0], armor[1]));
+            candidates.add(new AutoWaspChestSwap.Candidate(slot, glider, remainingDurability(stack), armor[0], armor[1]));
         }
-        int slot = dev.tntcoating.core.SmartElytraSwap.best(candidates, glider);
+        int slot = AutoWaspChestSwap.best(candidates, glider);
         if (slot < 0) return;
         if (meteordevelopment.meteorclient.utils.player.SlotUtils.isHotbar(slot)
             || slot == net.minecraft.world.entity.player.Inventory.SLOT_OFFHAND) {
             mc.gameMode.handleContainerInput(mc.player.inventoryMenu.containerId, 6, slot,
                 net.minecraft.world.inventory.ContainerInput.SWAP, mc.player);
         } else meteordevelopment.meteorclient.utils.player.InvUtils.move().from(slot).toArmor(2);
+        if (glider) flightController.elytraSwapped();
         chestSwapCooldown = CHEST_SWAP_COOLDOWN_TICKS;
     }
 
-    private boolean hasEquippedElytra() {
-        return mc.player != null && mc.player.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER);
+    private boolean hasUsableElytra() {
+        return mc.player != null && isUsableGlider(mc.player.getItemBySlot(EquipmentSlot.CHEST));
+    }
+
+    /** A glider on its last point of durability cannot glide. */
+    private static boolean isUsableGlider(ItemStack stack) {
+        return !stack.isEmpty() && stack.has(DataComponents.GLIDER) && remainingDurability(stack) > 1;
+    }
+
+    private static int remainingDurability(ItemStack stack) {
+        return stack.isDamageableItem() ? stack.getMaxDamage() - stack.getDamageValue() : Integer.MAX_VALUE;
     }
 
     private boolean handleMissingTarget() {
@@ -417,12 +563,14 @@ public class AutoWasp extends Module {
 
     private void clearTargetState() {
         target = null;
+        targetTracker.reset();
         pathfinder.clearTargetState();
         flightController.clearStuckState();
     }
 
     private void resetNavigationState() {
         targetSearchTimer = 0;
+        targetTracker.reset();
         pathfinder.resetNavigationState();
         flightController.resetNavigationState();
     }
@@ -464,6 +612,46 @@ public class AutoWasp extends Module {
         return verticalSpeed.get();
     }
 
+    public double rampStartSpeedValue() {
+        return rampStartSpeed.get();
+    }
+
+    public double rampStepValue() {
+        return rampStep.get();
+    }
+
+    public int setbackRewindTicksValue() {
+        return setbackRewindTicks.get();
+    }
+
+    public int setbackHoldTicksValue() {
+        return setbackHoldTicks.get();
+    }
+
+    public int pinnedGlideTicksValue() {
+        return pinnedGlideTicks.get();
+    }
+
+    public double turnRateValue() {
+        return turnRate.get();
+    }
+
+    public double brakingValue() {
+        return braking.get();
+    }
+
+    public double maneuverMaxSpeedValue() {
+        return maneuverMaxSpeed.get();
+    }
+
+    public boolean serverGlideGuardValue() {
+        return serverGlideGuard.get();
+    }
+
+    public boolean steerServerGlideValue() {
+        return steerServerGlide.get();
+    }
+
     @EventHandler
     private void onGameLeft(meteordevelopment.meteorclient.events.game.GameLeftEvent event) {
         if (isActive()) toggle();
@@ -471,7 +659,10 @@ public class AutoWasp extends Module {
 
     @Override
     public String getInfoString() {
-        return target == null ? "Searching" : target.getName().getString();
+        if (target == null) return "Searching";
+        String state = flightController.state();
+        String name = target.getName().getString();
+        return state.equals("Pursuing") || state.equals("Waiting") ? name : name + " | " + state;
     }
 
     @Override

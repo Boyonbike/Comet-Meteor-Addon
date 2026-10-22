@@ -6,7 +6,9 @@
  * SPDX-License-Identifier: GPL-3.0-only
  *
  * Modified for Comet by Boyonabike on 2026-10-22: Minecraft 26.1.2 mappings,
- * local inventory integration, lifecycle/navigation guards and settings credits.
+ * local inventory integration, lifecycle/navigation guards and settings credits;
+ * setback-aware speed ramp, pinned-glide recovery, swap settling, paced takeoff,
+ * heading limit, arrival braking, server speed caps and the server-glide wall guard.
  * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -17,6 +19,11 @@ package dev.tntcoating.modules.autowasp;
 import dev.tntcoating.modules.AutoWasp;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.mixininterface.IVec3;
+import meteordevelopment.meteorclient.utils.player.Rotations;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
 import net.minecraft.core.BlockPos;
@@ -34,48 +41,56 @@ public final class AutoWaspFlightController {
     private static final double AVOIDANCE_STRENGTH = 0.85;
     private static final double COLLISION_STEP = 0.55;
     private static final double NETHER_MAX_FLIGHT_Y = 123.0;
+    // The lowest priority is sent last, so the server's next glide tick uses this heading.
+    private static final int GLIDE_STEER_PRIORITY = Integer.MIN_VALUE;
 
     private final AutoWasp module;
     private final AutoWaspPathfinder pathfinder;
+    private final AutoWaspGlideTracker glide;
+    private final AutoWaspRamp ramp = new AutoWaspRamp(new AutoWaspRamp.Settings(1, AutoWaspRamp.PLATEAU, .3, 15, 1, 1));
+    private final AutoWaspSwapDelay swapDelay = new AutoWaspSwapDelay();
+    private final AutoWaspTakeoff takeoff = new AutoWaspTakeoff();
+    private final AutoWaspSetbacks setbacks = new AutoWaspSetbacks();
+    private final AutoWaspSteering.Maneuver maneuver = new AutoWaspSteering.Maneuver();
 
-    private int jumpTimer;
-    private boolean incrementJumpTimer;
     private Vec3 lastPlayerPos;
     private int stuckTicks;
     private double adaptiveHorizontalCap = -1;
-    private int antiCheatSlowTicks;
+    // Whether pursuit handled the latest movement while gliding, so a correction now answers one of its moves.
+    private boolean controlling;
+    private Vec3 lastControlledPosition;
+    // The velocity pursuit flew last movement, or vanilla's while it left the glide to vanilla physics.
+    private Vec3 lastOutput = Vec3.ZERO;
+    private long clientTicks;
+    private String state = "Waiting";
 
     public AutoWaspFlightController(AutoWasp module, AutoWaspPathfinder pathfinder) {
         this.module = module;
         this.pathfinder = pathfinder;
+        this.glide = new AutoWaspGlideTracker(module);
     }
 
     public void onDeactivate() {
-        jumpTimer = 0;
-        incrementJumpTimer = false;
         lastPlayerPos = null;
         stuckTicks = 0;
         adaptiveHorizontalCap = -1;
-        antiCheatSlowTicks = 0;
+        resetControl();
     }
 
     public void resetNavigationState() {
-        jumpTimer = 0;
-        incrementJumpTimer = false;
         lastPlayerPos = module.client().player != null ? module.client().player.position() : null;
         stuckTicks = 0;
         adaptiveHorizontalCap = -1;
-        antiCheatSlowTicks = 0;
+        resetControl();
     }
 
     public void resetFlightTracking() {
-        jumpTimer = 0;
-        incrementJumpTimer = false;
         pathfinder.resetPathState();
         stuckTicks = 0;
         adaptiveHorizontalCap = -1;
-        antiCheatSlowTicks = 0;
         lastPlayerPos = module.client().player != null ? module.client().player.position() : null;
+        releaseControl();
+        state = "Waiting";
     }
 
     public void clearStuckState() {
@@ -83,85 +98,238 @@ public final class AutoWaspFlightController {
         lastPlayerPos = module.client().player != null ? module.client().player.position() : null;
     }
 
+    /** Netty thread. */
+    public void onReceive(Packet<?> packet) {
+        glide.onReceive(packet);
+    }
+
+    public void onSend(Packet<?> packet) {
+        glide.onSend(packet);
+    }
+
+    /** An elytra was just put on: glide with vanilla physics until the server has settled it. */
+    public void elytraSwapped() {
+        swapDelay.swapped();
+    }
+
+    /** Start of every client tick, before any pursuit work. */
+    public void preTick(boolean usableElytra) {
+        LocalPlayer player = module.client().player;
+        clientTicks++;
+        setbacks.tick();
+        consumeCorrections();
+        glide.preTick();
+        if (player != null) swapDelay.observe(clientTicks, usableElytra, player.isFallFlying());
+        // Movement this tick decides afresh; a glide pursuit did not handle starts again from vanilla's velocity.
+        if (!controlling) releaseControl();
+        controlling = false;
+    }
+
+    /** End of every client tick, after this tick's position was reported. */
+    public void postTick() {
+        LocalPlayer player = module.client().player;
+        if (controlling && player != null) lastControlledPosition = player.position();
+        glide.postTick();
+    }
+
     public void handleNotGliding() {
-        if (module.client().player == null || module.client().level == null) return;
+        LocalPlayer player = module.client().player;
+        if (player == null || module.client().level == null) return;
 
-        if (incrementJumpTimer) jumpTimer++;
-        if (!incrementJumpTimer) incrementJumpTimer = true;
-
-        boolean inLiquid = module.client().player.isInWater() || module.client().player.isInLava();
-        if (module.client().player.onGround() && incrementJumpTimer) {
-            module.client().player.jumpFromGround();
-            return;
-        }
-
-        int reopenDelay = inLiquid ? 1 : 4;
-        if (jumpTimer >= reopenDelay) {
-            jumpTimer = 0;
-            module.client().player.setJumping(false);
-            module.client().player.setSprinting(true);
-            if (module.client().getConnection() != null) {
-                module.client().getConnection().send(new ServerboundPlayerCommandPacket(module.client().player, ServerboundPlayerCommandPacket.Action.START_FALL_FLYING));
+        boolean inLiquid = player.isInWater() || player.isInLava();
+        switch (takeoff.next(clientTicks, player.onGround(), player.isFallFlying(), player.getDeltaMovement().y,
+            inLiquid)) {
+            case JUMP -> player.jumpFromGround();
+            case OPEN -> {
+                player.setJumping(false);
+                player.setSprinting(true);
+                // What the client does for a second press of Jump in the air, so a refused open is not sent at all.
+                if (player.tryToStartFallFlying() && module.client().getConnection() != null) {
+                    module.client().getConnection().send(new ServerboundPlayerCommandPacket(player,
+                        ServerboundPlayerCommandPacket.Action.START_FALL_FLYING));
+                }
             }
+            case WAIT -> {}
         }
 
         stuckTicks = 0;
-        lastPlayerPos = module.client().player.position();
+        lastPlayerPos = player.position();
         adaptiveHorizontalCap = -1;
-        antiCheatSlowTicks = 0;
+        releaseControl();
+        state = "Taking off";
     }
 
     public void onGlidingTick() {
-        incrementJumpTimer = false;
-        jumpTimer = 0;
         updateStuckState();
+        configureRamp();
+        LocalPlayer player = module.client().player;
+        if (setbacks.pinned() || !swapDelay.ready() || player == null) ramp.disengage();
+        else if (ramp.engaged()) ramp.advance();
+        else ramp.engage(player.getDeltaMovement().length());
     }
 
     public int getStuckTicks() {
         return stuckTicks;
     }
 
-    public void onMove(PlayerMoveEvent event, Vec3 steerTarget) {
-        if (module.client().player == null || module.client().level == null || steerTarget == null) return;
+    /** What pursuit is doing, for the module list. */
+    public String state() {
+        return state;
+    }
 
-        Vec3 safeTarget = pathfinder.adjustToSafeCorridor(steerTarget, module.client().player.position());
-        Vec3 toTarget = safeTarget.subtract(module.client().player.position());
-        double horizontal = Math.sqrt(toTarget.x * toTarget.x + toTarget.z * toTarget.z);
+    /**
+     * {@code targetVelocity} is the target's own movement per tick when steering straight at it, so pursuit matches
+     * it instead of trailing behind; zero when steering at a waypoint.
+     */
+    public void onMove(PlayerMoveEvent event, Vec3 steerTarget, Vec3 targetVelocity) {
+        LocalPlayer player = module.client().player;
+        if (player == null || module.client().level == null || steerTarget == null) return;
+        controlling = true;
 
-        double maxHorizontal = resolveHorizontalCap();
-        double maxVertical = resolveVerticalCap();
+        if (setbacks.pinned()) {
+            // Minecraft's own glide, which a server always accepts, until it stops pinning pursuit in place.
+            deferToVanilla(player, "Unpinning");
+            return;
+        }
+        if (!swapDelay.ready()) {
+            deferToVanilla(player, "Settling glide");
+            return;
+        }
+        if (!ramp.engaged()) {
+            configureRamp();
+            ramp.engage(player.getDeltaMovement().length());
+        }
+
+        Vec3 position = player.position();
+        Vec3 safeTarget = pathfinder.adjustToSafeCorridor(steerTarget, position);
+        Vec3 toTarget = safeTarget.subtract(position);
+        double horizontal = toTarget.horizontalDistance();
+        double braking = module.brakingValue();
+        double rampCap = ramp.speed();
+
+        double maxHorizontal = Math.min(resolveHorizontalCap(), rampCap);
+        double maxVertical = Math.min(module.verticalSpeedValue(), rampCap);
+        double approach = AutoWaspSteering.arrivalSpeed(horizontal, braking);
         double xVel = 0;
         double zVel = 0;
         if (horizontal > 1.0E-5) {
-            double speed = Math.min(maxHorizontal, horizontal);
-            xVel = (toTarget.x / horizontal) * speed;
-            zVel = (toTarget.z / horizontal) * speed;
+            xVel = (toTarget.x / horizontal) * approach;
+            zVel = (toTarget.z / horizontal) * approach;
         }
+        double yVel = Math.copySign(AutoWaspSteering.arrivalSpeed(Math.abs(toTarget.y), braking), toTarget.y);
 
-        double yVel = Mth.clamp(toTarget.y, -maxVertical, maxVertical);
-        yVel = applyVerticalSafety(yVel, module.client().player.position());
+        Vec3 desired = new Vec3(xVel, yVel, zVel).add(targetVelocity == null ? Vec3.ZERO : targetVelocity);
+        desired = AutoWaspSteering.capHorizontal(desired, maxHorizontal);
+        desired = new Vec3(desired.x, Mth.clamp(desired.y, -maxVertical, maxVertical), desired.z);
+        // Only pursuit's own heading is limited; avoidance and emergency braking below always act at once.
+        desired = AutoWaspSteering.limitTurn(lastOutput, desired, AutoWaspSteering.turnRate(module.turnRateValue(),
+            lastOutput.horizontalDistance(), module.horizontalSpeedValue()), braking);
+        boolean maneuvering = maneuver.update(lastOutput, desired);
 
-        Vec3 base = new Vec3(xVel, yVel, zVel);
+        Vec3 base = new Vec3(desired.x, applyVerticalSafety(desired.y, position), desired.z);
         Vec3 avoid = computeLocalAvoidance(safeTarget, base, maxHorizontal);
-        Vec3 velocity = applyDimensionFlightLimit(applyEmergencyBraking(base.add(avoid)), module.client().player.position());
-
-        double horizontalVelocity = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-        if (horizontalVelocity > maxHorizontal && horizontalVelocity > 1.0E-6) {
-            double scale = maxHorizontal / horizontalVelocity;
-            velocity = new Vec3(velocity.x * scale, velocity.y, velocity.z * scale);
-        }
-
-        double actualHoriz = Math.sqrt(
-            module.client().player.getDeltaMovement().x * module.client().player.getDeltaMovement().x
-                + module.client().player.getDeltaMovement().z * module.client().player.getDeltaMovement().z
-        );
-        boolean drag = isInDragState();
-        boolean serverRejected = horizontalVelocity > 0.30 && actualHoriz < horizontalVelocity * 0.45;
-        if (drag && serverRejected) antiCheatSlowTicks = Math.min(20, antiCheatSlowTicks + 1);
-        else antiCheatSlowTicks = Math.max(0, antiCheatSlowTicks - 2);
-
+        Vec3 velocity = applyDimensionFlightLimit(applyEmergencyBraking(base.add(avoid)), position);
+        velocity = AutoWaspSteering.capHorizontal(velocity, maxHorizontal);
         velocity = new Vec3(velocity.x, Mth.clamp(velocity.y, -maxVertical, maxVertical), velocity.z);
+
+        double total = Math.min(rampCap, AutoWaspSteering.SERVER_MOVE_LIMIT);
+        if (maneuvering) total = Math.min(total, module.maneuverMaxSpeedValue());
+        velocity = AutoWaspSteering.capLength(velocity, total);
+        velocity = guardServerGlide(player, velocity);
+
         ((IVec3) event.movement).meteor$set(velocity.x, velocity.y, velocity.z);
+        lastOutput = velocity;
+        ramp.follow(velocity.length());
+    }
+
+    /** Netty-free setback handling: rewinds the ramp, pins the flight to vanilla glide, or ends the route. */
+    private void consumeCorrections() {
+        int count = glide.takeCorrections();
+        LocalPlayer player = module.client().player;
+        if (count == 0 || !controlling || player == null || !player.isFallFlying()) return;
+        ClientboundPlayerPositionPacket packet = glide.latestSetback();
+        Vec3 target = packet == null || lastControlledPosition == null ? player.position()
+            : PositionMoveRotation.calculateAbsolute(new PositionMoveRotation(lastControlledPosition,
+                player.getDeltaMovement(), player.getYRot(), player.getXRot()),
+                packet.change(), packet.relatives()).position();
+        switch (setbacks.classify(clientTicks, target, lastControlledPosition)) {
+            case TELEPORT -> {
+                ramp.disengage();
+                lastOutput = Vec3.ZERO;
+                maneuver.reset();
+                pathfinder.resetPathState();
+                clearStuckState();
+            }
+            case PINNED -> {
+                ramp.corrected();
+                if (module.pinnedGlideTicksValue() > 0) {
+                    setbacks.pin(module.pinnedGlideTicksValue());
+                    ramp.disengage();
+                }
+            }
+            case SETBACK -> ramp.corrected();
+        }
+        // A correction moved the player, which is not being stuck.
+        lastPlayerPos = player.position();
+    }
+
+    /**
+     * Steers the server's hidden glide away from walls and keeps walls outside its reach, so its own move never
+     * deals fly-into-wall damage however slowly pursuit itself is moving.
+     */
+    private Vec3 guardServerGlide(LocalPlayer player, Vec3 velocity) {
+        AutoWaspServerGlide.Context context = glide.context(player.getXRot(), player.getYRot());
+        if (context == null) return velocity;
+        AABB body = player.getBoundingBox();
+        if (module.steerServerGlideValue()) {
+            AutoWaspServerGlide.Rotation steer = AutoWaspServerGlide.steer(context, body, glide::chunkLoaded);
+            if (steer != null) {
+                Rotations.rotate(steer.yaw(), steer.pitch(), GLIDE_STEER_PRIORITY);
+                context = glide.context(steer.pitch(), steer.yaw());
+            }
+        }
+        if (!module.serverGlideGuardValue() || context == null) {
+            state = "Pursuing";
+            return velocity;
+        }
+        AutoWaspServerGlide.Clearance clearance = AutoWaspServerGlide.clear(context, body, velocity, glide::chunkLoaded);
+        state = clearance.limited() ? "Glide clearance" : "Pursuing";
+        return clearance.motion();
+    }
+
+    private void deferToVanilla(LocalPlayer player, String why) {
+        ramp.disengage();
+        maneuver.reset();
+        lastOutput = player.getDeltaMovement();
+        state = why;
+    }
+
+    private void releaseControl() {
+        ramp.disengage();
+        maneuver.reset();
+        LocalPlayer player = module.client().player;
+        lastOutput = player == null ? Vec3.ZERO : player.getDeltaMovement();
+    }
+
+    private void resetControl() {
+        ramp.reset();
+        swapDelay.reset();
+        takeoff.reset();
+        setbacks.reset();
+        maneuver.reset();
+        glide.reset();
+        controlling = false;
+        lastControlledPosition = null;
+        lastOutput = Vec3.ZERO;
+        clientTicks = 0;
+        state = "Waiting";
+    }
+
+    private void configureRamp() {
+        double limit = Math.min(AutoWaspSteering.SERVER_MOVE_LIMIT,
+            Math.hypot(module.horizontalSpeedValue(), module.verticalSpeedValue()));
+        ramp.configure(new AutoWaspRamp.Settings(module.rampStartSpeedValue(), AutoWaspRamp.PLATEAU,
+            module.rampStepValue(), module.setbackRewindTicksValue(), module.setbackHoldTicksValue(), limit));
     }
 
     private void updateStuckState() {
@@ -179,6 +347,7 @@ public final class AutoWaspFlightController {
         lastPlayerPos = now;
     }
 
+    /** Inside cobwebs and vines, ease the cap down towards what the drag actually lets through. */
     private double resolveHorizontalCap() {
         double baseCap = module.horizontalSpeedValue();
         boolean drag = isInDragState();
@@ -187,22 +356,13 @@ public final class AutoWaspFlightController {
             return baseCap;
         }
 
-        double actual = Math.sqrt(
-            module.client().player.getDeltaMovement().x * module.client().player.getDeltaMovement().x
-                + module.client().player.getDeltaMovement().z * module.client().player.getDeltaMovement().z
-        );
+        double actual = module.client().player.getDeltaMovement().horizontalDistance();
         if (adaptiveHorizontalCap < 0 || adaptiveHorizontalCap > baseCap) adaptiveHorizontalCap = baseCap;
 
         double targetCap = Math.min(baseCap, Math.max(0.18, actual * 1.18 + 0.05));
-        if (antiCheatSlowTicks > 8) targetCap = Math.min(targetCap, Math.max(0.16, actual * 1.05 + 0.03));
-
         adaptiveHorizontalCap += (targetCap - adaptiveHorizontalCap) * 0.35;
         adaptiveHorizontalCap = Mth.clamp(adaptiveHorizontalCap, 0.14, baseCap);
         return adaptiveHorizontalCap;
-    }
-
-    private double resolveVerticalCap() {
-        return module.verticalSpeedValue();
     }
 
     private boolean isInDragState() {

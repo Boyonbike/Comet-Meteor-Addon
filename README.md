@@ -1,4 +1,4 @@
-# Comet by Boyonabike — 0.25.14
+# Comet by Boyonabike — 0.25.15
 
 Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
@@ -9,7 +9,7 @@ Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. 
 - **Allays:** **allay-farm**, **allay-shulker-killer**. See [Allays](#allays).
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown** and **dub-counter**. See [HUD elements](#hud-elements).
 
-Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.11-mc26.1.2.jar`.
+Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.15-mc26.1.2.jar`.
 
 **Scaffold**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
@@ -34,9 +34,48 @@ Version history is in [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.6.1? See [U
 Enable **Comet → auto-wasp-devils** to pursue the nearest loaded player with elytra.
 This is the DEVILS Auto Wasp port: it retains A* obstacle routing, local avoidance,
 emergency braking, stuck recovery, target movement prediction, a three-axis offset,
-and the Nether flight-height cap. **horizontal-speed** and **vertical-speed** are
-blocks per tick. It automatically jumps and attempts to open equipped wings.
+and the Nether flight-height cap: nothing above y 123 in the Nether counts as open.
+**horizontal-speed** and **vertical-speed** are blocks per tick, and total speed never
+passes 17 blocks per tick, the most a vanilla server accepts. It jumps and opens
+equipped wings like a second press of Jump near the top of the jump, and retries a
+refused open after half a second (a tenth in water or lava) instead of every few ticks.
 Meteor's stock Auto Wasp remains available and links to this port in its settings.
+
+**predict-movement** (default on) leads the target by its movement over your ping plus
+the three ticks other players' movement takes to show, at most 8 ticks, measured from
+where the client shows it rather than the velocity the server last sent. When flying
+straight at the target, pursuit also matches its speed instead of trailing behind.
+
+**Speed Ramp.** Pursuit speeds up along the same plateau curve as Adaptive Elytra Fly's
+unlimited boost, using its own copy of the code. From **ramp-start-speed** (default **1**
+block/tick) it gains up to **ramp-step** (default **0.3**) per tick, tapering towards 15
+blocks/tick, until it reaches your speed caps: about half a second at the defaults. The
+ramp follows what pursuit actually flew, so it also paces speeding up again after
+braking, a turn or a wall. A server setback rewinds it by **setback-rewind-ticks**
+(default **15**) and holds that speed for **setback-hold-ticks** (default **1**) instead
+of asking for full speed again at once. When two setbacks in a row put you back on the
+same spot, pursuit glides with plain vanilla physics for **pinned-glide-ticks** (default
+**10**, 0 disables) until the server accepts a move. A correction more than 64 blocks
+away is a teleport and starts a new route.
+**turn-rate** (default **30**° per tick, doubling at **horizontal-speed**) limits how fast
+pursuit swings its own heading. Turning stays instant below 0.6 blocks per tick, a
+reversal of 135° or more brakes first, and avoidance and emergency braking are never
+limited. **braking** (default **0.3**) slows the approach to the target or a waypoint, so
+pursuit no longer flies at full speed until the last tick and then stops dead.
+**maneuver-max-speed** (default **10** blocks/tick) caps total speed while turning and
+climbing or descending at once; it only matters with speeds raised above it. After an
+elytra goes on, pursuit leaves the new glide to vanilla physics for a quarter of a
+second, so the server settles it first. The module list shows **Unpinning**, **Settling
+glide**, **Glide clearance** or **Taking off** beside the target while they apply.
+
+**Server Glide.** A vanilla server keeps simulating an ordinary glide from each position
+you report, and a wall hit in that hidden move deals damage however slowly you were
+really moving. **server-glide-guard** (default on) follows that glide, including rockets,
+corrections, motion and explosion packets, and keeps walls and unloaded chunks out of
+its next move. **steer-server-glide** (default on) reports a level heading away from a
+nearby wall, so the hidden glide turns away and pursuit can still fly close to walls.
+Your camera does not move; other players see your head turned away while it steers.
+These are Auto Wasp's own settings and code, independent of Adaptive Elytra Fly's.
 
 **only-friends** restricts pursuit to friends. With **friend-filter** enabled,
 turning **only-friends** off instead selects enemies; with both off, any valid
@@ -47,9 +86,15 @@ Turn it off to use **action-on-target-loss** (disable, choose another target, or
 terrain is close below, and equips elytra again for pursuit. It uses your inventory
 without chat commands and pauses swaps in containers, with a carried cursor item,
 or during Comet tool/weapon inventory loans. Turn it off to manage equipment manually.
+An elytra with 1 durability left cannot glide, so it counts as missing and is swapped
+for a usable one. Once the chestplate is on, the target must move
+**chest-swap-hysteresis** (default **1.5**) blocks beyond a range before the elytra goes
+back on, so a target at the edge of a range does not swap you back and forth.
 The module disables active stock Auto Wasp, Elytra Fly and Baritone Elytra when it
 starts so movement controllers do not compete. Keep those modules off during pursuit.
-It pauses movement control for Freecam and disables on leaving a world.
+It pauses movement control for Freecam and disables on leaving a world. Route
+searches run on the client thread with a 4 ms budget; past it, pursuit follows the
+best partial route found so far instead of stalling the tick.
 
 Credits are always shown at the bottom of the module settings: **ThianYong-hub and
 DEVILS contributors**, Meteor Development, GNU GPL v3, the upstream source and revision,
@@ -57,8 +102,9 @@ and Comet port details. The full licence and provenance are bundled in the JAR a
 **LICENSE-DEVILS** and **THIRD_PARTY_NOTICES.md**. Build with Java 25 using
 `sh gradlew build`; distribute the matching **build/distributions/*-source.zip**
 alongside the JAR to supply the modified corresponding source and build inputs.
-The port has build and navigation regression coverage; in-game pursuit, inventory
-swaps and server movement acceptance still need gameplay verification.
+The port has regression coverage for navigation, the speed ramp, setbacks, takeoff,
+chest swaps, prediction and the server-glide guard; in-game pursuit, inventory swaps
+and 6b6t's acceptance of these defaults still need gameplay verification.
 
 ## Bephax ports
 
@@ -158,6 +204,7 @@ Comet limits changes to the whole movement vector and checks the actual blended 
 - **avoid-blocks** defaults on. Turning it off skips block collision reads unless Meteor's **no-crash** is on; chunk checks still run. Comet replaces Meteor's fixed-distance No Crash ray while it controls flight.
 - **safe-maneuvering** defaults on. Near walls and other objects, movement up to **close-object-speed** (default **0.6 blocks/tick**, about **12 blocks/second**, range 0.1–4) bypasses the block guard and Meteor's No Crash, so Minecraft resolves the contact and you can turn or slide through tight spaces. Close-object control means touching or blocked by something; slow flight in open air no longer counts. With **unlimited-boost** off, pressing Sprint during close-object control lifts that limit until the contact clears. This also applies after the guard has slowed you down: if the next acceleration step would be blocked, a crawl-speed fallback permits movement along or away from the wall. Extra movements in the same tick use the same bypass. Unloaded-chunk protection stays active. Turn this off to keep block guarding at low speed. Your own speed into a wall is not what hurts: the server's hidden glide is, and **server-glide-guard** keeps walls out of its reach; see below.
 - **server-glide-guard** defaults on and works with block avoidance (**avoid-blocks** or Meteor's **no-crash**). A vanilla server keeps simulating an ordinary elytra glide for you: every tick it moves that glide from your reported position, then puts you back. If that hidden move hits a wall faster than 0.3 blocks/tick, the server deals fly-into-wall damage however slowly you were really moving. 0.23.6 stopped 0.35 blocks from walls, inside that reach, which is the likely cause of the small hit when stopping at a wall. Comet now follows the server's glide (from takeoff, your sent rotation, attached rockets, corrections, motion and explosion packets) and keeps walls out of its next move: braking ends far enough away, a low-speed crawl stops at its reach, and if the hidden glide grows into a wall while you hover, you step back. Unloaded chunks in its path count as walls. A steady level glide reaches about 1.5 blocks/tick, so after a few seconds of flight a wall you face is held about 1.6 blocks away; glancing and side contact are unaffected. Full contact remains available while the hidden glide is harmless, such as shortly after takeoff, after a correction or after a harmless contact. If no reachable position is safe, the hit is counted instead of freezing you. Turn this off if a server does not simulate player glides.
+- **steer-server-glide** defaults on. Near a wall you face, Comet reports a level heading away from it, so the server's own glide turns away from the wall within about a third of a second. You can then fly right up to the wall without wall damage, instead of being held about 1.6 blocks back by **server-glide-guard**. Your camera does not move; other players see your head turned away while it steers. The HUD's server glide shows **(steered away)** meanwhile, and Flight Diagnostics count steered ticks.
 - **log-setbacks** (Diagnostics, default on) writes one JSON line per setback while flying to `meteor-client/comet/setback-logs` (a new file per session, at most 4 MB): time, position, correction distance, total/horizontal/vertical speed and both boost ramps in blocks/second, state, ping, whether the chunk two seconds ahead was loaded, whether you were pinned, and the **fly-into-unloaded-chunks**, **overdrive** and **split-moves** settings. When it can match the setback to a move you sent, it also records that rejected move: its speed, horizontal and vertical speed, how much your velocity changed from the move before (blocks/second in one tick), how sharply it turned, and whether it was the first move after an earlier setback. Compare flights by setbacks per minute instead of by feel.
 
 The module list shows current activity (including **Unlimited boost**) and observed 3D progress over about one second. The settings panel shows the adaptive maximum, selected cruise/sprint or boost speeds, each boost ramp's speed and maximum, setbacks and the setback log file, ticks actually limited by chunks or blocks, the estimated server glide speed with its limited ticks and predicted server wall hits, query counts and frame times. Frame average is smoothed; peak and frames over 50 ms are counted since activation/world change or **Reset Flight Diagnostics**. These readings help distinguish server corrections, terrain pacing and rendering stalls; the controller does not change graphics settings or Minecraft's chunk renderer.
@@ -446,7 +493,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.11-mc26.1.2.jar`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.15-mc26.1.2.jar` and the matching `build/distributions/comet-0.25.15-mc26.1.2-source.zip`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
 
 Automated tests cover:
 
@@ -467,7 +514,8 @@ Automated tests cover:
 - Baritone elytra hand-off: when a trip is flown or walked, take-off timing and retries, and what happens after a flight ends
 - Elytra Log: when the worn elytra is due and whether a spare can still replace it
 - adaptive ElytraFly: recorded flight feel (sixteen scripted flights under defaults and the user's saved settings must reproduce their per-tick movement and boost ramps exactly), setbacks that only rewind boost, overdrive and the shared 3D server limit; adaptive cruise/Sprint speed caps, boost caps that stop the fixed curve, maneuver mode's 3D cap (only when climbing and turning together, and re-ramping from the cap afterwards), Sprint acceleration and vertical boost, smooth vertical release and adjustable vertical reversal; low-speed wall manoeuvring and recovery after guarding, preserved steering, reversals and unloaded-chunk protection; bounded swept-body terrain checks, negative coordinates, blended turns and floor touchdown
+- Auto Wasp: its own speed ramp (curve, caps, following flown speed, setback rewind and hold), pinned and teleport corrections, settling after elytra swaps, paced takeoff, heading limits, reversal and arrival braking, maneuver caps, ping-aware target prediction, worn-out elytra and chestplate choice with swap hysteresis, the server-glide guard and steering against walls and unloaded chunks, and navigation endpoints
 
-The release builds and its automated tests pass against Meteor 26.1.2-42. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), and Elytra Log's logout.
+The release builds and its automated tests pass against Meteor 26.1.2-42. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), Elytra Log's logout, and Auto Wasp's pursuit, takeoff, chest swaps, setback recovery and server-glide guard.
 
 Source follows the official Meteor addon template and API, under the included CC0 license.

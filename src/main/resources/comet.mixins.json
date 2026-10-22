@@ -15,6 +15,7 @@
     "CometModuleOrderMixin",
     "CometModuleSettingsMixin",
     "FireworkRocketAccessor",
+    "AutoWaspFireworkAccessor",
     "FastUseMixin",
     "NoHurtCamMixin",
     "AutoReplenishMixin",

@@ -6,7 +6,8 @@
  * SPDX-License-Identifier: GPL-3.0-only
  *
  * Modified for Comet by Boyonabike on 2026-10-22: Minecraft 26.1.2 mappings,
- * local inventory integration, lifecycle/navigation guards and settings credits.
+ * local inventory integration, lifecycle/navigation guards and settings credits;
+ * per-search node memos and a time budget that returns the best partial route.
  * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -43,9 +44,17 @@ final class AutoWaspPathSearch {
     private static final double CEILING_CLEARANCE = 1.5;
     private static final int SAFETY_SCAN = 14;
     private static final double NETHER_MAX_FLIGHT_Y = 123.0;
+    // A search runs on the client thread; past this it returns its best partial route, so a long tick cannot
+    // bunch movement packets together for the server.
+    static final long SEARCH_BUDGET_NANOS = 4_000_000L;
+    private static final int BUDGET_CHECK_NODES = 32;
 
     private final AutoWasp module;
     private final AutoWaspPathfinder pathfinder;
+    // Within one search the world cannot change, so each node is judged once.
+    private final Map<Long, Boolean> flyableNodes = new HashMap<>();
+    private final Map<Long, Double> nodePenalties = new HashMap<>();
+    private long deadline;
 
     AutoWaspPathSearch(AutoWasp module, AutoWaspPathfinder pathfinder) {
         this.module = module;
@@ -53,6 +62,18 @@ final class AutoWaspPathSearch {
     }
 
     List<Vec3> computePath(Vec3 start, Vec3 goal) {
+        flyableNodes.clear();
+        nodePenalties.clear();
+        deadline = System.nanoTime() + SEARCH_BUDGET_NANOS;
+        try {
+            return search(start, goal);
+        } finally {
+            flyableNodes.clear();
+            nodePenalties.clear();
+        }
+    }
+
+    private List<Vec3> search(Vec3 start, Vec3 goal) {
         Vec3 clampedStart = pathfinder.clampToDimensionFlightCap(start);
         Vec3 clampedGoal = pathfinder.clampToDimensionFlightCap(goal);
         BlockPos startBlock = pathfinder.clampToDimensionFlightCap(toGrid(BlockPos.containing(clampedStart), PATH_RESOLUTION));
@@ -71,6 +92,7 @@ final class AutoWaspPathSearch {
 
         SearchResult bestResult = null;
         for (int attempt = 0; attempt < 2; attempt++) {
+            if (attempt > 0 && outOfTime()) break;
             SearchResult result = searchPath(startBlock, goalBlock, safeGoal, createSearchBounds(startBlock, goalBlock, attempt));
             if (result.path != null && result.complete) return result.path;
             if (bestResult == null || result.bestGoalDistance < bestResult.bestGoalDistance) bestResult = result;
@@ -79,7 +101,19 @@ final class AutoWaspPathSearch {
         return bestResult != null && bestResult.path != null ? bestResult.path : new ArrayList<>();
     }
 
+    private boolean outOfTime() {
+        return System.nanoTime() - deadline > 0;
+    }
+
     private double nodePenalty(BlockPos node) {
+        Double known = nodePenalties.get(node.asLong());
+        if (known != null) return known;
+        double penalty = computeNodePenalty(node);
+        nodePenalties.put(node.asLong(), penalty);
+        return penalty;
+    }
+
+    private double computeNodePenalty(BlockPos node) {
         Vec3 center = Vec3.atCenterOf(node);
         double floorDist = pathfinder.distanceToSolidBelow(center, SAFETY_SCAN);
         double ceilingDist = pathfinder.distanceToSolidAbove(center, SAFETY_SCAN);
@@ -202,6 +236,14 @@ final class AutoWaspPathSearch {
     }
 
     private boolean isNodeFlyable(BlockPos center) {
+        Boolean known = flyableNodes.get(center.asLong());
+        if (known != null) return known;
+        boolean flyable = computeNodeFlyable(center);
+        flyableNodes.put(center.asLong(), flyable);
+        return flyable;
+    }
+
+    private boolean computeNodeFlyable(BlockPos center) {
         if (pathfinder.hasNetherFlightCap() && center.getY() > (int) NETHER_MAX_FLIGHT_Y) return false;
         Vec3 sample = Vec3.atCenterOf(center);
         if (!pathfinder.hasPlayerClearance(sample)) return false;
@@ -230,6 +272,7 @@ final class AutoWaspPathSearch {
         int nodesExplored = 0;
 
         while (!openQueue.isEmpty() && nodesExplored < PATH_MAX_NODES) {
+            if (nodesExplored % BUDGET_CHECK_NODES == 0 && nodesExplored > 0 && outOfTime()) break;
             AStarNode current = openQueue.poll();
             long currentKey = current.pos.asLong();
             if (closedSet.contains(currentKey)) continue;
