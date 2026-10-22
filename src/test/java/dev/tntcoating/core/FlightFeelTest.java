@@ -62,9 +62,17 @@ class FlightFeelTest {
                         case "climb-boost-only" -> assertTrue(verticalRamp > 2, "vertical boost ramps");
                         case "vertical-cruise", "vertical-boost" -> assertTrue(climb > .5, scenario.name() + " climbs");
                         case "vertical-reversal" -> {
+                            int easing = profile.reversalTicks();
                             for (int tick : new int[] {50, 90, 140}) {
-                                double before = frames.get(tick - 1).motion().y(), after = frames.get(tick).motion().y();
-                                assertTrue(Math.abs(before) > .5 && before * after < 0, "turns around at once at tick " + tick);
+                                double before = frames.get(tick - 1).motion().y();
+                                assertTrue(Math.abs(before) > .5, "moves fast before the switch at tick " + tick);
+                                for (int t = tick; t < tick + easing; t++) {
+                                    double previous = frames.get(t - 1).motion().y(), y = frames.get(t).motion().y();
+                                    assertTrue(before * y > 0 && Math.abs(y) < Math.abs(previous),
+                                        "eases the old direction out at tick " + t);
+                                }
+                                assertTrue(before * frames.get(tick + easing).motion().y() < 0,
+                                    "turns around " + easing + " ticks after the switch at tick " + tick);
                             }
                         }
                         case "wall-cruise-crawl", "wall-boost", "wall-glide-guard", "chunk-edge-stop" ->

@@ -1,12 +1,24 @@
 # Changelog
 
+## 0.25.14
+
+- Removed **Home Packet Log** and **Dig Probe** from Comet. Their source, tests, module-specific helpers and usage guide are preserved in `archived-modules/packet-diagnostics-2026-10-22/`, with verified checksums. Shared logging and interaction helpers remain available to other modules.
+
+## 0.25.13
+
+- **Auto Wasp Devils:** ported DEVILS’ elytra pursuit, A* routing, obstacle avoidance, braking and stuck recovery into Comet. Added local chestplate/elytra swapping, navigation guards, visible GPLv3 settings credits, bundled licence/provenance and a matching source distribution. Meteor’s original Auto Wasp links to the port.
+
 ## 0.25.12
 
+- **Dig Probe:** **dig-probe** sends a Start, Abort, Stop or Start-then-Stop dig packet at the block you look at, or at set coordinates, and records the server's response: acknowledgement, block changes, break progress, level events and block entity data. Responses show in chat with their delay and are saved to `meteor-client/comet/dig-probes/`. See [Dig Probe](README.md#dig-probe).
+- **Allay modules:** **allay-farm** duplicates dancing allays with amethyst shards, including ones holding a shulker. It uses a shard only on allays ready to duplicate, so none is handed over as a held item. It also gives each empty-handed allay a shulker box. With **keep-population** on (default) it never gives out more shulkers than allays it saw bred, so you never lose more allays than you breed. **allay-shulker-killer** kills allays holding shulker boxes so they drop them. It skips allays that take no damage from three hits, since an allay can't be hurt by the player that gave it its item. With **no-sweep** on (default) it jumps and lands critical hits while falling, so a sword never sweeps the allays around the target. See [Allays](README.md#allays).
 - **Chat Tools remembers recent players:** the recent players on Overview and Players are now saved per server and account (hidden **recent-players** setting, up to 100), so they are still there after rejoining a server or restarting the game. Conversations themselves still last for the current connection.
 - **Chat Tools shows your sent DMs:** 6b6t echoes a whisper as `You whisper to [unknown player head] Name: …`, with a player-head sprite before the name, so the echo was never recognised and your own messages never appeared in the conversation. They now show as outgoing bubbles. `From`/`To` formats accept the sprite too.
 - **Whisper queue:** 6b6t refuses a whisper sent too soon after the last one (`Please wait 2 seconds before sending another whisper!`). DMs from a Chat Tools conversation, and `/msg`, `/w`, `/tell`, `/whisper`, `/r` or `/reply` typed in its composer, now wait in a queue instead. A refused whisper is sent again as soon as the wait is over (up to three tries) and the refusal is hidden, and the reported delay then spaces out later whispers so they are not refused at all. Queued messages show as dimmed bubbles until the server echoes them. Whispers typed in normal chat are still sent straight away, but count towards the delay.
 - **Whisper delay no longer reads as a teleport cooldown:** within five seconds of `/home` or `/tpa`, that refusal used to replace the teleport's countdown with a 2-second cooldown.
 - **Go to hotspot on Overview:** a **Go to hotspot** button beside **Reply** sends `/hotspot`. It is shown when the server offers the command.
+- **No GUI Move in Chat Tools:** with Meteor's **gui-move** on, typing in the Chat Tools window walked you around and pressing Space jumped. The window is now exempt like normal chat, and movement keys held when it opens are released.
+- **Smoother Adaptive Elytra Fly vertical reversal:** switching straight between Jump and Sneak no longer flips direction in one tick. The old climb or descent slows evenly over the new **vertical-reversal-ticks** setting (2 by default, 0 restores the instant turn), then the new direction speeds up from a standstill as before: a 21 b/s climb goes 14, 7, then a 10 b/s descent, and a 60 b/s Sprint climb goes 40, 20, then a 30 b/s boosted descent, with the descent boost waiting at its start speed until then. It is never slower than releasing the key. The **vertical-reversal** recorded flight is re-recorded for this; the other recorded flights are unchanged.
 - **Crystal Aura crash guard:** Meteor's **crystal-aura** skips its tick handlers, including the late rotation one, while there is no player or world, for example after another listener disconnects you during the same tick.
 
 ## 0.25.11

@@ -180,7 +180,7 @@ class AdaptiveFlightEngineTest {
         double cap = 1; // 20 b/s
         AdaptiveFlightEngine.Settings slow = new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(),
             d.turnRate(), cap, d.sprint(), d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(),
-            d.verticalAcceleration(), d.verticalRampStep(), d.unlimitedBoost(), d.boostTop(), d.boostStart(),
+            d.verticalAcceleration(), d.verticalRampStep(), d.verticalReversalTicks(), d.unlimitedBoost(), d.boostTop(), d.boostStart(),
             d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(), d.setbackHoldTicks(), d.boostCeiling(),
             d.maneuverMode(), d.maneuverCeiling(), d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(), d.stockHorizontalSpeed(),
             d.stockVerticalSpeed(), d.fallMultiplier());
@@ -197,7 +197,7 @@ class AdaptiveFlightEngineTest {
         double cap = 2; // 40 b/s
         AdaptiveFlightEngine.Settings capped = new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(),
             d.turnRate(), d.cruise(), d.sprint(), d.verticalMaximum(), d.verticalCruise(), cap,
-            d.verticalAcceleration(), d.verticalRampStep(), d.unlimitedBoost(), d.boostTop(), d.boostStart(),
+            d.verticalAcceleration(), d.verticalRampStep(), d.verticalReversalTicks(), d.unlimitedBoost(), d.boostTop(), d.boostStart(),
             d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(), d.setbackHoldTicks(), d.boostCeiling(),
             d.maneuverMode(), d.maneuverCeiling(), d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(), d.stockHorizontalSpeed(),
             d.stockVerticalSpeed(), d.fallMultiplier());
@@ -260,7 +260,7 @@ class AdaptiveFlightEngineTest {
         AdaptiveFlightEngine.Settings d = DEFAULTS;
         AdaptiveFlightEngine.Settings off = new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(),
             d.turnRate(), d.cruise(), d.sprint(), d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(),
-            d.verticalAcceleration(), d.verticalRampStep(), d.unlimitedBoost(), d.boostTop(), d.boostStart(),
+            d.verticalAcceleration(), d.verticalRampStep(), d.verticalReversalTicks(), d.unlimitedBoost(), d.boostTop(), d.boostStart(),
             d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(), d.setbackHoldTicks(), d.boostCeiling(),
             false, d.maneuverCeiling(), d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(),
             d.stockHorizontalSpeed(), d.stockVerticalSpeed(), d.fallMultiplier());
@@ -278,12 +278,65 @@ class AdaptiveFlightEngineTest {
         return boosting(top, top, ceiling);
     }
 
+    @Test void switchingFromJumpToSneakSlowsTheClimbEvenlyOverTheReversalTicks() {
+        for (int ticks : new int[] {0, 2, 5}) {
+            AdaptiveFlightEngine.Settings settings = reversing(ticks);
+            AdaptiveFlightEngine engine = new AdaptiveFlightEngine(settings);
+            for (int tick = 0; tick < 60; tick++) vertical(engine, settings, false, 1);
+            double climb = engine.output().y();
+            assertTrue(climb > .5, "climbs at cruise speed");
+
+            for (int tick = 1; tick <= ticks; tick++) {
+                assertEquals(climb * (ticks + 1 - tick) / (ticks + 1), vertical(engine, settings, false, -1).y(), EPSILON,
+                    ticks + " reversal ticks, tick " + tick);
+            }
+            assertEquals(-.5, vertical(engine, settings, false, -1).y(), EPSILON,
+                "then descends from a standstill along the vertical ramp");
+        }
+    }
+
+    @Test void aBoostedReversalHoldsTheNewDirectionsBoostAtItsStartSpeedUntilTheClimbIsGone() {
+        AdaptiveFlightEngine engine = new AdaptiveFlightEngine(DEFAULTS);
+        for (int tick = 0; tick < 100; tick++) vertical(engine, DEFAULTS, true, 1);
+        double climb = engine.output().y();
+        assertTrue(climb > 2.5, "climbs near the 60 b/s vertical boost top: " + climb * 20);
+
+        for (int tick = 1; tick <= 2; tick++) {
+            assertEquals(climb * (3 - tick) / 3, vertical(engine, DEFAULTS, true, -1).y(), EPSILON);
+            assertEquals(DEFAULTS.boostVerticalStart(), engine.verticalBoost(), EPSILON, "descent boost waits");
+        }
+        assertEquals(-DEFAULTS.boostVerticalStart(), vertical(engine, DEFAULTS, true, -1).y(), EPSILON,
+            "turns around at the boost start speed");
+        assertTrue(vertical(engine, DEFAULTS, true, -1).y() < -DEFAULTS.boostVerticalStart(), "then ramps up");
+    }
+
+    /** The defaults with another number of vertical reversal ticks. */
+    private static AdaptiveFlightEngine.Settings reversing(int ticks) {
+        AdaptiveFlightEngine.Settings d = DEFAULTS;
+        return new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(), d.turnRate(), d.cruise(), d.sprint(),
+            d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(), d.verticalAcceleration(), d.verticalRampStep(),
+            ticks, d.unlimitedBoost(), d.boostTop(), d.boostStart(), d.boostRampStep(), d.boostVerticalStart(),
+            d.rewindTicks(), d.setbackHoldTicks(), d.boostCeiling(), d.maneuverMode(), d.maneuverCeiling(),
+            d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(),
+            d.stockHorizontalSpeed(), d.stockVerticalSpeed(), d.fallMultiplier());
+    }
+
+    /** One client tick of W held facing +Z in open air, with Jump (1) or Sneak (-1). */
+    private static Motion vertical(AdaptiveFlightEngine engine, AdaptiveFlightEngine.Settings settings,
+                                   boolean sprint, int direction) {
+        engine.startTick(settings);
+        assertTrue(engine.begin(sprint, true, 1.2, 1.2, BODY, OPEN));
+        engine.step(new AdaptiveFlightEngine.Input(1, 0, 0, direction > 0, direction < 0, -.5, BODY, OPEN,
+            () -> Double.POSITIVE_INFINITY, null, movement -> movement));
+        return engine.output();
+    }
+
     /** The defaults with another boost curve top, horizontal Sprint cap and total boost ceiling. */
     private static AdaptiveFlightEngine.Settings boosting(double top, double cap, double ceiling) {
         AdaptiveFlightEngine.Settings d = DEFAULTS;
         return new AdaptiveFlightEngine.Settings(d.acceleration(), d.braking(), d.turnRate(), d.cruise(), cap,
             d.verticalMaximum(), d.verticalCruise(), d.verticalSprint(), d.verticalAcceleration(), d.verticalRampStep(),
-            d.unlimitedBoost(), top, d.boostStart(), d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(),
+            d.verticalReversalTicks(), d.unlimitedBoost(), top, d.boostStart(), d.boostRampStep(), d.boostVerticalStart(), d.rewindTicks(),
             d.setbackHoldTicks(), ceiling, d.maneuverMode(), d.maneuverCeiling(), d.lookahead(), d.margin(), d.safeManeuvering(), d.closeObjectSpeed(),
             d.stockHorizontalSpeed(), d.stockVerticalSpeed(), d.fallMultiplier());
     }

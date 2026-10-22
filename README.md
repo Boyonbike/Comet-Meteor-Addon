@@ -1,12 +1,12 @@
-# Comet by Boyonabike — 0.25.12
+# Comet by Boyonabike — 0.25.14
 
 Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
-- **Flight and movement:** **adaptive-elytra-fly**, **baritone-elytra**, **elytra-log**, **angle-calculator**.
+- **Flight and movement:** **adaptive-elytra-fly**, **auto-wasp-devils**, **baritone-elytra**, **elytra-log**, **angle-calculator**.
 - **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**, **call-to-arms**, **stash-report**.
 - **Building:** **scaffold**, **block-coat**, **smart-sponge**, **speedmine**, **safe-fast-use**, **anti-spawn-set**.
 - **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**, **auto-replenish**.
-- **Diagnostics:** **home-packet-log**.
+- **Allays:** **allay-farm**, **allay-shulker-killer**. See [Allays](#allays).
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown** and **dub-counter**. See [HUD elements](#hud-elements).
 
 Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.11-mc26.1.2.jar`.
@@ -16,6 +16,7 @@ Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; 
 | Original module | Comet upgrades in its dropdown |
 | --- | --- |
 | Elytra Fly | Adaptive Elytra Fly, Baritone Elytra, Elytra Log |
+| Auto Wasp | Auto Wasp Devils |
 | Storage ESP | Fast Storage ESP |
 | Fast Use | Safe Fast Use |
 | Waypoints | Xaero Waypoints, Waypoint Delete |
@@ -27,6 +28,37 @@ Right-click a Comet module to open its settings, then click a section header or 
 **Newer Meteor builds.** Before applying an upgrade to a Meteor module, Comet checks that the installed Meteor still has every method, field and code location the upgrade attaches to. If a Meteor build has changed one, that upgrade alone is skipped: the stock module keeps working, it is not listed under Comet, and chat names the skipped upgrades when you join a world (details are in the log). Adaptive Elytra Fly refuses to start if its Elytra Fly hook was skipped. Builds older than 42 are rejected by Fabric with a clear message.
 
 Version history is in [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.6.1? See [Upgrading](#upgrading-from-061).
+
+## DEVILS Auto Wasp
+
+Enable **Comet → auto-wasp-devils** to pursue the nearest loaded player with elytra.
+This is the DEVILS Auto Wasp port: it retains A* obstacle routing, local avoidance,
+emergency braking, stuck recovery, target movement prediction, a three-axis offset,
+and the Nether flight-height cap. **horizontal-speed** and **vertical-speed** are
+blocks per tick. It automatically jumps and attempts to open equipped wings.
+Meteor's stock Auto Wasp remains available and links to this port in its settings.
+
+**only-friends** restricts pursuit to friends. With **friend-filter** enabled,
+turning **only-friends** off instead selects enemies; with both off, any valid
+player can be selected. **keep-searching** defaults on and reacquires targets.
+Turn it off to use **action-on-target-loss** (disable, choose another target, or disconnect).
+
+**auto-chest-swap** defaults on: it equips a chestplate near the target when solid
+terrain is close below, and equips elytra again for pursuit. It uses your inventory
+without chat commands and pauses swaps in containers, with a carried cursor item,
+or during Comet tool/weapon inventory loans. Turn it off to manage equipment manually.
+The module disables active stock Auto Wasp, Elytra Fly and Baritone Elytra when it
+starts so movement controllers do not compete. Keep those modules off during pursuit.
+It pauses movement control for Freecam and disables on leaving a world.
+
+Credits are always shown at the bottom of the module settings: **ThianYong-hub and
+DEVILS contributors**, Meteor Development, GNU GPL v3, the upstream source and revision,
+and Comet port details. The full licence and provenance are bundled in the JAR as
+**LICENSE-DEVILS** and **THIRD_PARTY_NOTICES.md**. Build with Java 25 using
+`sh gradlew build`; distribute the matching **build/distributions/*-source.zip**
+alongside the JAR to supply the modified corresponding source and build inputs.
+The port has build and navigation regression coverage; in-game pursuit, inventory
+swaps and server movement acceptance still need gameplay verification.
 
 ## Bephax ports
 
@@ -121,7 +153,7 @@ Comet limits changes to the whole movement vector and checks the actual blended 
 - **vertical-cruise-max-bps** (default **21**) and **vertical-boost-max-bps** (default **60**) cap deliberate Jump/Sneak and Sprint + Jump/Sneak speed in blocks per second, up to 60. All four caps accelerate and brake smoothly and retain terrain limits; momentum above a cap, such as releasing boost, brakes down to it rather than snapping.
 - **maneuver-mode** (default on) and **maneuver-max-bps** (default **200**): while you move horizontally, climb or descend **and** turn at the same time (a heading change of more than 2° per tick, from the mouse or a strafe key), total 3D speed is held to **maneuver-max-bps**. That combination rubber-bands far more than straight flight at 300 b/s. Speed drops to the cap at once, the mode lasts half a second after you stop turning, and boost then speeds up again from the cap along its normal curve instead of snapping back. The state shows **Maneuver capped**, and setback logs record `maneuverMode`. Climbing or turning on its own is never capped.
 - **sprint-boost** defaults on. Hold your bound **Sprint** key while gliding to use both Sprint caps, including during purely vertical movement; with **unlimited-boost** on (the default), Sprint drives the boost ramps described above. **boost-key-mode** (default **Hold**) can be set to **Toggle**, where each Sprint press turns boost on or off (shown on the HUD boost line) until you stop gliding. With **toggle-off-when-idle** (default on), toggled boost also turns off a quarter of a second after you release every movement key (WASD, Jump, Sneak), unless Meteor's Auto Walk, Elytra Fly autopilot, Baritone or Baritone Elytra is moving you. Opening a screen releases the keys too. Releasing movement brakes to a stop; releasing Sprint returns each axis to its own cruise cap. Zero Meteor horizontal or vertical speed disables adaptive input on that axis. This uses the physical Sprint key, including a rebound mouse button, and only works while Minecraft is focused with no screen open. Automatic Sprint and toggle-sprint state do not activate it.
-- **vertical-acceleration** (default **0.05 blocks/tick per tick**) smooths climbing, descending and releasing vertical input. Switching straight from Jump to Sneak (or back) turns around at once: the old direction's momentum is dropped and the new direction speeds up from a standstill on the very next tick, at the boost start speed with Sprint, instead of braking through zero first. **vertical-ramp-step** (default **0.5**) speeds climbing and descending up along the boost curve, tapering to zero at 60 b/s, so cruise reaches its target in 3 ticks instead of about a second. Climbing and descending no longer share horizontal acceleration. Vertical braking uses up to twice **vertical-acceleration**, bounded by **braking**, or the mirror of the vertical ramp if more (**vertical-ramp-step** × speed / 60 b/s: 0.5 per tick at 60 b/s, gentle near a stop). Terrain stops still take effect immediately.
+- **vertical-acceleration** (default **0.05 blocks/tick per tick**) smooths climbing, descending and releasing vertical input. Switching straight from Jump to Sneak (or back) slows the old direction evenly over **vertical-reversal-ticks** (default **2**, range **0–20**), then the new direction speeds up from a standstill, at the boost start speed with Sprint, which waits there until the old direction is gone. With the default a 21 b/s climb goes 14, 7, then a 10 b/s descent, and a 60 b/s Sprint climb goes 40, 20, then a 30 b/s descent. **0** turns around on the very next tick; higher is smoother, but never slower than releasing the key. **vertical-ramp-step** (default **0.5**) speeds climbing and descending up along the boost curve, tapering to zero at 60 b/s, so cruise reaches its target in 3 ticks instead of about a second. Climbing and descending no longer share horizontal acceleration. Vertical braking uses up to twice **vertical-acceleration**, bounded by **braking**, or the mirror of the vertical ramp if more (**vertical-ramp-step** × speed / 60 b/s: 0.5 per tick at 60 b/s, gentle near a stop). Terrain stops still take effect immediately.
 - **lookahead** (default **64**, range **8–64** blocks) and **terrain-margin** (default **0.35**) set the known-clear stopping corridor. The speed ceiling reserves the next movement plus stopping distance: `v + v² / (2 × capacity(v)) <= clear distance - margin`, where `capacity(v) = braking + g × v²` and `g` makes a stop from the boost top speed fit the lookahead exactly (`g = 0` without unlimited boost). Above that envelope, the next speed is `v + d − √(v² + d²)`, the gentlest constant braking that stops within clear distance `d`. Even in open terrain, the finite horizon imposes the adaptive engine's ceiling: about 118 blocks/second with the defaults. Increase braking only after checking server acceptance and steering.
 - **avoid-blocks** defaults on. Turning it off skips block collision reads unless Meteor's **no-crash** is on; chunk checks still run. Comet replaces Meteor's fixed-distance No Crash ray while it controls flight.
 - **safe-maneuvering** defaults on. Near walls and other objects, movement up to **close-object-speed** (default **0.6 blocks/tick**, about **12 blocks/second**, range 0.1–4) bypasses the block guard and Meteor's No Crash, so Minecraft resolves the contact and you can turn or slide through tight spaces. Close-object control means touching or blocked by something; slow flight in open air no longer counts. With **unlimited-boost** off, pressing Sprint during close-object control lifts that limit until the contact clears. This also applies after the guard has slowed you down: if the next acceleration step would be blocked, a crawl-speed fallback permits movement along or away from the wall. Extra movements in the same tick use the same bypass. Unloaded-chunk protection stays active. Turn this off to keep block guarding at low speed. Your own speed into a wall is not what hurts: the server's hidden glide is, and **server-glide-guard** keeps walls out of its reach; see below.
@@ -195,29 +227,23 @@ Enable **Safe Fast Use** (**safe-fast-use**) in Meteor's **Comet** category to u
 
 Safe Fast Use's cooldown takes precedence while it is enabled, including when Meteor's original Fast Use is also on. In **Some** mode with no items selected and **blocks** off nothing is sped up; the module says so when enabled and shows `Nothing selected`. Live Minecraft/server testing is still required, particularly placement from each hand, release and reclick, and sneaking against a box.
 
-## Home Packet Log
+## Allays
 
-**home-packet-log** records player packets for checking whether the server exposes another player's teleport destination. It needs only Meteor.
+Two modules work on the nearest allay within your normal reach, one allay at a time. Each faces the allay first (**rotate**, on by default) and shows what it is doing next to its name in the module list. Neither works through walls. An allay is only bred, given a shulker or hit when part of it can be seen past the blocks in between, and the click aims at that part. Plants and other blocks you can walk through don't block the view; glass and other solid blocks do.
 
-1. Join with the recording account near a second account you control.
-2. Set **player** to the second account's exact name or UUID, or leave it blank to record all visible players. Enable the module before the test.
-3. Run `/home` on the second account, wait a few seconds, then turn the recorder off. For comparison, you can record on the teleporting account too; its own `/home` command, position correction and acknowledgement are included.
-4. Open the path printed in chat: `<minecraft>/meteor-client/comet/packet-logs/packet-<UTC time>-<id>.jsonl`. Each line is one JSON record.
+**allay-farm** breeds allays and gives them shulker boxes, using items from anywhere in your inventory. It takes from your offhand or hotbar first. An item in the main inventory is swapped into your held slot for the click, then swapped back. Each job can be turned off on its own.
 
-Settings apply when the next capture starts:
+- **breed** (on by default) duplicates allays dancing to a jukebox with amethyst shards. It only uses a shard on an allay that is dancing and off its 5-minute duplication cooldown. Any other allay with an empty hand would just take the shard as its held item. Allays holding a shulker are bred too, since holding an item stops neither dancing nor duplication.
+- **give-shulkers** (on by default) gives a shulker box to each allay with an empty hand. Any shulker you carry can be given away, whatever its colour or contents, so keep the ones you want out of your inventory. While breeding, allays ready to duplicate are bred first and only given a shulker afterwards.
+- **keep-population** (on by default) never gives out more shulkers than allays bred. The farm counts every allay duplication it sees while it is on, by you or anyone else nearby. It gives a shulker only while the allays it has given one to are fewer than that count. An allay holding a shulker is not assumed dead. It uses up one breed while it is alive, and that breed stays used if it dies. The breed is freed again once the allay is seen alive without its shulker. Even if every allay holding a shulker is killed, you never lose more allays than you bred. Until the first duplication it shows `Waiting for a breed`. Turning the farm off, or changing world or dimension, starts the count again from zero.
 
-- **player:** exact name or UUID, case-insensitive. World resets and the recording account's own corrections, acknowledgements and `/home`/`/homecancel` markers are always included.
-- **relative-moves** (default on): include ordinary movement and rotation. Positions still update internally when this is off.
-- **other-packet-types** (default off): also record the type of every incoming packet, including ones unrelated to the selected player. Their other payloads are omitted.
-- **max-file-mib** (default 64): stop at this file limit. Each activation creates a new file; delete old captures yourself when finished.
+**allay-shulker-killer** attacks allays holding a shulker box so they drop it, along with anything they have collected. Meteor's **auto-weapon** picks the weapon if it is on.
 
-Look for `entity_position_sync` or `entity_teleport` with the target's UUID and a distant **absolute_position**. That establishes that those coordinates were transmitted to your client; the packet alone does not establish which command caused the move. **entity_removed** records only the last received position, with **destination: "unknown"**. A tab removal is separate and does not establish why a player disappeared.
+- **no-sweep** (on by default) keeps the allays around the target unhurt. A fully charged sword hit on the ground sweeps every living thing within about a block of the target, with or without Sweeping Edge, which only makes the sweep stronger. So the killer jumps and hits while falling instead. That is a critical hit, which never sweeps and does half as much damage again. The jump is timed so you start falling just as the hit is fully charged. It needs room to jump: with a block above your head it doesn't attack and shows `No room to jump`. While it is on, Auto Weapon takes its best hotbar weapon, because a weapon pulled from your inventory hits later, possibly after you land. With **no-sweep** off, the killer hits at full charge wherever you stand.
 
-Records include original position/velocity fields, relative flags, packet class/type, time in Unix milliseconds, elapsed nanoseconds, sequence number, dimension and player identity. Interpret **position_change** with **relative_flags**. **reconstructed_position** is derived from earlier data, with **position_basis** set to `packet`, `client_snapshot` or `packet_estimate`. Relative teleports use an estimate because vanilla applies relative axes to its current interpolated client position. Absolute fields and flags remain as received. Relative movement uses Minecraft's fixed-point rounding and a separate codec base.
+The farm shares vanilla's right-click delay. Together with your own right-clicks, it makes no more than one right-click every four ticks. The farm leaves an allay alone for two seconds after using an item on it, so the server's reply arrives before it is tried again.
 
-Capture reads packets before vanilla handling without cancelling or changing them. Existing players are snapshotted at activation; capture a player arriving after enabling when comparing exact relative movement, since packets might already be queued at activation. Removed identities remain available for late packets; new spawns replace reused IDs, and logins/dimension changes clear entity tracking in order. Same-dimension respawns preserve the other players. Caches hold up to 4,096 player entities and 8,192 tab names; unknown or evicted IDs cannot be matched to a player filter.
-
-Writes use a bounded 8,192-record background queue and flush once a second. Turning the module off drains accepted records and writes a summary asynchronously; allow a moment before reading the file or closing Minecraft. The summary lists written/dropped records and the stop reason. Missing records, decoder/I/O errors and abrupt client shutdown limit what a capture establishes. Leaving the world stops capture; enable it again after joining. These are decoded client-visible fields, not raw wire bytes. In-game validation on 6b6t is still required.
+An allay can't be hurt by the player it likes, and it likes whoever gave it its held item. So allays that **allay-farm** handed shulkers to can't be killed from the same account. Kill them from another account, or with damage that no player causes. When three hits in a row cause no damage, **allay-shulker-killer** skips that allay and says so in chat, so it doesn't keep swinging at it.
 
 ## Block Coat
 
@@ -299,7 +325,7 @@ A separate module, **waypoint-delete**. Look at a waypoint until its name and di
 
 ## Chat Tools
 
-Enable **chat-tools** and press **Y** during gameplay, or click **Open Chat Tools** in the module settings. Change the shortcut under **Messages → open-popup-key**. Chat Tools is one movable, resizable window with the same layout at every size: a header bar holding the page tabs and close button, a scrolling page body, and a composer bar at the bottom. Every tab, settings category, player action and private conversation changes the body in place. Drag the header to move the window and the bottom-right corner to resize it. Normal chat has no extra HUD strip; clicking an online player's name opens their conversation inside this same window and preserves your normal-chat draft.
+Enable **chat-tools** and press **Y** during gameplay, or click **Open Chat Tools** in the module settings. Change the shortcut under **Messages → open-popup-key**. Chat Tools is one movable, resizable window with the same layout at every size: a header bar holding the page tabs and close button, a scrolling page body, and a composer bar at the bottom. Every tab, settings category, player action and private conversation changes the body in place. Drag the header to move the window and the bottom-right corner to resize it. Like normal chat, the window is exempt from Meteor's **GUI Move**: typing never walks you around, and movement keys held when it opens are released. Normal chat has no extra HUD strip; clicking an online player's name opens their conversation inside this same window and preserves your normal-chat draft.
 
 Every page is built from the same parts, so the window reads as one system: an optional toolbar row, small uppercase section captions (with a count or a link such as **Manage** on the right), grouped lists whose rows join into one card, shortcut tiles, and one set of 20-pixel buttons — accent **primary** actions, outlined **secondary** actions and red **danger** actions. Text uses Minecraft's font at whole-pixel scales, so it stays crisp at every GUI scale, and Meteor's accent colour marks the selected tab and primary actions. Action results appear briefly as a notice above the composer instead of moving the page.
 
@@ -440,7 +466,7 @@ Automated tests cover:
 - waypoint mirroring: dimensions, opposite-dimension scaling, hidden waypoints, colour matching and change detection
 - Baritone elytra hand-off: when a trip is flown or walked, take-off timing and retries, and what happens after a flight ends
 - Elytra Log: when the worn elytra is due and whether a spare can still replace it
-- adaptive ElytraFly: recorded flight feel (sixteen scripted flights under defaults and the user's saved settings must reproduce their per-tick movement and boost ramps exactly), setbacks that only rewind boost, overdrive and the shared 3D server limit; adaptive cruise/Sprint speed caps, boost caps that stop the fixed curve, maneuver mode's 3D cap (only when climbing and turning together, and re-ramping from the cap afterwards), Sprint acceleration and vertical boost, smooth vertical release and instant vertical reversal; low-speed wall manoeuvring and recovery after guarding, preserved steering, reversals and unloaded-chunk protection; bounded swept-body terrain checks, negative coordinates, blended turns and floor touchdown
+- adaptive ElytraFly: recorded flight feel (sixteen scripted flights under defaults and the user's saved settings must reproduce their per-tick movement and boost ramps exactly), setbacks that only rewind boost, overdrive and the shared 3D server limit; adaptive cruise/Sprint speed caps, boost caps that stop the fixed curve, maneuver mode's 3D cap (only when climbing and turning together, and re-ramping from the cap afterwards), Sprint acceleration and vertical boost, smooth vertical release and adjustable vertical reversal; low-speed wall manoeuvring and recovery after guarding, preserved steering, reversals and unloaded-chunk protection; bounded swept-body terrain checks, negative coordinates, blended turns and floor touchdown
 
 The release builds and its automated tests pass against Meteor 26.1.2-42. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), and Elytra Log's logout.
 

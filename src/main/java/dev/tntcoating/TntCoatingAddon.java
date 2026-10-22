@@ -4,6 +4,9 @@ import dev.tntcoating.compat.MeteorUpgrades;
 import dev.tntcoating.core.InventorySlotLoan;
 import dev.tntcoating.core.InventoryWeaponAttack;
 import dev.tntcoating.modules.AdaptiveElytraFly;
+import dev.tntcoating.modules.AutoWasp;
+import dev.tntcoating.modules.AllayFarm;
+import dev.tntcoating.modules.AllayShulkerKiller;
 import dev.tntcoating.modules.AngleCalculator;
 import dev.tntcoating.modules.AntiSpawnSet;
 import dev.tntcoating.modules.NoHurtCam;
@@ -14,7 +17,6 @@ import dev.tntcoating.modules.DubCounter;
 import dev.tntcoating.modules.ElytraLog;
 import dev.tntcoating.modules.CallToArms;
 import dev.tntcoating.modules.StashReport;
-import dev.tntcoating.modules.HomePacketLog;
 import dev.tntcoating.modules.FastStorageESP;
 import dev.tntcoating.modules.SafeFastUse;
 import dev.tntcoating.modules.ShulkerIcons;
@@ -66,6 +68,7 @@ public final class TntCoatingAddon extends MeteorAddon {
         List<Module> ordered = new ArrayList<>();
         // Flight and flight safety.
         ordered.add(new AdaptiveElytraFly());
+        ordered.add(new AutoWasp());
         ordered.add(new BaritoneElytra());
         ordered.add(new ElytraLog());
         ordered.add(new AngleCalculator());
@@ -91,8 +94,9 @@ public final class TntCoatingAddon extends MeteorAddon {
         upgraded(ordered, modules.get(AutoWeapon.class), "AutoWeaponMixin");
         upgraded(ordered, modules.get(InventoryTweaks.class), "InventoryTweaksMixin");
         upgraded(ordered, modules.get(AutoReplenish.class), "AutoReplenishMixin");
-        // Diagnostics.
-        ordered.add(new HomePacketLog());
+        // Allays.
+        ordered.add(new AllayFarm());
+        ordered.add(new AllayShulkerKiller());
         orderedModules = List.copyOf(ordered);
         orderedModules.forEach(module -> {
             if (module.category == CATEGORY) {

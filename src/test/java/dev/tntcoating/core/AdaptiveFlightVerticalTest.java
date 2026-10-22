@@ -83,6 +83,45 @@ class AdaptiveFlightVerticalTest {
         assertEquals(-1.5, motion.y(), EPSILON, "a 60 b/s climb becomes a 30 b/s boosted descent in one tick");
     }
 
+    @Test void theOppositeVerticalKeyEasesTheOldDirectionOutByTheReversalBrakeBeforeTurningAround() {
+        for (int direction : new int[] {-1, 1}) {
+            AdaptiveFlightController controller = controller();
+            controller.accept(new Motion(0, -direction * .6, 0));
+            Blend easing = new Blend(.6, .05, 0, Double.POSITIVE_INFINITY, .2);
+
+            for (double expected : new double[] {-direction * .4, -direction * .2, direction * .05}) {
+                controller.tick();
+                Motion motion = move(controller, new Motion(0, direction * .1, 0), 0, .1,
+                    TestControls.of(true, 1, 1, direction, false, null, easing)).motion();
+                assertEquals(expected, motion.y(), EPSILON,
+                    "the old direction slows by the brake each tick, then the new one starts from a standstill");
+            }
+        }
+    }
+
+    @Test void aReversalNeverSlowsMoreGentlyThanReleasingTheKey() {
+        AdaptiveFlightController controller = controller();
+        controller.accept(new Motion(0, .4, 0));
+
+        Motion motion = move(controller, new Motion(0, -.1, 0), 0, .1,
+            TestControls.of(false, 1, 1, -1, false, null, new Blend(.6, .05, 0, Double.POSITIVE_INFINITY, 0))).motion();
+
+        assertEquals(.3, motion.y(), EPSILON, "a gentler reversal brake still slows as releasing the key does");
+    }
+
+    @Test void aBoostedClimbEasesOutAboveTheBoostStartSpeedThenDescendsAtIt() {
+        AdaptiveFlightController controller = controller();
+        controller.accept(new Motion(0, 3, 0));
+
+        for (double expected : new double[] {2, 1, -1.5}) {
+            controller.tick();
+            Motion motion = move(controller, new Motion(0, -.1, 0), 0, .1,
+                new Controls(true, 1, 1, -1, false, null, AdaptiveFlightStep.SAFE_MANEUVER_SPEED,
+                    new Blend(3, .05, .5, Double.POSITIVE_INFINITY, 1), new AdaptiveFlightStep.Boost(0, 1.5))).motion();
+            assertEquals(expected, motion.y(), EPSILON, "a 60 b/s climb eases through 40 and 20 b/s to a 30 b/s descent");
+        }
+    }
+
     @Test void releasingTheVerticalKeyStillBrakesThroughTheSink() {
         AdaptiveFlightController controller = controller();
         controller.accept(new Motion(0, .4, 0));

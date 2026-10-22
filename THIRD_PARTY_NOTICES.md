@@ -14,3 +14,32 @@ Comet adaptations target Minecraft 26.1.2 and remove THM services and limiter de
 Original Comet source remains available under its CC0 license (LICENSE).
 The combined distribution includes GPL-covered code and must be distributed under
 GPL v3 terms, including corresponding source for the combined work.
+
+## DEVILS Auto Wasp
+
+AutoWasp.java and modules/autowasp/{AutoWaspFlightController.java,
+AutoWaspPathfinder.java,AutoWaspPathSearch.java} are adapted from DEVILS:
+https://github.com/ThianYong-hub/DEVILS
+Revision: 2440a168c3ba6f051f2adf8249a8e6fb5f3a5b02 (main).
+Upstream paths: devils-addon/src/main/java/com/devils/addon/modules/AutoWasp.java
+and devils-addon/src/main/java/com/devils/addon/modules/autowasp/.
+Credit: ThianYong-hub and DEVILS contributors.
+The Auto Wasp implementation is also based on Meteor Client,
+Copyright (c) Meteor Development: https://github.com/MeteorDevelopment/meteor-client
+License: GNU GPL version 3 (GPL-3.0-only); full text in LICENSE-DEVILS.
+
+Modified for Comet by Boyonabike on 22 October 2026: ported to Minecraft 26.1.2
+and current Meteor mappings; registered separately as auto-wasp-devils; replaced
+DEVILS-specific logging/crash wrappers and hard-coded AutoArmor chat commands
+with Comet lifecycle guards and local chest-slot inventory swaps; added movement
+controller conflict handling, loaded-terrain checks, precise per-tick navigation
+caches, reachable path endpoints, and visible settings-menu attribution.
+These modified files remain covered by GPL v3 and carry source/provenance notices.
+No warranty is provided, including merchantability or fitness for a particular purpose.
+
+The settings credit does not replace the licence or corresponding source.
+`./gradlew build` packages LICENSE-DEVILS and this notice inside the JAR and
+produces `build/distributions/comet-<version>-mc26.1.2-source.zip`, containing
+the modified source for the combined addon, licence notices, and Gradle build
+inputs. Distribute this matching source archive alongside the compiled JAR under
+GPL v3 terms. Dependencies are declared in the build files and resolved by Gradle.

@@ -33,21 +33,21 @@ final class FlightFeelScenarios {
     record Profile(String name,
                    double acceleration, double braking, double turnRate, double cruise, double sprint,
                    double verticalMax, double verticalCruise, double verticalSprint,
-                   double verticalAcceleration, double verticalRampStep,
+                   double verticalAcceleration, double verticalRampStep, int reversalTicks,
                    boolean unlimitedBoost, double boostMax, double boostStart, double boostRampStep,
                    double boostVerticalStart, int rewindTicks,
                    int lookahead, double margin, boolean safeManeuvering, double closeObjectSpeed,
                    double flyHorizontalSpeed, double flyVerticalSpeed, double fallMultiplier) {}
 
     static final Profile DEFAULTS = new Profile("defaults",
-        .15, .3, 15, cruise(.3, 64, .35), 15, 3, 3 * .35, 3, .05, .5,
+        .15, .3, 15, cruise(.3, 64, .35), 15, 3, 3 * .35, 3, .05, .5, 2,
         true, 14.999, 2.999, .3, 1.5, 15,
         64, .35, true, .6,
         1, 1, .01);
 
     /** The user's saved values as of 2026-10-20 (Adaptive Elytra Fly and Meteor Elytra Fly). */
     static final Profile USER = new Profile("user",
-        .15, .3, 15, cruise(.3, 64, .2), 15, 3, 3 * .35, 3, .15, .5,
+        .15, .3, 15, cruise(.3, 64, .2), 15, 3, 3 * .35, 3, .15, .5, 2,
         true, 14.999, 2.999, .3, 1.2499999999999998, 15,
         64, .2, true, .6,
         2.797482889048999, 2, .01);
@@ -150,7 +150,7 @@ final class FlightFeelScenarios {
             t < 60, t >= 90 && t < 150, false)));
         list.add(new Scenario("vertical-boost", open, 220, t -> Keys.of(t < 120 ? 1 : 0, 0,
             t >= 20 && t < 100, t >= 140 && t < 190, t >= 20 && t < 190)));
-        // Jump straight to Sneak and back, cruising and then boosting: each switch turns around the next tick.
+        // Jump straight to Sneak and back, cruising and then boosting: each switch eases the old direction out first.
         list.add(new Scenario("vertical-reversal", open, 200, t -> Keys.of(1, 0,
             t < 50 || t >= 90 && t < 140, t >= 50 && t < 90 || t >= 140, t >= 90)));
         list.add(new Scenario("climb-boost-only", open, 140, t -> Keys.of(0, 0, t < 80, false, t < 80)));

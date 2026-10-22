@@ -13,6 +13,8 @@ public final class AdaptiveFlightStep {
     public static final double SAFE_MANEUVER_SPEED = 0.3 - 1e-7;
     /** Descent speed at touchdown, in blocks per tick: VolytraFly's tested anti-slam floor. */
     public static final double LANDING_SPEED = .2;
+    // Even steps of the reversal brake can leave rounding dust instead of an exact standstill.
+    private static final double REVERSAL_EPSILON = 1e-9;
 
     private AdaptiveFlightStep() {}
 
@@ -66,18 +68,29 @@ public final class AdaptiveFlightStep {
      * The blended vertical system. Vertical percentages are of {@code verticalMaximum}; climbing and descending
      * speed up by at least {@code verticalAcceleration} and along the boost curve with {@code rampStep}, and slow
      * down along its mirror; momentum above a lowered ceiling (such as just after boost) brakes down to it instead
-     * of snapping. The opposite Jump/Sneak key reverses at once, from a standstill. Descent towards a floor {@code floorClearance} blocks below slows to {@link #LANDING_SPEED}
+     * of snapping. The opposite Jump/Sneak key slows the old direction by {@code reversalBrake} a tick (never less
+     * than releasing the key would), then the new direction speeds up from a standstill; an infinite brake reverses
+     * at once. Descent towards a floor {@code floorClearance} blocks below slows to {@link #LANDING_SPEED}
      * before touchdown.
      */
-    public record Blend(double verticalMaximum, double verticalAcceleration, double rampStep, double floorClearance) {
-        /** No known floor below. */
+    public record Blend(double verticalMaximum, double verticalAcceleration, double rampStep, double floorClearance,
+                        double reversalBrake) {
+        /** No known floor below, and an instant reversal. */
         public Blend(double verticalMaximum, double verticalAcceleration, double rampStep) {
             this(verticalMaximum, verticalAcceleration, rampStep, Double.POSITIVE_INFINITY);
+        }
+
+        /** An instant reversal. */
+        public Blend(double verticalMaximum, double verticalAcceleration, double rampStep, double floorClearance) {
+            this(verticalMaximum, verticalAcceleration, rampStep, floorClearance, Double.POSITIVE_INFINITY);
         }
 
         public Blend {
             if (Double.isNaN(floorClearance) || floorClearance < 0) {
                 throw new IllegalArgumentException("Floor clearance cannot be negative.");
+            }
+            if (Double.isNaN(reversalBrake) || reversalBrake < 0) {
+                throw new IllegalArgumentException("Reversal brake cannot be negative.");
             }
             if (!Double.isFinite(verticalMaximum) || verticalMaximum <= 0) {
                 throw new IllegalArgumentException("Vertical maximum must be finite and positive.");
@@ -193,24 +206,33 @@ public final class AdaptiveFlightStep {
         double horizontalFactor = horizontal > horizontalHardCeiling ? horizontalHardCeiling / horizontal : 1;
 
         double target = requested.y();
-        // Pressing the opposite vertical key turns around at once: the old direction's momentum is dropped and
-        // the new direction speeds up from a standstill this tick, instead of braking through zero first.
-        double previousY = controls.verticalInput() * previous.y() < 0 ? 0 : previous.y();
-        boolean slowing = Math.abs(target) < Math.abs(previousY) || target * previousY < 0;
-        double delta;
-        if (slowing) {
-            delta = Math.min(controller.settings().braking(), 2 * blend.verticalAcceleration());
-            // Slowing mirrors the vertical ramp: firm from fast climbs and dives, gentle near a stop.
-            delta = Math.max(delta, blend.rampStep() * Math.abs(previousY) / blend.verticalMaximum());
-        } else if (boostVertical) {
-            delta = Double.POSITIVE_INFINITY; // The vertical boost ramp is the acceleration limit.
-        } else {
-            delta = Math.min(controller.settings().acceleration(), blend.verticalAcceleration());
-            delta = Math.max(delta, BoostRamp.gain(Math.abs(previousY), blend.rampStep(), blend.verticalMaximum()));
+        double previousY = previous.y();
+        // Pressing the opposite vertical key eases the old direction's momentum out by the reversal brake, then
+        // the new direction speeds up from a standstill once it is gone, instead of braking through zero.
+        double easing = 0;
+        if (controls.verticalInput() * previousY < 0) {
+            double remaining = Math.abs(previousY)
+                - Math.max(blend.reversalBrake(), verticalSlowing(controller, blend, previousY));
+            if (remaining > REVERSAL_EPSILON) easing = Math.copySign(remaining, previousY);
+            else previousY = 0;
         }
-        double y = previousY + Math.max(-delta, Math.min(delta, target - previousY));
+        double y;
+        if (easing != 0) y = easing;
+        else {
+            boolean slowing = Math.abs(target) < Math.abs(previousY) || target * previousY < 0;
+            double delta;
+            if (slowing) delta = verticalSlowing(controller, blend, previousY);
+            else if (boostVertical) {
+                delta = Double.POSITIVE_INFINITY; // The vertical boost ramp is the acceleration limit.
+            } else {
+                delta = Math.min(controller.settings().acceleration(), blend.verticalAcceleration());
+                delta = Math.max(delta, BoostRamp.gain(Math.abs(previousY), blend.rampStep(), blend.verticalMaximum()));
+            }
+            y = previousY + Math.max(-delta, Math.min(delta, target - previousY));
+        }
         double up, down;
-        if (boostVertical) up = down = boost.vertical();
+        // Easing only slows the old direction, so it may outrun a boost that has not started yet.
+        if (boostVertical && easing == 0) up = down = boost.vertical();
         else {
             up = decaying(verticalBase, y, previousY);
             down = decaying(verticalBase, -y, -previousY);
@@ -297,6 +319,12 @@ public final class AdaptiveFlightStep {
      */
     private static double decaying(double ceiling, double next, double previous) {
         return previous > ceiling ? Math.max(ceiling, Math.min(next, previous)) : ceiling;
+    }
+
+    /** Vertical slowing per tick mirrors the vertical ramp: firm from fast climbs and dives, gentle near a stop. */
+    private static double verticalSlowing(AdaptiveFlightController controller, Blend blend, double speed) {
+        double delta = Math.min(controller.settings().braking(), 2 * blend.verticalAcceleration());
+        return Math.max(delta, blend.rampStep() * Math.abs(speed) / blend.verticalMaximum());
     }
 
     private static boolean within(Motion motion, double maximum) {

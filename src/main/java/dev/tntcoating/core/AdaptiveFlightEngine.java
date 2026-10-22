@@ -28,12 +28,14 @@ public final class AdaptiveFlightEngine {
      * of, never reshape, and {@code boostCeiling} is the total 3D speed boost may never exceed (see
      * {@link ServerMoveLimit}). After a setback both ramps hold their rewound speed for {@code setbackHoldTicks}
      * before accelerating. With {@code maneuverMode}, flying horizontally, vertically and turning at once holds total
-     * 3D speed to {@code maneuverCeiling}, and boost speeds up again from there afterwards.
+     * 3D speed to {@code maneuverCeiling}, and boost speeds up again from there afterwards. Switching straight between
+     * Jump and Sneak slows the old direction over {@code verticalReversalTicks} before turning around; zero turns
+     * around at once.
      */
     public record Settings(double acceleration, double braking, double turnRate,
                            double cruise, double sprint,
                            double verticalMaximum, double verticalCruise, double verticalSprint,
-                           double verticalAcceleration, double verticalRampStep,
+                           double verticalAcceleration, double verticalRampStep, int verticalReversalTicks,
                            boolean unlimitedBoost, double boostTop, double boostStart, double boostRampStep,
                            double boostVerticalStart, int rewindTicks, int setbackHoldTicks, double boostCeiling,
                            boolean maneuverMode, double maneuverCeiling, int lookahead, double margin, boolean safeManeuvering, double closeObjectSpeed,
@@ -60,7 +62,7 @@ public final class AdaptiveFlightEngine {
     private int verticalBoostDirection, maneuverTicks;
     private boolean sprintKey, boostActive, maneuvering, nearObject, closeObjectOverride, maneuverMode;
     private boolean releaseSafeCollisions, contactResolved;
-    private double releaseSpeed, adaptiveMaximum;
+    private double releaseSpeed, adaptiveMaximum, reversalBrake;
     private AdaptiveFlightStep.Result lastStep;
     private int chunkChecks;
 
@@ -115,6 +117,10 @@ public final class AdaptiveFlightEngine {
         boolean sprinting = sprintKey || closeObjectOverride;
         int verticalInput = Finite.clamp(s.stockVerticalSpeed(), 0, 64, 0) == 0 ? 0
             : input.jump() ? 1 : input.sneak() ? -1 : 0;
+        // A switch straight between Jump and Sneak slows the old direction evenly, from its speed when the switch began.
+        double previousY = controller.output().y();
+        if (verticalInput * previousY >= 0) reversalBrake = 0;
+        else if (reversalBrake == 0) reversalBrake = Math.abs(previousY) / (Math.max(0, s.verticalReversalTicks()) + 1);
         updateManeuver(requested, verticalInput);
         AdaptiveFlightStep.Boost boost = updateBoost(requested, verticalInput);
         // The step works in shares of what the adaptive engine can attain; a cap above that is no limit.
@@ -123,7 +129,7 @@ public final class AdaptiveFlightEngine {
         // Only a deliberate descent is worth a floor scan; Meteor's small fall-multiplier glide lands harmlessly.
         boolean descending = requested.y() < -.05 || controller.output().y() < -.05;
         var blend = new AdaptiveFlightStep.Blend(s.verticalMaximum(), s.verticalAcceleration(), s.verticalRampStep(),
-            descending ? input.floorClearance().getAsDouble() : Double.POSITIVE_INFINITY);
+            descending ? input.floorClearance().getAsDouble() : Double.POSITIVE_INFINITY, reversalBrake);
         // Probe the actual blended trajectory once, rather than separately scanning old and desired headings.
         AdaptiveFlightStep.Result step = AdaptiveFlightStep.move(controller, requested,
             Finite.clamp(s.stockHorizontalSpeed(), 0, 64, 0),
@@ -210,7 +216,7 @@ public final class AdaptiveFlightEngine {
         verticalBoostDirection = 0;
         sprintKey = boostActive = maneuvering = nearObject = closeObjectOverride = false;
         releaseSafeCollisions = contactResolved = false;
-        adaptiveMaximum = 0;
+        adaptiveMaximum = reversalBrake = 0;
         clearManeuver();
         lastStep = null;
         chunkChecks = 0;
@@ -244,7 +250,9 @@ public final class AdaptiveFlightEngine {
             else horizontalRamp.engage(previous.horizontalLength());
         } else horizontalRamp.disengage();
         if (boosting && verticalInput != 0) {
-            if (verticalRamp.engaged() && verticalBoostDirection == verticalInput) verticalRamp.advance();
+            // While a reversal slows the old direction, the new direction's boost waits at its start speed.
+            if (verticalRamp.engaged() && verticalBoostDirection == verticalInput && previous.y() * verticalInput >= 0)
+                verticalRamp.advance();
             else verticalRamp.engage(previous.y() * verticalInput > 0 ? Math.abs(previous.y()) : 0);
             verticalBoostDirection = verticalInput;
         } else {

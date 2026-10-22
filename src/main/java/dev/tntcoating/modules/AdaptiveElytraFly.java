@@ -132,6 +132,9 @@ public final class AdaptiveElytraFly extends Module {
     private final Setting<Double> verticalRampStep = general.add(new DoubleSetting.Builder().name("vertical-ramp-step")
         .description("How fast climb/descent speeds up, in blocks per tick squared at rest, tapering to zero at 60 b/s (like VolytraFly's acceleration curve). Zero keeps vertical-acceleration only.")
         .defaultValue(.5).range(0, 5).sliderRange(0, 2).decimalPlaces(2).build());
+    private final Setting<Integer> verticalReversalTicks = general.add(new IntSetting.Builder().name("vertical-reversal-ticks")
+        .description("Switching straight between Jump and Sneak slows the old climb or descent evenly over this many ticks, then speeds up the other way from a standstill. Zero turns around at once; higher is smoother, but never slower than releasing the key.")
+        .defaultValue(2).range(0, 20).sliderRange(0, 10).build());
     private final Setting<Boolean> unlimitedBoost = boost.add(new BoolSetting.Builder().name("unlimited-boost")
         .description("Holding Sprint flies VolytraFly's speed ramp instead of the adaptive engine maximum. Terrain, chunk and server-glide guards still apply. Off restores adaptive Sprint.")
         .defaultValue(true).visible(sprintBoost::get).build());
@@ -724,7 +727,7 @@ public final class AdaptiveElytraFly extends Module {
     private AdaptiveFlightEngine.Settings engineSettings(ElytraFly fly) {
         return new AdaptiveFlightEngine.Settings(acceleration.get(), braking.get(), adaptiveTurnRate.get(),
             cruiseMaxBps.get() / 20, boostMaxBps.get() / 20, VERTICAL_TOP, verticalCruiseMaxBps.get() / 20,
-            verticalBoostMaxBps.get() / 20, verticalAcceleration.get(), verticalRampStep.get(),
+            verticalBoostMaxBps.get() / 20, verticalAcceleration.get(), verticalRampStep.get(), verticalReversalTicks.get(),
             boostVisible(), boostTop(), BOOST_START, boostRampStep.get(),
             boostVerticalStartSpeed.get(), boostRewindTicks.get(), boostSetbackHold.get(), serverMoveLimit(),
             maneuverMode.get(), maneuverMaxBps.get() / 20, lookahead.get(), margin.get(),

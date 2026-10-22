@@ -94,6 +94,7 @@ tasks {
         inputs.property("archivesName", archivesBaseName)
 
         from("LICENSE-Speedmine")
+        from("LICENSE-DEVILS")
         from("THIRD_PARTY_NOTICES.md")
 
         from("LICENSE") {
@@ -116,3 +117,19 @@ tasks {
 }
 
 tasks.test { useJUnitPlatform() }
+
+// Distribute this beside the JAR: GPL-covered adaptations need their modified source
+// and the build inputs, not only a link to the original upstream project.
+val sourceDistribution = tasks.register<Zip>("sourceDistribution") {
+    group = "build"
+    description = "Packages Comet's corresponding source and Gradle build inputs."
+    archiveClassifier.set("source")
+    destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+    from("src") { into("src") }
+    from("gradle") { into("gradle") }
+    from("scripts") { into("scripts") }
+    from("gradlew", "gradlew.bat", "build.gradle.kts", "settings.gradle.kts", "gradle.properties",
+        "LICENSE", "LICENSE-Speedmine", "LICENSE-DEVILS", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md")
+}
+
+tasks.named("build") { dependsOn(sourceDistribution) }
