@@ -7,8 +7,10 @@
  *
  * Modified for Comet by Boyonabike on 2026-10-22: Minecraft 26.1.2 mappings,
  * local inventory integration, lifecycle/navigation guards and settings credits;
- * setback-aware speed ramp, pinned-glide recovery, swap settling, paced takeoff,
- * heading limit, arrival braking, server speed caps and the server-glide wall guard.
+ * VolytraFly boost ramps up to the server's per-tick movement limit, a lower 3D
+ * limit while climbing or descending, setback rewind and pinned-glide recovery,
+ * swap settling, paced takeoff, collision-only ramp loss and the server-glide
+ * wall guard.
  * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -41,17 +43,26 @@ public final class AutoWaspFlightController {
     private static final double AVOIDANCE_STRENGTH = 0.85;
     private static final double COLLISION_STEP = 0.55;
     private static final double NETHER_MAX_FLIGHT_Y = 123.0;
+    // DEVILS' default horizontal speed, which its sideways avoidance push was tuned for. Faster pursuit keeps that
+    // push instead of throwing itself sideways at full speed beside a wall.
+    private static final double AVOIDANCE_REFERENCE_SPEED = 2.0;
+    // Vertical movement smaller than this is neither a climb nor a descent for the vertical ramp.
+    private static final double VERTICAL_EPSILON = 1.0E-3;
     // The lowest priority is sent last, so the server's next glide tick uses this heading.
     private static final int GLIDE_STEER_PRIORITY = Integer.MIN_VALUE;
 
     private final AutoWasp module;
     private final AutoWaspPathfinder pathfinder;
     private final AutoWaspGlideTracker glide;
-    private final AutoWaspRamp ramp = new AutoWaspRamp(new AutoWaspRamp.Settings(1, AutoWaspRamp.PLATEAU, .3, 15, 1, 1));
+    // VolytraFly's boost: horizontally from 60 b/s towards 300 b/s, vertically from 30 b/s towards 60 b/s.
+    private final AutoWaspRamp horizontalRamp = new AutoWaspRamp(new AutoWaspRamp.Settings(AutoWaspSpeed.HORIZONTAL_START,
+        AutoWaspSpeed.HORIZONTAL_TOP, .3, 15, 1, AutoWaspSpeed.BUNCHED_SAFE));
+    private final AutoWaspRamp verticalRamp = new AutoWaspRamp(new AutoWaspRamp.Settings(AutoWaspSpeed.VERTICAL_START,
+        AutoWaspSpeed.VERTICAL_TOP, AutoWaspSpeed.VERTICAL_STEP, 15, 1, AutoWaspSpeed.VERTICAL_TOP));
     private final AutoWaspSwapDelay swapDelay = new AutoWaspSwapDelay();
     private final AutoWaspTakeoff takeoff = new AutoWaspTakeoff();
     private final AutoWaspSetbacks setbacks = new AutoWaspSetbacks();
-    private final AutoWaspSteering.Maneuver maneuver = new AutoWaspSteering.Maneuver();
+    private final AutoWaspSpeed.Limit3d limit3d = new AutoWaspSpeed.Limit3d();
 
     private Vec3 lastPlayerPos;
     private int stuckTicks;
@@ -59,8 +70,12 @@ public final class AutoWaspFlightController {
     // Whether pursuit handled the latest movement while gliding, so a correction now answers one of its moves.
     private boolean controlling;
     private Vec3 lastControlledPosition;
+    // Where this tick's controlled movement started, so a real collision can cost ramp speed afterwards.
+    private Vec3 moveStart;
     // The velocity pursuit flew last movement, or vanilla's while it left the glide to vanilla physics.
     private Vec3 lastOutput = Vec3.ZERO;
+    private int verticalDirection;
+    private long rampTick = Long.MIN_VALUE;
     private long clientTicks;
     private String state = "Waiting";
 
@@ -128,7 +143,11 @@ public final class AutoWaspFlightController {
     /** End of every client tick, after this tick's position was reported. */
     public void postTick() {
         LocalPlayer player = module.client().player;
-        if (controlling && player != null) lastControlledPosition = player.position();
+        if (controlling && player != null) {
+            lastControlledPosition = player.position();
+            limitRampsToCollision(player);
+        }
+        moveStart = null;
         glide.postTick();
     }
 
@@ -161,11 +180,6 @@ public final class AutoWaspFlightController {
 
     public void onGlidingTick() {
         updateStuckState();
-        configureRamp();
-        LocalPlayer player = module.client().player;
-        if (setbacks.pinned() || !swapDelay.ready() || player == null) ramp.disengage();
-        else if (ramp.engaged()) ramp.advance();
-        else ramp.engage(player.getDeltaMovement().length());
     }
 
     public int getStuckTicks() {
@@ -178,8 +192,8 @@ public final class AutoWaspFlightController {
     }
 
     /**
-     * {@code targetVelocity} is the target's own movement per tick when steering straight at it, so pursuit matches
-     * it instead of trailing behind; zero when steering at a waypoint.
+     * {@code targetVelocity} is the target's own movement per tick when steering straight at it, so pursuit keeps pace
+     * instead of trailing behind; zero when steering at a waypoint.
      */
     public void onMove(PlayerMoveEvent event, Vec3 steerTarget, Vec3 targetVelocity) {
         LocalPlayer player = module.client().player;
@@ -195,54 +209,72 @@ public final class AutoWaspFlightController {
             deferToVanilla(player, "Settling glide");
             return;
         }
-        if (!ramp.engaged()) {
-            configureRamp();
-            ramp.engage(player.getDeltaMovement().length());
-        }
 
         Vec3 position = player.position();
         Vec3 safeTarget = pathfinder.adjustToSafeCorridor(steerTarget, position);
         Vec3 toTarget = safeTarget.subtract(position);
-        double horizontal = toTarget.horizontalDistance();
-        double braking = module.brakingValue();
-        double rampCap = ramp.speed();
+        Vec3 lead = targetVelocity == null ? Vec3.ZERO : targetVelocity;
+        updateRamps(toTarget.y + lead.y);
 
-        double maxHorizontal = Math.min(resolveHorizontalCap(), rampCap);
-        double maxVertical = Math.min(module.verticalSpeedValue(), rampCap);
-        double approach = AutoWaspSteering.arrivalSpeed(horizontal, braking);
+        double maxHorizontal = Math.min(resolveHorizontalCap(), horizontalRamp.speed());
+        double maxVertical = Math.min(module.verticalMaxSpeed(),
+            verticalRamp.engaged() ? verticalRamp.speed() : AutoWaspSpeed.VERTICAL_START);
+        // The server never checks slowing down, so pursuit flies at the ramp's speed and lands on the steer point on
+        // the final tick instead of braking early.
+        double horizontal = toTarget.horizontalDistance();
+        double speed = Math.min(maxHorizontal, horizontal);
         double xVel = 0;
         double zVel = 0;
         if (horizontal > 1.0E-5) {
-            xVel = (toTarget.x / horizontal) * approach;
-            zVel = (toTarget.z / horizontal) * approach;
+            xVel = (toTarget.x / horizontal) * speed;
+            zVel = (toTarget.z / horizontal) * speed;
         }
-        double yVel = Math.copySign(AutoWaspSteering.arrivalSpeed(Math.abs(toTarget.y), braking), toTarget.y);
+        double yVel = Mth.clamp(toTarget.y, -maxVertical, maxVertical);
+        Vec3 desired = AutoWaspSpeed.capHorizontal(new Vec3(xVel, yVel, zVel).add(lead), maxHorizontal);
 
-        Vec3 desired = new Vec3(xVel, yVel, zVel).add(targetVelocity == null ? Vec3.ZERO : targetVelocity);
-        desired = AutoWaspSteering.capHorizontal(desired, maxHorizontal);
-        desired = new Vec3(desired.x, Mth.clamp(desired.y, -maxVertical, maxVertical), desired.z);
-        // Only pursuit's own heading is limited; avoidance and emergency braking below always act at once.
-        desired = AutoWaspSteering.limitTurn(lastOutput, desired, AutoWaspSteering.turnRate(module.turnRateValue(),
-            lastOutput.horizontalDistance(), module.horizontalSpeedValue()), braking);
-        boolean maneuvering = maneuver.update(lastOutput, desired);
-
-        Vec3 base = new Vec3(desired.x, applyVerticalSafety(desired.y, position), desired.z);
-        Vec3 avoid = computeLocalAvoidance(safeTarget, base, maxHorizontal);
+        Vec3 base = new Vec3(desired.x,
+            applyVerticalSafety(Mth.clamp(desired.y, -maxVertical, maxVertical), position), desired.z);
+        Vec3 avoid = computeLocalAvoidance(safeTarget, base, Math.min(maxHorizontal, AVOIDANCE_REFERENCE_SPEED));
         Vec3 velocity = applyDimensionFlightLimit(applyEmergencyBraking(base.add(avoid)), position);
-        velocity = AutoWaspSteering.capHorizontal(velocity, maxHorizontal);
+        velocity = AutoWaspSpeed.capHorizontal(velocity, maxHorizontal);
         velocity = new Vec3(velocity.x, Mth.clamp(velocity.y, -maxVertical, maxVertical), velocity.z);
-
-        double total = Math.min(rampCap, AutoWaspSteering.SERVER_MOVE_LIMIT);
-        if (maneuvering) total = Math.min(total, module.maneuverMaxSpeedValue());
-        velocity = AutoWaspSteering.capLength(velocity, total);
+        if (limit3d.active()) velocity = AutoWaspSpeed.capLength(velocity, module.max3dSpeed());
         velocity = guardServerGlide(player, velocity);
+        if (limit3d.active() && state.equals("Pursuing")) state = "3D limited";
 
         ((IVec3) event.movement).meteor$set(velocity.x, velocity.y, velocity.z);
+        moveStart = position;
         lastOutput = velocity;
-        ramp.follow(velocity.length());
     }
 
-    /** Netty-free setback handling: rewinds the ramp, pins the flight to vanilla glide, or ends the route. */
+    /**
+     * Once per tick, VolytraFly's ramps advance while pursuit is controlling the glide. The vertical one starts again,
+     * at its 30 b/s start, whenever a climb turns into a descent or the other way round. While climbing or descending,
+     * and briefly after, both are held within the 3D limit, which is lower than the horizontal one.
+     */
+    private void updateRamps(double verticalWanted) {
+        if (rampTick == clientTicks) return;
+        rampTick = clientTicks;
+        configureRamps();
+        if (horizontalRamp.engaged()) horizontalRamp.advance();
+        else horizontalRamp.engage(lastOutput.horizontalDistance());
+        int direction = verticalWanted > VERTICAL_EPSILON ? 1 : verticalWanted < -VERTICAL_EPSILON ? -1 : 0;
+        if (direction == 0) verticalRamp.disengage();
+        else if (direction == verticalDirection && verticalRamp.engaged()) verticalRamp.advance();
+        else verticalRamp.engage(lastOutput.y * direction > 0 ? Math.abs(lastOutput.y) : 0);
+        verticalDirection = direction;
+        if (limit3d.update(verticalWanted)) AutoWaspSpeed.holdRampsTo(horizontalRamp, verticalRamp, module.max3dSpeed());
+    }
+
+    /** As in VolytraFly, only a real collision costs ramp speed: continue from what the blocked move kept. */
+    private void limitRampsToCollision(LocalPlayer player) {
+        if (moveStart == null) return;
+        Vec3 moved = player.position().subtract(moveStart);
+        if (player.horizontalCollision) horizontalRamp.limitTo(moved.horizontalDistance());
+        if (player.verticalCollision) verticalRamp.limitTo(Math.abs(moved.y));
+    }
+
+    /** Netty-free setback handling: rewinds the ramps, pins the flight to vanilla glide, or ends the route. */
     private void consumeCorrections() {
         int count = glide.takeCorrections();
         LocalPlayer player = module.client().player;
@@ -254,20 +286,23 @@ public final class AutoWaspFlightController {
                 packet.change(), packet.relatives()).position();
         switch (setbacks.classify(clientTicks, target, lastControlledPosition)) {
             case TELEPORT -> {
-                ramp.disengage();
+                disengageRamps();
                 lastOutput = Vec3.ZERO;
-                maneuver.reset();
                 pathfinder.resetPathState();
                 clearStuckState();
             }
             case PINNED -> {
-                ramp.corrected();
+                horizontalRamp.corrected();
+                verticalRamp.corrected();
                 if (module.pinnedGlideTicksValue() > 0) {
                     setbacks.pin(module.pinnedGlideTicksValue());
-                    ramp.disengage();
+                    disengageRamps();
                 }
             }
-            case SETBACK -> ramp.corrected();
+            case SETBACK -> {
+                horizontalRamp.corrected();
+                verticalRamp.corrected();
+            }
         }
         // A correction moved the player, which is not being stuck.
         lastPlayerPos = player.position();
@@ -298,38 +333,52 @@ public final class AutoWaspFlightController {
     }
 
     private void deferToVanilla(LocalPlayer player, String why) {
-        ramp.disengage();
-        maneuver.reset();
+        disengageRamps();
+        moveStart = null;
         lastOutput = player.getDeltaMovement();
         state = why;
     }
 
     private void releaseControl() {
-        ramp.disengage();
-        maneuver.reset();
+        disengageRamps();
+        moveStart = null;
         LocalPlayer player = module.client().player;
         lastOutput = player == null ? Vec3.ZERO : player.getDeltaMovement();
     }
 
+    private void disengageRamps() {
+        horizontalRamp.disengage();
+        verticalRamp.disengage();
+        verticalDirection = 0;
+        limit3d.reset();
+    }
+
     private void resetControl() {
-        ramp.reset();
+        horizontalRamp.reset();
+        verticalRamp.reset();
+        verticalDirection = 0;
+        limit3d.reset();
+        rampTick = Long.MIN_VALUE;
         swapDelay.reset();
         takeoff.reset();
         setbacks.reset();
-        maneuver.reset();
         glide.reset();
         controlling = false;
         lastControlledPosition = null;
+        moveStart = null;
         lastOutput = Vec3.ZERO;
         clientTicks = 0;
         state = "Waiting";
     }
 
-    private void configureRamp() {
-        double limit = Math.min(AutoWaspSteering.SERVER_MOVE_LIMIT,
-            Math.hypot(module.horizontalSpeedValue(), module.verticalSpeedValue()));
-        ramp.configure(new AutoWaspRamp.Settings(module.rampStartSpeedValue(), AutoWaspRamp.PLATEAU,
-            module.rampStepValue(), module.setbackRewindTicksValue(), module.setbackHoldTicksValue(), limit));
+    /** Each ramp stops at its axis's limit without reshaping its curve. */
+    private void configureRamps() {
+        int rewind = module.setbackRewindTicksValue();
+        int hold = module.setbackHoldTicksValue();
+        horizontalRamp.configure(new AutoWaspRamp.Settings(AutoWaspSpeed.HORIZONTAL_START, AutoWaspSpeed.HORIZONTAL_TOP,
+            module.rampStepValue(), rewind, hold, module.horizontalMaxSpeed()));
+        verticalRamp.configure(new AutoWaspRamp.Settings(AutoWaspSpeed.VERTICAL_START, AutoWaspSpeed.VERTICAL_TOP,
+            AutoWaspSpeed.VERTICAL_STEP, rewind, hold, module.verticalMaxSpeed()));
     }
 
     private void updateStuckState() {
@@ -349,7 +398,7 @@ public final class AutoWaspFlightController {
 
     /** Inside cobwebs and vines, ease the cap down towards what the drag actually lets through. */
     private double resolveHorizontalCap() {
-        double baseCap = module.horizontalSpeedValue();
+        double baseCap = module.horizontalMaxSpeed();
         boolean drag = isInDragState();
         if (!drag) {
             adaptiveHorizontalCap = baseCap;
@@ -405,7 +454,7 @@ public final class AutoWaspFlightController {
         double ceilingDist = pathfinder.distanceToSolidAbove(currentPos, SAFETY_SCAN);
 
         double downBudget = Math.max(0.0, floorDist - FLOOR_CLEARANCE - 0.35);
-        double safeMaxDown = Math.min(module.verticalSpeedValue(), downBudget * 0.8);
+        double safeMaxDown = Math.min(module.verticalMaxSpeed(), downBudget * 0.8);
         yVel = Math.max(yVel, -safeMaxDown);
 
         if (floorDist < FLOOR_CLEARANCE + 0.35) yVel = Math.max(yVel, 0.12);
@@ -506,11 +555,11 @@ public final class AutoWaspFlightController {
 
         if (floorDist < FLOOR_CLEARANCE) {
             double push = (FLOOR_CLEARANCE - floorDist) * 0.75;
-            avoid = avoid.add(0, Math.min(module.verticalSpeedValue(), push), 0);
+            avoid = avoid.add(0, Math.min(module.verticalMaxSpeed(), push), 0);
         }
         if (ceilingDist < CEILING_CLEARANCE) {
             double push = (CEILING_CLEARANCE - ceilingDist) * 0.75;
-            avoid = avoid.add(0, -Math.min(module.verticalSpeedValue(), push), 0);
+            avoid = avoid.add(0, -Math.min(module.verticalMaxSpeed(), push), 0);
         }
 
         Vec3 heading = steerTarget.subtract(pos);

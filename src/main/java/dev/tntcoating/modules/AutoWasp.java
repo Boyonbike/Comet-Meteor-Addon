@@ -7,8 +7,9 @@
  *
  * Modified for Comet by Boyonabike on 2026-10-22: Minecraft 26.1.2 mappings,
  * local inventory integration, lifecycle/navigation guards and settings credits;
- * speed ramp, setback and server-glide settings, ping-aware target prediction,
- * worn-out elytra handling and chest-swap hysteresis.
+ * VolytraFly boost and setback settings sized to the server's movement limits,
+ * server-glide settings, ping-aware target prediction, worn-out elytra handling
+ * and chest-swap hysteresis.
  * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -20,6 +21,7 @@ import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.modules.autowasp.AutoWaspChestSwap;
 import dev.tntcoating.modules.autowasp.AutoWaspFlightController;
 import dev.tntcoating.modules.autowasp.AutoWaspPathfinder;
+import dev.tntcoating.modules.autowasp.AutoWaspSpeed;
 import dev.tntcoating.modules.autowasp.AutoWaspTargetTracker;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
@@ -62,19 +64,33 @@ public class AutoWasp extends Module {
     private final SettingGroup sgRamp = settings.createGroup("Speed Ramp");
     private final SettingGroup sgServerGlide = settings.createGroup("Server Glide");
 
-    private final Setting<Double> horizontalSpeed = sgGeneral.add(new DoubleSetting.Builder()
-        .name("horizontal-speed")
-        .description("Horizontal elytra speed in blocks per tick. Total speed never passes 17 blocks per tick, the most a vanilla server accepts.")
-        .defaultValue(2.0)
-        .min(0.14)
+    private final Setting<Double> horizontalMaxBps = sgGeneral.add(new DoubleSetting.Builder()
+        .name("horizontal-max-bps")
+        .description("Fastest horizontal speed in blocks per second, which pursuit boosts to along VolytraFly's curve from 60 b/s. The default 240 is the fastest a vanilla server never sets back, even when lag delivers two move packets in one tick. Up to 300 (VolytraFly's top) is faster but set back whenever that happens, which the ramp then rewinds.")
+        .defaultValue(AutoWaspSpeed.BUNCHED_SAFE * AutoWaspSpeed.TICKS_PER_SECOND)
+        .range(2.8, AutoWaspSpeed.HORIZONTAL_TOP * AutoWaspSpeed.TICKS_PER_SECOND)
+        .sliderRange(20, AutoWaspSpeed.HORIZONTAL_TOP * AutoWaspSpeed.TICKS_PER_SECOND)
+        .decimalPlaces(1)
         .build()
     );
 
-    private final Setting<Double> verticalSpeed = sgGeneral.add(new DoubleSetting.Builder()
-        .name("vertical-speed")
-        .description("Vertical elytra speed in blocks per tick.")
-        .defaultValue(3.0)
-        .min(0.0)
+    private final Setting<Double> verticalMaxBps = sgGeneral.add(new DoubleSetting.Builder()
+        .name("vertical-max-bps")
+        .description("Fastest climb or descent in blocks per second, up to VolytraFly's 60. Each climb or descent boosts from 30 b/s.")
+        .defaultValue(AutoWaspSpeed.VERTICAL_TOP * AutoWaspSpeed.TICKS_PER_SECOND)
+        .range(0, AutoWaspSpeed.VERTICAL_TOP * AutoWaspSpeed.TICKS_PER_SECOND)
+        .sliderRange(0, AutoWaspSpeed.VERTICAL_TOP * AutoWaspSpeed.TICKS_PER_SECOND)
+        .decimalPlaces(1)
+        .build()
+    );
+
+    private final Setting<Double> max3dBps = sgGeneral.add(new DoubleSetting.Builder()
+        .name("3d-max-bps")
+        .description("Fastest total 3D speed in blocks per second while climbing or descending, and for half a second after, so a target bobbing up and down cannot make it flicker. Keep it below horizontal-max-bps: climbs and dives fly slower than level flight. While it applies the boost ramps are held to it, and they speed up again from it afterwards instead of snapping back.")
+        .defaultValue(180)
+        .range(20, AutoWaspSpeed.HORIZONTAL_TOP * AutoWaspSpeed.TICKS_PER_SECOND)
+        .sliderRange(20, AutoWaspSpeed.HORIZONTAL_TOP * AutoWaspSpeed.TICKS_PER_SECOND)
+        .decimalPlaces(1)
         .build()
     );
 
@@ -129,7 +145,7 @@ public class AutoWasp extends Module {
 
     private final Setting<Boolean> autoChestSwap = sgChestSwap.add(new BoolSetting.Builder()
         .name("auto-chest-swap")
-        .description("Equips a chestplate near the target on stable ground, and elytra for pursuit. Pauses in containers.")
+        .description("Equips a chestplate near the target on stable ground, and elytra for pursuit, replacing an elytra with 1 durability left. Pauses in containers, with an item on the cursor and during Comet tool or weapon loans.")
         .defaultValue(true)
         .build()
     );
@@ -166,7 +182,7 @@ public class AutoWasp extends Module {
 
     private final Setting<Double> chestSwapHysteresis = sgChestSwap.add(new DoubleSetting.Builder()
         .name("chest-swap-hysteresis")
-        .description("Once the chestplate is on, the target must move this many blocks beyond each range before the elytra goes back on, so a target at the edge of a range does not swap you back and forth.")
+        .description("Once the chestplate is on, every chest-swap range is this many blocks wider before the elytra goes back on, so a target at the edge of a range does not swap you back and forth. Zero swaps back at the same ranges.")
         .defaultValue(1.5)
         .range(0.0, 4.0)
         .sliderRange(0.0, 4.0)
@@ -174,18 +190,9 @@ public class AutoWasp extends Module {
         .build()
     );
 
-    private final Setting<Double> rampStartSpeed = sgRamp.add(new DoubleSetting.Builder()
-        .name("ramp-start-speed")
-        .description("Total speed, in blocks per tick, that pursuit starts from and that a setback never rewinds below. It then speeds up along the ramp to your speed caps.")
-        .defaultValue(1.0)
-        .range(0.1, 5.0)
-        .sliderRange(0.1, 3.0)
-        .build()
-    );
-
     private final Setting<Double> rampStep = sgRamp.add(new DoubleSetting.Builder()
         .name("ramp-step")
-        .description("Acceleration in blocks per tick squared at rest, tapering to zero at 15 blocks per tick (VolytraFly's 300 b/s curve). It also paces speeding up again after braking, a turn or a wall.")
+        .description("Horizontal boost acceleration in blocks per tick squared at rest (0.3 is 6 b/s per tick), tapering to zero at VolytraFly's 300 b/s top. The default boosts from 60 to 240 b/s in about 3.5 seconds. Slowing for waypoints or the target keeps the ramp's speed; only a collision, a setback or the 3D limit costs it.")
         .defaultValue(0.3)
         .range(0.01, 5.0)
         .sliderRange(0.05, 2.0)
@@ -194,7 +201,7 @@ public class AutoWasp extends Module {
 
     private final Setting<Integer> setbackRewindTicks = sgRamp.add(new IntSetting.Builder()
         .name("setback-rewind-ticks")
-        .description("A server setback rewinds the ramp by this many ticks of acceleration instead of restarting it.")
+        .description("A server setback rewinds both boost ramps by this many ticks of acceleration instead of restarting them; 15 loses under 1% near top speed.")
         .defaultValue(15)
         .range(0, 200)
         .sliderRange(0, 60)
@@ -212,37 +219,10 @@ public class AutoWasp extends Module {
 
     private final Setting<Integer> pinnedGlideTicks = sgRamp.add(new IntSetting.Builder()
         .name("pinned-glide-ticks")
-        .description("When two setbacks in a row put you back on exactly the same spot, the server is rejecting every move from there. Glide with plain vanilla elytra physics for this many ticks so it accepts one, then ramp up again from the start speed. Zero disables.")
+        .description("When two setbacks in a row put you back on exactly the same spot, the server is rejecting every move from there. Glide with plain vanilla elytra physics for this many ticks so it accepts one, then boost again from your current speed. Zero disables.")
         .defaultValue(10)
         .range(0, 60)
         .sliderRange(0, 40)
-        .build()
-    );
-
-    private final Setting<Double> turnRate = sgRamp.add(new DoubleSetting.Builder()
-        .name("turn-rate")
-        .description("How fast pursuit may swing its heading, in degrees per tick, rising with speed to double at horizontal-speed. Turning stays instant below 0.6 blocks per tick, a reversal of 135 degrees or more brakes first, and obstacle avoidance is never limited. Zero turns instantly.")
-        .defaultValue(30)
-        .range(0, 90)
-        .sliderRange(0, 90)
-        .build()
-    );
-
-    private final Setting<Double> braking = sgRamp.add(new DoubleSetting.Builder()
-        .name("braking")
-        .description("Deceleration in blocks per tick squared when arriving at the target or a waypoint and when reversing, so pursuit slows down instead of stopping dead or overshooting. Emergency braking near walls is never limited.")
-        .defaultValue(0.3)
-        .range(0.01, 2.0)
-        .sliderRange(0.05, 1.0)
-        .build()
-    );
-
-    private final Setting<Double> maneuverMaxSpeed = sgRamp.add(new DoubleSetting.Builder()
-        .name("maneuver-max-speed")
-        .description("Total speed cap, in blocks per tick, while moving horizontally, climbing or descending and turning at once. Only matters with speeds raised above it.")
-        .defaultValue(10.0)
-        .range(1.0, 17.0)
-        .sliderRange(1.0, 17.0)
         .build()
     );
 
@@ -604,16 +584,19 @@ public class AutoWasp extends Module {
         return mc;
     }
 
-    public double horizontalSpeedValue() {
-        return horizontalSpeed.get();
+    /** horizontal-max-bps in blocks per tick. */
+    public double horizontalMaxSpeed() {
+        return horizontalMaxBps.get() / AutoWaspSpeed.TICKS_PER_SECOND;
     }
 
-    public double verticalSpeedValue() {
-        return verticalSpeed.get();
+    /** vertical-max-bps in blocks per tick. */
+    public double verticalMaxSpeed() {
+        return verticalMaxBps.get() / AutoWaspSpeed.TICKS_PER_SECOND;
     }
 
-    public double rampStartSpeedValue() {
-        return rampStartSpeed.get();
+    /** 3d-max-bps in blocks per tick. */
+    public double max3dSpeed() {
+        return max3dBps.get() / AutoWaspSpeed.TICKS_PER_SECOND;
     }
 
     public double rampStepValue() {
@@ -630,18 +613,6 @@ public class AutoWasp extends Module {
 
     public int pinnedGlideTicksValue() {
         return pinnedGlideTicks.get();
-    }
-
-    public double turnRateValue() {
-        return turnRate.get();
-    }
-
-    public double brakingValue() {
-        return braking.get();
-    }
-
-    public double maneuverMaxSpeedValue() {
-        return maneuverMaxSpeed.get();
     }
 
     public boolean serverGlideGuardValue() {

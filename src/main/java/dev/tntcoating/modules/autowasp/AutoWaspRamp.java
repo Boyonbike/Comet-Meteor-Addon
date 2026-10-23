@@ -9,17 +9,14 @@ package dev.tntcoating.modules.autowasp;
 import java.util.Objects;
 
 /**
- * Auto Wasp's pursuit speed ramp, in blocks per tick of total movement: VolytraFly's plateau curve, kept apart from
- * Adaptive Elytra Fly so each module can be tuned alone. Speed starts at {@code start}, gains
- * {@code step·(plateau − speed)/plateau} per tick and stops at {@code limit} without reshaping the curve. Following the
- * actual movement each tick makes the curve an acceleration limit from any speed. A setback rewinds
- * {@code rewindTicks} of the curve instead of restarting it, then holds that speed for {@code holdTicks} before
+ * VolytraFly's boost ramp for one axis of Auto Wasp's pursuit, in blocks per tick, kept apart from Adaptive Elytra
+ * Fly so each module can be tuned alone. Speed starts at {@code start}, gains {@code step·(plateau − speed)/plateau}
+ * per tick and stops at {@code limit} without reshaping the curve. Slowing down for a waypoint or the target leaves the
+ * ramp where it is, since the server never checks slowing down; only a real collision costs ramp speed. A setback
+ * rewinds {@code rewindTicks} of the curve instead of restarting it, then holds that speed for {@code holdTicks} before
  * accelerating again, so back-to-back setbacks cannot pin the flight.
  */
 public final class AutoWaspRamp {
-    /** VolytraFly's 300 b/s curve top, in blocks per tick. */
-    public static final double PLATEAU = 15;
-
     public record Settings(double start, double plateau, double step, int rewindTicks, int holdTicks, double limit) {
         public Settings {
             if (!Double.isFinite(start) || start < 0 || !Double.isFinite(plateau) || plateau < 0) {
@@ -69,8 +66,8 @@ public final class AutoWaspRamp {
         speed = next(speed, settings.step(), settings.plateau(), ceiling());
     }
 
-    /** Never faster than the movement actually flown, so speeding up again starts from there. */
-    public void follow(double actual) {
+    /** After a real collision cost speed, continue the ramp from what was kept. */
+    public void limitTo(double actual) {
         if (!engaged || !(actual >= 0)) return;
         speed = Math.max(floor(), Math.min(speed, actual));
     }

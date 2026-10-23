@@ -35,38 +35,58 @@ Enable **Comet → auto-wasp-devils** to pursue the nearest loaded player with e
 This is the DEVILS Auto Wasp port: it retains A* obstacle routing, local avoidance,
 emergency braking, stuck recovery, target movement prediction, a three-axis offset,
 and the Nether flight-height cap: nothing above y 123 in the Nether counts as open.
-**horizontal-speed** and **vertical-speed** are blocks per tick, and total speed never
-passes 17 blocks per tick, the most a vanilla server accepts. It jumps and opens
-equipped wings like a second press of Jump near the top of the jump, and retries a
-refused open after half a second (a tenth in water or lava) instead of every few ticks.
-Meteor's stock Auto Wasp remains available and links to this port in its settings.
+It jumps and opens equipped wings like a second press of Jump near the top of the jump,
+and retries a refused open after half a second (a tenth in water or lava) instead of
+every few ticks. Meteor's stock Auto Wasp remains available and links to this port in
+its settings.
+
+**How fast it flies.** Like Adaptive Elytra Fly's boost, pursuit flies to what a vanilla
+server accepts, taking 6b6t's limits to be the same. The server only checks how far each
+move packet travels: one packet a tick may cover about 17 blocks, but when lag or ping jitter delivers two in the same server
+tick the second fails above 12.25 blocks per tick (245 b/s). It never checks slowing down
+or turning. So:
+
+- **horizontal-max-bps** (default **240**, up to **300**) caps level flight. 240 is the
+  fastest that is never set back for distance, even when packets bunch. Up to 300 is
+  faster but set back whenever two packets arrive together, which the ramp then rewinds.
+  The old DEVILS default was 40 b/s; set **horizontal-max-bps** to 40 for roughly the old
+  pace.
+- **3d-max-bps** (default **180**) caps total 3D speed while pursuit climbs or descends
+  (faster than 1 b/s), and for half a second after, so a target bobbing up and down cannot
+  make it flicker. Keep it below **horizontal-max-bps**, so climbs and dives fly slower than
+  level flight. While it applies, both boost ramps are held to it, the vertical one keeping
+  its share, and afterwards they speed up again from it along the curve instead of
+  snapping back to the horizontal limit.
+- Pursuit boosts on VolytraFly's curve: horizontally from **60 b/s** at once, gaining
+  **ramp-step** (default **0.3**) per tick at rest and tapering towards 300 b/s, so it
+  reaches 240 b/s in about 3.5 seconds. **vertical-max-bps** (default and maximum **60**)
+  caps climbing and descending, which boost from 30 b/s each time a climb turns into a
+  descent or back.
+- Because slowing down is never checked, pursuit flies at the ramp's speed and lands on
+  each waypoint, or on the target, on the final tick instead of braking early. Slowing
+  down there keeps the ramp's speed for the next stretch; as in VolytraFly, only a real
+  collision, a setback or the 3D limit costs ramp speed. Its distance to the next waypoint caps each
+  tick's move along the route, so it does not overshoot into terrain the route has not
+  checked.
+- While the target is in plain sight, pursuit flies straight at it, instead of at a
+  waypoint that can be a whole path refresh (up to 1.6 seconds) old.
+- A server setback rewinds both ramps by **setback-rewind-ticks** (default **15**, under
+  1% near top speed) and holds there for **setback-hold-ticks** (default **1**). When two
+  setbacks in a row put you back on the same spot, pursuit glides with plain vanilla
+  physics for **pinned-glide-ticks** (default **10**, 0 disables) until the server accepts
+  a move. A correction more than 64 blocks away is a teleport and starts a new route.
+- After an elytra goes on, pursuit leaves the new glide to vanilla physics for a quarter
+  of a second, so the server settles it before boosting.
+- The local obstacle avoidance from DEVILS keeps the sideways push it was tuned for at
+  2 blocks/tick (40 b/s), rather than scaling it up with **horizontal-max-bps**.
+
+The module list shows **3D limited**, **Unpinning**, **Settling glide**, **Glide
+clearance** or **Taking off** beside the target while they apply.
 
 **predict-movement** (default on) leads the target by its movement over your ping plus
 the three ticks other players' movement takes to show, at most 8 ticks, measured from
 where the client shows it rather than the velocity the server last sent. When flying
 straight at the target, pursuit also matches its speed instead of trailing behind.
-
-**Speed Ramp.** Pursuit speeds up along the same plateau curve as Adaptive Elytra Fly's
-unlimited boost, using its own copy of the code. From **ramp-start-speed** (default **1**
-block/tick) it gains up to **ramp-step** (default **0.3**) per tick, tapering towards 15
-blocks/tick, until it reaches your speed caps: about half a second at the defaults. The
-ramp follows what pursuit actually flew, so it also paces speeding up again after
-braking, a turn or a wall. A server setback rewinds it by **setback-rewind-ticks**
-(default **15**) and holds that speed for **setback-hold-ticks** (default **1**) instead
-of asking for full speed again at once. When two setbacks in a row put you back on the
-same spot, pursuit glides with plain vanilla physics for **pinned-glide-ticks** (default
-**10**, 0 disables) until the server accepts a move. A correction more than 64 blocks
-away is a teleport and starts a new route.
-**turn-rate** (default **30**° per tick, doubling at **horizontal-speed**) limits how fast
-pursuit swings its own heading. Turning stays instant below 0.6 blocks per tick, a
-reversal of 135° or more brakes first, and avoidance and emergency braking are never
-limited. **braking** (default **0.3**) slows the approach to the target or a waypoint, so
-pursuit no longer flies at full speed until the last tick and then stops dead.
-**maneuver-max-speed** (default **10** blocks/tick) caps total speed while turning and
-climbing or descending at once; it only matters with speeds raised above it. After an
-elytra goes on, pursuit leaves the new glide to vanilla physics for a quarter of a
-second, so the server settles it first. The module list shows **Unpinning**, **Settling
-glide**, **Glide clearance** or **Taking off** beside the target while they apply.
 
 **Server Glide.** A vanilla server keeps simulating an ordinary glide from each position
 you report, and a wall hit in that hidden move deals damage however slowly you were
@@ -87,9 +107,10 @@ terrain is close below, and equips elytra again for pursuit. It uses your invent
 without chat commands and pauses swaps in containers, with a carried cursor item,
 or during Comet tool/weapon inventory loans. Turn it off to manage equipment manually.
 An elytra with 1 durability left cannot glide, so it counts as missing and is swapped
-for a usable one. Once the chestplate is on, the target must move
-**chest-swap-hysteresis** (default **1.5**) blocks beyond a range before the elytra goes
-back on, so a target at the edge of a range does not swap you back and forth.
+for a usable one. Once the chestplate is on, every chest-swap range is
+**chest-swap-hysteresis** (default **1.5**) blocks wider before the elytra goes back on,
+so a target at the edge of a range does not swap you back and forth; 0 swaps back at the
+same ranges.
 The module disables active stock Auto Wasp, Elytra Fly and Baritone Elytra when it
 starts so movement controllers do not compete. Keep those modules off during pursuit.
 It pauses movement control for Freecam and disables on leaving a world. Route
@@ -514,7 +535,7 @@ Automated tests cover:
 - Baritone elytra hand-off: when a trip is flown or walked, take-off timing and retries, and what happens after a flight ends
 - Elytra Log: when the worn elytra is due and whether a spare can still replace it
 - adaptive ElytraFly: recorded flight feel (sixteen scripted flights under defaults and the user's saved settings must reproduce their per-tick movement and boost ramps exactly), setbacks that only rewind boost, overdrive and the shared 3D server limit; adaptive cruise/Sprint speed caps, boost caps that stop the fixed curve, maneuver mode's 3D cap (only when climbing and turning together, and re-ramping from the cap afterwards), Sprint acceleration and vertical boost, smooth vertical release and adjustable vertical reversal; low-speed wall manoeuvring and recovery after guarding, preserved steering, reversals and unloaded-chunk protection; bounded swept-body terrain checks, negative coordinates, blended turns and floor touchdown
-- Auto Wasp: its own speed ramp (curve, caps, following flown speed, setback rewind and hold), pinned and teleport corrections, settling after elytra swaps, paced takeoff, heading limits, reversal and arrival braking, maneuver caps, ping-aware target prediction, worn-out elytra and chestplate choice with swap hysteresis, the server-glide guard and steering against walls and unloaded chunks, and navigation endpoints
+- Auto Wasp: the server's per-packet limits (including two packets in one tick), VolytraFly's horizontal and vertical boost curves with caps, the 3D limit while climbing or descending (its hold, the ramps' shares and recovery from it), collision-only speed loss, setback rewind and hold, pinned and teleport corrections, settling after elytra swaps, paced takeoff, ping-aware target prediction, worn-out elytra and chestplate choice with swap hysteresis, the server-glide guard and steering against walls and unloaded chunks, and navigation endpoints
 
 The release builds and its automated tests pass against Meteor 26.1.2-42. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), Elytra Log's logout, and Auto Wasp's pursuit, takeoff, chest swaps, setback recovery and server-glide guard.
 

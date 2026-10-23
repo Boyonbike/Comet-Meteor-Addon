@@ -7,7 +7,8 @@
  *
  * Modified for Comet by Boyonabike on 2026-10-22: Minecraft 26.1.2 mappings,
  * local inventory integration, lifecycle/navigation guards and settings credits;
- * block-keyed clearance and floor/ceiling caches shared by nearby samples.
+ * block-keyed clearance and floor/ceiling caches shared by nearby samples, and
+ * chasing the live target whenever it is in plain sight.
  * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -116,11 +117,14 @@ public final class AutoWaspPathfinder {
 
     public Vec3 steerTarget(Vec3 fallback) {
         Vec3 playerPos = module.client().player.position();
+        // In plain sight, chase the live target: a waypoint can be a whole path refresh old, which at boost speed is
+        // far behind a moving target.
+        if (isDirectPathClear(playerPos, fallback)) return fallback;
         if (currentWaypointIndex < currentPath.size()) {
             Vec3 waypoint = currentPath.get(currentWaypointIndex);
             if (isDirectPathClear(playerPos, waypoint)) return waypoint;
         }
-        return isDirectPathClear(playerPos, fallback) ? fallback : playerPos;
+        return playerPos;
     }
 
     public Vec3 adjustToSafeCorridor(Vec3 desired, Vec3 fallbackRef) {
