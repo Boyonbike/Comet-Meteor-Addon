@@ -109,7 +109,7 @@ public final class AllayShulkerKiller extends AllayModule {
     }
 
     private boolean attackable(Allay allay) {
-        return isShulker(allay.getMainHandItem()) && mc.player.isWithinAttackRange(mc.player.getMainHandItem(), allay.getBoundingBox(), 0)
+        return isShulker(allay.getMainHandItem()) && mc.player.isWithinAttackRange(allay.getBoundingBox(), 0)
             && visible(allay);
     }
 }

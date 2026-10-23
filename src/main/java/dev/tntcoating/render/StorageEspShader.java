@@ -4,10 +4,8 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.buffers.Std140SizeCalculator;
 import com.mojang.blaze3d.pipeline.BlendFunction;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.pipeline.DepthStencilState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.platform.CompareOp;
+import com.mojang.blaze3d.platform.DepthTestFunction;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
@@ -39,8 +37,9 @@ public final class StorageEspShader extends PostProcessShader implements AutoClo
         .withUniform("MeshData", UniformType.UNIFORM_BUFFER)
         .withUniform("StorageData", UniformType.UNIFORM_BUFFER)
         // This depth belongs only to the mask. Terrain must never hide storage ESP.
-        .withDepthStencilState(new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, true))
-        .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
+        .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST)
+        .withDepthWrite(true)
+        .withBlend(BlendFunction.TRANSLUCENT)
         .withCull(false)
         .build();
 

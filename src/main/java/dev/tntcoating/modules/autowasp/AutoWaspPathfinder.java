@@ -201,7 +201,7 @@ public final class AutoWaspPathfinder {
                 }
                 for (int z = minZ; z <= maxZ; z++) {
                     mutable.set(x, y, z);
-                    if (!module.client().level.hasChunk(mutable.getX() >> 4, mutable.getZ() >> 4)
+                    if (!module.client().level.hasChunkAt(mutable)
                         || !module.client().level.getBlockState(mutable).getCollisionShape(module.client().level, mutable).isEmpty()) {
                         clearanceCache.put(key, false);
                         return false;
@@ -216,7 +216,7 @@ public final class AutoWaspPathfinder {
 
     public boolean isSolid(BlockPos pos) {
         if (module.client().level == null || module.client().level.isOutsideBuildHeight(pos.getY())
-            || !module.client().level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) return true;
+            || !module.client().level.hasChunkAt(pos)) return true;
         return !module.client().level.getBlockState(pos).getCollisionShape(module.client().level, pos).isEmpty();
     }
 

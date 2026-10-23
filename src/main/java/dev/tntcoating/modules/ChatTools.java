@@ -296,7 +296,7 @@ public final class ChatTools extends Module {
     private String homeServerKey() {
         String server = mc.getCurrentServer() != null ? mc.getCurrentServer().ip.toLowerCase(Locale.ROOT)
             : mc.getSingleplayerServer() != null ? "local:" + ((MinecraftServerAccessor) (Object) mc.getSingleplayerServer())
-                .meteor$getStorageSource().getLevelPath(LevelResource.ROOT).toAbsolutePath().normalize() : "local";
+                .meteor$getSession().getLevelPath(LevelResource.ROOT).toAbsolutePath().normalize() : "local";
         return server + "/" + (mc.player == null ? "" : mc.player.getGameProfile().id());
     }
     public List<String> favoriteHomes() { return ChatHomeFavorites.names(savedFavorites.get(), homeServerKey()); }

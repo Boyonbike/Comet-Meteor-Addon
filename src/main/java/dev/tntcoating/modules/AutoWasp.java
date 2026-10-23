@@ -10,6 +10,8 @@
  * VolytraFly boost and setback settings sized to the server's movement limits,
  * server-glide settings, ping-aware target prediction, worn-out elytra handling
  * and chest-swap hysteresis.
+ * Ported to Minecraft 1.21.11 for Comet on 2026-10-23: chest-slot swaps use
+ * the 1.21.11 inventory click API.
  * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -494,8 +496,8 @@ public class AutoWasp extends Module {
         if (slot < 0) return;
         if (meteordevelopment.meteorclient.utils.player.SlotUtils.isHotbar(slot)
             || slot == net.minecraft.world.entity.player.Inventory.SLOT_OFFHAND) {
-            mc.gameMode.handleContainerInput(mc.player.inventoryMenu.containerId, 6, slot,
-                net.minecraft.world.inventory.ContainerInput.SWAP, mc.player);
+            mc.gameMode.handleInventoryMouseClick(mc.player.inventoryMenu.containerId, 6, slot,
+                net.minecraft.world.inventory.ClickType.SWAP, mc.player);
         } else meteordevelopment.meteorclient.utils.player.InvUtils.move().from(slot).toArmor(2);
         if (glider) flightController.elytraSwapped();
         chestSwapCooldown = CHEST_SWAP_COOLDOWN_TICKS;

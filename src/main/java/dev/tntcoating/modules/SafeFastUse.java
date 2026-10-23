@@ -5,7 +5,7 @@ import dev.tntcoating.core.ShulkerUseGuard;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.PlaceBlockEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
-import meteordevelopment.meteorclient.events.meteor.KeyInputEvent;
+import meteordevelopment.meteorclient.events.meteor.KeyEvent;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
@@ -87,7 +87,7 @@ public final class SafeFastUse extends Module {
 
     @EventHandler private void onGameLeft(GameLeftEvent event) { reset(); }
 
-    @EventHandler private void onKey(KeyInputEvent event) {
+    @EventHandler private void onKey(KeyEvent event) {
         if (event.action == KeyAction.Release && mc.options.keyUse.matches(event.input)) shulkers.clear();
     }
 

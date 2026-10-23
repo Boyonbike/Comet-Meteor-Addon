@@ -9,10 +9,10 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.state.gui.BlitRenderState;
-import net.minecraft.client.renderer.state.gui.GuiItemRenderState;
+import net.minecraft.client.gui.render.state.BlitRenderState;
+import net.minecraft.client.gui.render.state.GuiItemRenderState;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
 import com.mojang.blaze3d.shaders.UniformType;
@@ -43,8 +43,8 @@ public final class ShulkerIconRenderer {
         finally { extractingColour = previous; }
     }
 
-    public static void draw(GuiGraphicsExtractor graphics, ItemStack item, Integer colour) {
-        withColour(colour, () -> graphics.item(item, 0, 0));
+    public static void draw(GuiGraphics graphics, ItemStack item, Integer colour) {
+        withColour(colour, () -> graphics.renderItem(item, 0, 0));
     }
 
     public static BlitRenderState colourBlit(BlitRenderState original, GuiItemRenderState item) {
@@ -71,8 +71,10 @@ public final class ShulkerIconRenderer {
                 .withUniform("DynamicTransforms", UniformType.UNIFORM_BUFFER)
                 .withUniform("Projection", UniformType.UNIFORM_BUFFER)
                 .withVertexFormat(base.getVertexFormat(), base.getVertexFormatMode())
-                .withDepthStencilState(java.util.Optional.ofNullable(base.getDepthStencilState()))
-                .withColorTargetState(base.getColorTargetState())
+                .withDepthTestFunction(base.getDepthTestFunction())
+                .withDepthWrite(base.isWriteDepth())
+                .withBlend(base.getBlendFunction().orElseThrow())
+                .withColorWrite(base.isWriteColor(), base.isWriteAlpha())
                 .withCull(base.isCull())
                 .build();
         }

@@ -11,6 +11,8 @@
  * limit while climbing or descending, setback rewind and pinned-glide recovery,
  * swap settling, paced takeoff, collision-only ramp loss and the server-glide
  * wall guard.
+ * Ported to Minecraft 1.21.11 for Comet on 2026-10-23: movement is set through
+ * Meteor 1.21.11's IVec3d interface.
  * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -20,7 +22,7 @@ package dev.tntcoating.modules.autowasp;
 
 import dev.tntcoating.modules.AutoWasp;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
-import meteordevelopment.meteorclient.mixininterface.IVec3;
+import meteordevelopment.meteorclient.mixininterface.IVec3d;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.protocol.Packet;
@@ -242,7 +244,7 @@ public final class AutoWaspFlightController {
         velocity = guardServerGlide(player, velocity);
         if (limit3d.active() && state.equals("Pursuing")) state = "3D limited";
 
-        ((IVec3) event.movement).meteor$set(velocity.x, velocity.y, velocity.z);
+        ((IVec3d) event.movement).meteor$set(velocity.x, velocity.y, velocity.z);
         moveStart = position;
         lastOutput = velocity;
     }

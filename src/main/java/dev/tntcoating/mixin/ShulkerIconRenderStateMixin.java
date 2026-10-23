@@ -1,7 +1,7 @@
 package dev.tntcoating.mixin;
 
 import dev.tntcoating.render.ShulkerIconRenderState;
-import net.minecraft.client.renderer.state.gui.GuiItemRenderState;
+import net.minecraft.client.gui.render.state.GuiItemRenderState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 

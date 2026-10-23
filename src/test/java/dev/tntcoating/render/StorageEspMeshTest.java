@@ -175,7 +175,7 @@ class StorageEspMeshTest {
                     if (method.getName().equals("isDevelopment")) return false;
                     throw new AssertionError("Unexpected launcher call: " + method.getName());
                 }));
-            deviceField.set(null, device);
+            deviceField.set(null, device.proxy);
             vertexField.set(DefaultVertexFormat.POSITION_COLOR, null);
             indexField.set(DefaultVertexFormat.POSITION_COLOR, null);
             // Utils initializes a projection UBO, so install the recording device before loading it.
@@ -204,33 +204,41 @@ class StorageEspMeshTest {
         }
     }
 
-    private static final class RecordingDevice extends GpuDevice {
+    private static final class RecordingDevice {
         final List<MemoryBuffer> uploaded = new ArrayList<>();
         int writes;
 
-        RecordingDevice() { super(null); }
+        final GpuDevice proxy = (GpuDevice) Proxy.newProxyInstance(GpuDevice.class.getClassLoader(),
+            new Class<?>[] {GpuDevice.class}, (instance, method, args) -> switch (method.getName()) {
+                case "createBuffer" -> args[2] instanceof ByteBuffer bytes
+                    ? createBuffer(null, (int) args[1], bytes) : createBuffer(null, (int) args[1], (long) args[2]);
+                case "createCommandEncoder" -> createCommandEncoder();
+                case "getRenderer" -> "Comet regression fixture";
+                default -> throw new AssertionError("Unexpected device call: " + method.getName());
+            });
 
-        @Override public GpuBuffer createBuffer(Supplier<String> label, int usage, long size) {
+        public GpuBuffer createBuffer(Supplier<String> label, int usage, long size) {
             return new MemoryBuffer(usage, Math.toIntExact(size));
         }
 
-        @Override public GpuBuffer createBuffer(Supplier<String> label, int usage, ByteBuffer source) {
+        public GpuBuffer createBuffer(Supplier<String> label, int usage, ByteBuffer source) {
             MemoryBuffer result = new MemoryBuffer(usage, source.remaining());
             result.write(0, source);
             uploaded.add(result);
             return result;
         }
 
-        @Override public CommandEncoder createCommandEncoder() {
-            return new CommandEncoder(null, null) {
-                @Override public void writeToBuffer(GpuBufferSlice target, ByteBuffer source) {
-                    ((MemoryBuffer) target.buffer()).write(Math.toIntExact(target.offset()), source);
+        public CommandEncoder createCommandEncoder() {
+            return (CommandEncoder) Proxy.newProxyInstance(CommandEncoder.class.getClassLoader(),
+                new Class<?>[] {CommandEncoder.class}, (instance, method, args) -> {
+                    if (!method.getName().equals("writeToBuffer"))
+                        throw new AssertionError("Unexpected encoder call: " + method.getName());
+                    GpuBufferSlice target = (GpuBufferSlice) args[0];
+                    ((MemoryBuffer) target.buffer()).write(Math.toIntExact(target.offset()), (ByteBuffer) args[1]);
                     writes++;
-                }
-            };
+                    return null;
+                });
         }
-
-        @Override public String getRenderer() { return "Comet regression fixture"; }
     }
 
     private static final class MemoryBuffer extends GpuBuffer {

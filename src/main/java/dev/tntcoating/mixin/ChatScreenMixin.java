@@ -11,7 +11,6 @@ import net.minecraft.client.gui.ActiveTextCollector;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.components.CommandSuggestions;
 import net.minecraft.client.gui.TextAlignment;
-import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.util.FormattedCharSequence;
@@ -24,7 +23,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(net.minecraft.client.gui.screens.ChatScreen.class)
 public abstract class ChatScreenMixin {
-    @Shadow private ChatComponent.DisplayMode displayMode;
     @Shadow private CommandSuggestions commandSuggestions;
 
     @Unique private ChatTools comet$tools() {
@@ -45,7 +43,7 @@ public abstract class ChatScreenMixin {
         var finder = new PlayerNameStyleFinder(mc.font, (int) event.x(), (int) event.y(), onlineNames(mc))
             .includeInsertions(true);
         mc.gui.getChat().captureClickableText(finder, mc.getWindow().getGuiScaledHeight(),
-            mc.gui.getGuiTicks(), displayMode);
+            mc.gui.getGuiTicks(), true);
         Style style = finder.result();
         String player = tools.playerFor(style);
         if (player != null) {

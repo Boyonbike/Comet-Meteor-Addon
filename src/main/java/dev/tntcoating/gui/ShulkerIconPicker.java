@@ -16,7 +16,6 @@ import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
 import meteordevelopment.meteorclient.gui.widgets.WItem;
 import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
 import meteordevelopment.meteorclient.utils.misc.Names;
-import meteordevelopment.meteorclient.utils.render.DisplayItemUtils;
 import net.minecraft.client.renderer.item.TrackingItemStackRenderState;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.BlockItem;
@@ -113,7 +112,7 @@ public final class ShulkerIconPicker extends WindowScreen {
         @Override protected void onRender(GuiRenderer renderer, double mouseX, double mouseY, double delta) {
             Icon<Item> selected = icon.get();
             renderer.post(() -> ShulkerIconRenderer.withColour(selected.style() == Style.SolidColour ? selected.colour() : null,
-                () -> renderer.item(DisplayItemUtils.toStack(selected.item()), (int) x, (int) y, (float) theme.scale(2), false)));
+                () -> renderer.item(selected.item().getDefaultInstance(), (int) x, (int) y, (float) theme.scale(2), false)));
         }
     }
 }

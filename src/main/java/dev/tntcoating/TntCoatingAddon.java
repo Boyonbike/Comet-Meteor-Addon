@@ -49,7 +49,7 @@ import meteordevelopment.meteorclient.systems.modules.player.AutoReplenish;
 import net.minecraft.world.item.Items;
 
 public final class TntCoatingAddon extends MeteorAddon {
-    public static final Category CATEGORY = new Category("Comet", () -> Items.TNT.getDefaultInstance());
+    public static final Category CATEGORY = new Category("Comet", Items.TNT.getDefaultInstance());
 
     private static List<Module> orderedModules = List.of();
 

@@ -31,7 +31,7 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WLabel;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
-import meteordevelopment.meteorclient.mixininterface.IVec3;
+import meteordevelopment.meteorclient.mixininterface.IVec3d;
 import meteordevelopment.meteorclient.pathing.PathManagers;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
@@ -66,7 +66,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
@@ -300,7 +300,7 @@ public final class AdaptiveElytraFly extends Module {
         if (event.packet instanceof ClientboundPlayerPositionPacket position) {
             corrections.updateAndGet(n -> n < 1024 ? n + 1 : n);
             glideSetback.set(position);
-        } else if (event.packet instanceof ClientboundSetEntityMotionPacket motion && motion.id() == playerId) {
+        } else if (event.packet instanceof ClientboundSetEntityMotionPacket motion && motion.getId() == playerId) {
             glideMotion.set(motion);
         } else if (event.packet instanceof ClientboundExplodePacket explosion) {
             explosion.playerKnockback().ifPresent(push -> glideKnockback.accumulateAndGet(push, Vec3::add));
@@ -410,7 +410,7 @@ public final class AdaptiveElytraFly extends Module {
         if (slot < 0) return;
         if (SlotUtils.isHotbar(slot) || slot == Inventory.SLOT_OFFHAND) {
             // A single click exchanges both items, even with a completely full inventory.
-            mc.gameMode.handleContainerInput(mc.player.inventoryMenu.containerId, 6, slot, ContainerInput.SWAP, mc.player);
+            mc.gameMode.handleInventoryMouseClick(mc.player.inventoryMenu.containerId, 6, slot, ClickType.SWAP, mc.player);
         } else InvUtils.move().from(slot).toArmor(2);
         if (glider) boostDelay.swapped();
     }
@@ -439,7 +439,7 @@ public final class AdaptiveElytraFly extends Module {
         if (setback != null) serverGlide = toMotion(PositionMoveRotation.calculateAbsolute(
             new PositionMoveRotation(p.position(), toVec(serverGlide), p.getYRot(), p.getXRot()),
             setback.change(), setback.relatives()).deltaMovement());
-        if (motion != null) serverGlide = toMotion(motion.movement());
+        if (motion != null) serverGlide = toMotion(motion.getMovement());
         if (!knockback.equals(Vec3.ZERO)) serverGlide = toMotion(toVec(serverGlide).add(knockback));
         rockets = Math.max(attachedRockets(p), pendingRocketTicks > 0 ? 1 : 0);
     }
@@ -532,7 +532,7 @@ public final class AdaptiveElytraFly extends Module {
         } else engine.repeat(body, probe);
         Motion output = engine.output();
         lastControlledPosition = mc.player.position();
-        ((IVec3) event.movement).meteor$set(output.x(), output.y(), output.z());
+        ((IVec3d) event.movement).meteor$set(output.x(), output.y(), output.z());
         return true;
     }
 

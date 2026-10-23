@@ -65,7 +65,7 @@ public final class AutoWaspGlideTracker {
         if (packet instanceof ClientboundPlayerPositionPacket position) {
             corrections.updateAndGet(n -> n < 1024 ? n + 1 : n);
             setback.set(position);
-        } else if (packet instanceof ClientboundSetEntityMotionPacket push && push.id() == playerId) {
+        } else if (packet instanceof ClientboundSetEntityMotionPacket push && push.getId() == playerId) {
             motion.set(push);
         } else if (packet instanceof ClientboundExplodePacket explosion) {
             explosion.playerKnockback().ifPresent(push -> knockback.accumulateAndGet(push, Vec3::add));
@@ -117,7 +117,7 @@ public final class AutoWaspGlideTracker {
         if (correction != null) serverGlide = finite(PositionMoveRotation.calculateAbsolute(
             new PositionMoveRotation(p.position(), serverGlide, p.getYRot(), p.getXRot()),
             correction.change(), correction.relatives()).deltaMovement());
-        if (push != null) serverGlide = finite(push.movement());
+        if (push != null) serverGlide = finite(push.getMovement());
         if (!blast.equals(Vec3.ZERO)) serverGlide = finite(serverGlide.add(blast));
         rockets = Math.max(attachedRockets(p), pendingRocketTicks > 0 ? 1 : 0);
     }

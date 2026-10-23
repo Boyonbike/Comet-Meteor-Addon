@@ -2,8 +2,6 @@ package dev.tntcoating.core;
 
 import net.minecraft.SharedConstants;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.data.registries.VanillaRegistries;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.Bootstrap;
@@ -31,8 +29,6 @@ class WeaponAttackReadinessTest {
     @BeforeAll static void bootstrapMinecraft() {
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
-        BuiltInRegistries.DATA_COMPONENT_INITIALIZERS.build(VanillaRegistries.createLookup())
-            .forEach(components -> components.apply());
     }
 
     @Test void oldEquipmentCannotReleaseAnAttackEvenWhenItsCooldownIsFull() {

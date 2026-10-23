@@ -12,6 +12,17 @@ base {
 }
 
 repositories {
+    // Build 82 has been pruned from upstream Maven; keep this exact dependency reproducible.
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "vendored-meteor-82"
+                url = uri("vendor/maven")
+                metadataSources { mavenPom(); artifact() }
+            }
+        }
+        filter { includeModule("meteordevelopment", "meteor-client") }
+    }
     maven {
         name = "meteor-maven"
         url = uri("https://maven.meteordev.org/releases")
@@ -36,14 +47,15 @@ repositories {
 dependencies {
     // Fabric
     minecraft(libs.minecraft)
-    implementation(libs.fabric.loader)
+    mappings(loom.officialMojangMappings())
+    modImplementation(libs.fabric.loader)
 
     // Meteor
-    implementation(libs.meteor.client)
+    modImplementation(libs.meteor.client)
 
     // Optional integrations, present at runtime only if the player installed them
-    compileOnly(libs.xaero.minimap)
-    compileOnly(libs.baritone)
+    modCompileOnly(libs.xaero.minimap)
+    modCompileOnly(libs.baritone)
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -129,6 +141,8 @@ val sourceDistribution = tasks.register<Zip>("sourceDistribution") {
     from("src") { into("src") }
     from("gradle") { into("gradle") }
     from("scripts") { into("scripts") }
+    // Meteor build 82 resolves only from here, since upstream pruned it.
+    from("vendor") { into("vendor") }
     from("gradlew", "gradlew.bat", "build.gradle.kts", "settings.gradle.kts", "gradle.properties",
         "LICENSE", "LICENSE-Speedmine", "LICENSE-DEVILS", "LICENSE-NoTextureRotations", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md")
 }

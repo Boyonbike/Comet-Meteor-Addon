@@ -7,7 +7,7 @@ import meteordevelopment.meteorclient.systems.modules.combat.AutoWeapon;
 import meteordevelopment.meteorclient.systems.modules.player.AutoTool;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.ItemStack;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -80,7 +80,7 @@ public final class InventorySlotLoan {
         displaced = selectedStack.copy();
         miningIdleTicks = 0;
         beforeSwap.run();
-        mc.gameMode.handleContainerInput(menu.containerId, menuSlot, selected, ContainerInput.SWAP, mc.player);
+        mc.gameMode.handleInventoryMouseClick(menu.containerId, menuSlot, selected, ClickType.SWAP, mc.player);
         return true;
     }
 
@@ -127,7 +127,7 @@ public final class InventorySlotLoan {
 
         var slot = menu.getSlot(menuSlot);
         if (!slot.mayPickup(mc.player) || !slot.mayPlace(atHotbar)) return false;
-        mc.gameMode.handleContainerInput(menu.containerId, menuSlot, hotbar, ContainerInput.SWAP, mc.player);
+        mc.gameMode.handleInventoryMouseClick(menu.containerId, menuSlot, hotbar, ClickType.SWAP, mc.player);
         clear();
         return true;
     }

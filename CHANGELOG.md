@@ -3,6 +3,14 @@
 ## 0.25.16
 
 - **Anti Coords:** the new **anti-coords** module makes your coordinates as hard as possible to work out from what you show. It hides the texture rotations and model offsets that blocks pick from their own position, adapted from rfresh2's NoTextureRotations (Apache-2.0). **Fixed** mode (default) gives every block the same rotation and offset; **Keyed** keeps vanilla's variety by hashing positions under a secret key. Unlike the original, doors, beds and tall plants are covered too. With **clean-screenshots** (default on), the screenshot key saves only the world, leaving out every HUD, F3, chat, menu, Meteor overlay and other mods' overlays. See [Anti Coords](README.md#anti-coords).
+- **1.21.11 port:** Meteor build 82 draws its 2D layer, and flushes vanilla's HUD, while the HUD is built, so on 1.21.11 the clean screenshot is taken as soon as the world is drawn, before any of the GUI is built.
+
+## 1.21.11 port of 0.25.15
+
+- Bring the 1.21.11 build up to 0.25.15: Auto Wasp Devils, the Allay modules, Adaptive Elytra Fly's **steer-server-glide** and the removal of Home Packet Log, as described under 0.25.13 to 0.25.15 below.
+- Adapt Auto Wasp's chest-slot swaps, movement output and server-glide packet reads, and Allay Shulker Killer's reach check, to the 1.21.11 APIs. Allay Farm right-clicks an allay as the 1.21.11 client does: at the aimed point first, then a plain interaction if that does nothing.
+- Include `vendor/` in the source archive, so it builds against Meteor build 82.
+- All 819 automated tests and 224 offscreen shader pixel checks pass against Meteor 1.21.11-82, and the new mixin targets are checked against the pinned dependencies.
 
 ## 0.25.15
 
@@ -23,6 +31,17 @@
 ## 0.25.13
 
 - **Auto Wasp Devils:** ported DEVILS’ elytra pursuit, A* routing, obstacle avoidance, braking and stuck recovery into Comet. Added local chestplate/elytra swapping, navigation guards, visible GPLv3 settings credits, bundled licence/provenance and a matching source distribution. Meteor’s original Auto Wasp links to the port.
+
+## Meteor 1.21.11 build 82 compatibility
+
+- Compile and test the 1.21.11 port against Meteor build 82, and lower the runtime minimum from build 86 to build 82. All module upgrade hooks fit build 82.
+- Preserve the archived build 82 dependency in `vendor/maven` with its source, checksum and upstream commit documented in `vendor/README.md`, since upstream Maven no longer hosts it. Meteor remains a separate player-installed dependency.
+
+## 1.21.11 port of 0.25.11
+
+- Retarget Minecraft 1.21.11 and Java 21, using Loom Remap with official Mojang mappings. Pin Meteor build 86 and matching Xaero Minimap and Baritone dependencies.
+- Adapt inventory clicks, movement packets, Meteor interfaces, chat rendering, shulker icons and storage shader pipelines to the 1.21.11 APIs. Preserve the 0.25.11 modules and settings.
+- Update Fast Use and tab-list local captures, and verify every configured mixin against the pinned dependencies. Adapt GPU and registry test fixtures to 1.21.11.
 
 ## 0.25.12
 

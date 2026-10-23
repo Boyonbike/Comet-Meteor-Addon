@@ -10,6 +10,8 @@ import dev.tntcoating.core.ChatTeleportState;
 import dev.tntcoating.core.ChatToolsLayout;
 import dev.tntcoating.core.ChatTpaRequests;
 import dev.tntcoating.modules.ChatTools;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -18,7 +20,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.IntConsumer;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
@@ -26,7 +28,10 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
+import org.lwjgl.PointerBuffer;
 import org.lwjgl.glfw.GLFW;
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import static dev.tntcoating.gui.ChatToolsStyle.*;
 
@@ -45,9 +50,9 @@ public final class ChatToolsScreen extends Screen {
     private static final Page[] TABS = {Page.Home, Page.Players, Page.Clan, Page.Homes, Page.Hotspot, Page.Settings};
     private static final String[] TAB_LABELS = {"Overview", "Players", "Clan", "Homes", "Hotspot", "Settings"};
     private static final long NOTICE_MILLIS = 4_000;
+    private static final long MAX_IMPORT_BYTES = 1 << 20;
     private static final String DOT = " · ";
     private final ChatTools tools;
-    private final ChatToolsFiles files = new ChatToolsFiles();
     private final List<Hit> hits = new ArrayList<>();
     private final List<ChatServerSettings.Entry> settingsPath = new ArrayList<>();
     private final Map<String, String> drafts = new HashMap<>();
@@ -59,12 +64,12 @@ public final class ChatToolsScreen extends Screen {
     private int x = -1, y, w, h, bodyTop, bodyBottom, cursor, scroll, maxScroll;
     private int cx, cw;
     private ChatToolsLayout.Frame layout;
-    private boolean dragging, resizing, content;
+    private boolean dragging, resizing, content, choosingFile;
     private double dragX, dragY;
     private String notice = "";
     private long noticeAt;
     private int mouseX, mouseY;
-    private GuiGraphicsExtractor graphics;
+    private GuiGraphics graphics;
     private List<ChatTeleportState.Timer> timers = List.of();
     private List<ChatTpaRequests.Request> requests = List.of();
     private List<ChatMessages.Message> cachedMessages = List.of();
@@ -211,7 +216,7 @@ public final class ChatToolsScreen extends Screen {
         else fill(tools.commandAvailable("r") ? "/r " : "/reply ");
     }
 
-    @Override public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float delta) {
+    @Override public void render(GuiGraphics g, int mx, int my, float delta) {
         fit();
         graphics = g; mouseX = mx; mouseY = my;
         timers = tools.timers(); requests = tools.requests();
@@ -295,7 +300,7 @@ public final class ChatToolsScreen extends Screen {
         int send = buttonWidth("Send");
         panel(graphics, box.x(), box.y(), box.width() - send - GAP, box.height(), 4,
             input.isFocused() ? mix(BORDER, accent(), 0.7) : BORDER, SURFACE);
-        input.extractRenderState(graphics, mouseX, mouseY, delta);
+        input.render(graphics, mouseX, mouseY, delta);
         button("Send", page == Page.Conversation ? "Send to " + recipient + " (Enter)" : "Send (Enter)",
             box.right() - send, box.y(), send, Tone.Primary, !input.getValue().isBlank(), this::sendInput);
         for (int i = 0; i < 3; i++) graphics.fill(x + w - 4 - i * 3, y + h - 4, x + w - 3 - i * 3, y + h - 3, MUTED);
@@ -388,8 +393,8 @@ public final class ChatToolsScreen extends Screen {
         String typed = clanField.getValue().strip();
         var entered = ChatClan.typed(typed).names().stream().filter(name -> !tools.inClan(name)).toList();
         var actions = new Actions(cx + cw, cursor)
-            .add("Import CSV", files.choosing() ? "Waiting for the file picker" : "Add members from a .csv file, or drop one on this window",
-                Tone.Secondary, !files.choosing(), this::importCsv)
+            .add("Import CSV", choosingFile ? "Waiting for the file picker" : "Add members from a .csv file, or drop one on this window",
+                Tone.Secondary, !choosingFile, this::importCsv)
             .add("Add", entered.isEmpty() ? "Type usernames to add, separated by commas"
                     : "Add " + (entered.size() == 1 ? entered.getFirst() : entered.size() + " players") + " to the clan",
                 Tone.Primary, !entered.isEmpty(), this::addTyped);
@@ -427,17 +432,56 @@ public final class ChatToolsScreen extends Screen {
         focus(clanField);
     }
 
-    /** Opens the native picker on its own thread, then imports the chosen clan list. */
+    /**
+     * Meteor's own Import buttons use this native picker too. It waits on its own thread, because blocking the game
+     * thread while the player browses would also stop keep-alive replies to the server.
+     */
     private void importCsv() {
-        files.choose(Minecraft.getInstance(), this::importFiles, this::notice);
+        if (choosingFile) return;
+        choosingFile = true;
+        var mc = Minecraft.getInstance();
+        Thread picker = new Thread(() -> {
+            Path chosen = null;
+            boolean failed = false;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                PointerBuffer filters = stack.pointers(stack.UTF8("*.csv"), stack.UTF8("*.txt"));
+                String path = TinyFileDialogs.tinyfd_openFileDialog("Import clan members", null, filters, "CSV files", false);
+                if (path != null) chosen = Path.of(path);
+            } catch (RuntimeException | LinkageError e) {
+                failed = true;
+            }
+            Path file = chosen;
+            boolean error = failed;
+            mc.execute(() -> {
+                choosingFile = false;
+                if (error) notice("Could not open a file picker. Drop the .csv file on this window instead.");
+                else if (file != null) importFiles(List.of(file));
+            });
+        }, "Comet clan import");
+        picker.setDaemon(true);
+        picker.start();
     }
 
-    private void importFiles(List<Path> paths) {
+    private void importFiles(List<Path> files) {
         if (page != Page.Clan) navigate(Page.Clan);
-        var imported = ChatToolsFiles.read(paths, this::notice);
-        if (imported == null) return;
-        int added = tools.addToClan(imported.names());
-        notice(ChatClan.summary(added, imported.names().size() - added, imported.invalid()));
+        List<String> names = List.of();
+        int invalid = 0;
+        for (Path file : files) {
+            String name = String.valueOf(file.getFileName());
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (!lower.endsWith(".csv") && !lower.endsWith(".txt")) { notice(name + " is not a .csv file."); return; }
+            try {
+                if (Files.size(file) > MAX_IMPORT_BYTES) { notice(name + " is too large for a clan list."); return; }
+                var result = ChatClan.csv(ChatClan.decode(Files.readAllBytes(file)));
+                names = ChatClan.add(names, result.names());
+                invalid += result.invalid();
+            } catch (IOException | RuntimeException e) {
+                notice("Could not read " + name + ".");
+                return;
+            }
+        }
+        int added = tools.addToClan(names);
+        notice(ChatClan.summary(added, names.size() - added, invalid));
     }
 
     private void homes() {
@@ -633,7 +677,7 @@ public final class ChatToolsScreen extends Screen {
         panel(graphics, sx, sy, sw, CONTROL, 4, field.isFocused() ? mix(BORDER, accent(), 0.7) : BORDER, SURFACE);
         icon(graphics, SEARCH, sx + 7, sy + (CONTROL - iconHeight(SEARCH)) / 2, field.isFocused() ? TEXT : MUTED);
         visibleSearch = field;
-        field.extractRenderState(graphics, mouseX, mouseY, delta);
+        field.render(graphics, mouseX, mouseY, delta);
     }
 
     /** An uppercase section label, with an optional count or note on the right, or a link. */
@@ -921,7 +965,7 @@ public final class ChatToolsScreen extends Screen {
         graphics.pose().pushMatrix();
         graphics.pose().translate(lx, ly);
         graphics.pose().scale(scale);
-        graphics.text(Minecraft.getInstance().font, text, 0, 0, color, false);
+        graphics.drawString(Minecraft.getInstance().font, text, 0, 0, color, false);
         graphics.pose().popMatrix();
     }
 

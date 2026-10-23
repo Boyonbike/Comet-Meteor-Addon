@@ -126,7 +126,7 @@ public final class AntiCoords extends Module {
     private static String context(Minecraft mc, ClientLevel level) {
         String dimension = level.dimension().identifier().toString();
         Object server = mc.getSingleplayerServer();
-        if (server != null) return "sp\0" + ((MinecraftServerAccessor) server).meteor$getStorageSource()
+        if (server != null) return "sp\0" + ((MinecraftServerAccessor) server).meteor$getSession()
             .getLevelPath(LevelResource.ROOT).normalize().getFileName() + "\0" + dimension;
         ServerData data = mc.getCurrentServer();
         return "mp\0" + (data == null ? "" : data.ip.trim().toLowerCase(Locale.ROOT)) + "\0" + dimension;
@@ -148,7 +148,7 @@ public final class AntiCoords extends Module {
         return true;
     }
 
-    /** Before the frame is extracted: hides the hand, block outline and name tags, as F1 does. */
+    /** Before the frame is drawn: hides the hand, block outline and name tags, as F1 does. */
     public static void beforeFrame() {
         AntiCoords module = instance;
         if (module == null || module.pendingScreenshot == null || module.capturing) return;

@@ -10,8 +10,8 @@ package dev.tntcoating.modules;
 import meteordevelopment.meteorclient.events.entity.player.StartBreakingBlockEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.mixin.ServerboundMovePlayerPacketAccessor;
-import meteordevelopment.meteorclient.mixininterface.IServerboundMovePlayerPacket;
+import meteordevelopment.meteorclient.mixin.PlayerMoveC2SPacketAccessor;
+import meteordevelopment.meteorclient.mixininterface.IPlayerMoveC2SPacket;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -51,14 +51,14 @@ import dev.tntcoating.mixin.SpeedminePredictionAccessor;
 import dev.tntcoating.mixin.GameModeInvoker;
 import dev.tntcoating.core.SpeedmineOption;
 import dev.tntcoating.core.SpeedmineInventory;
-import dev.tntcoating.core.SpeedminePolicy;
 import dev.tntcoating.core.SpeedmineRange;
-import dev.tntcoating.core.SpeedmineTargeting;
-import dev.tntcoating.core.SpeedmineTiming;
 import dev.tntcoating.render.SpeedmineRender;
 
 import java.util.*;
 import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.function.Predicate;
+import net.minecraft.world.phys.AABB;
 
 
 //Thank you very much mushek
@@ -450,8 +450,13 @@ public class Speedmine extends Module {
 
     public boolean liftsAirMiningPenalty() {
         return isActive() && airMine.get() && mc.player != null && mc.getConnection() != null
-            && SpeedminePolicy.canClaimAir(mc.player.onGround(), mc.player.isFallFlying(), airWhileGliding.get(),
+            && canClaimAir(mc.player.onGround(), mc.player.isFallFlying(), airWhileGliding.get(),
                 mc.player.isCreative(), mc.player.isSpectator(), mc.player.getDeltaMovement().horizontalDistance(), airMaxSpeed.get());
+    }
+
+    static boolean canClaimAir(boolean onGround, boolean gliding, boolean allowGliding, boolean creative,
+                               boolean spectator, double speed, double maximum) {
+        return !onGround && (!gliding || allowGliding) && !creative && !spectator && speed <= maximum;
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
@@ -469,7 +474,7 @@ public class Speedmine extends Module {
             airClaimLeft = airClaimWindow.get();
         } else if (event.packet instanceof ServerboundMovePlayerPacket move && airClaimLeft > 0
             && event.connection == airClaimConnection && liftsAirMiningPenalty()) {
-            ((ServerboundMovePlayerPacketAccessor) move).meteor$setOnGround(true);
+            ((PlayerMoveC2SPacketAccessor) move).meteor$setOnGround(true);
         }
     }
 
@@ -478,7 +483,7 @@ public class Speedmine extends Module {
         try {
             ServerboundMovePlayerPacket packet = new ServerboundMovePlayerPacket.PosRot(mc.player.getX(), mc.player.getY(), mc.player.getZ(),
                 mc.player.getYRot(), mc.player.getXRot(), onGround, mc.player.horizontalCollision);
-            if (onGround) ((IServerboundMovePlayerPacket) packet).meteor$setTag(1337);
+            if (onGround) ((IPlayerMoveC2SPacket) packet).meteor$setTag(1337);
             mc.getConnection().send(packet);
         } finally {
             airInjecting = false;
@@ -541,7 +546,7 @@ public class Speedmine extends Module {
         clientTick++;
         if (airClaimLeft > 0 && (--airClaimLeft == 0 || !liftsAirMiningPenalty())) restoreAirGround();
         long now = System.currentTimeMillis();
-        startCredit = SpeedmineTiming.replenishStartCredit(startCredit, now - lastStartCreditMs, effectiveTps());
+        startCredit = replenishStartCredit(startCredit, now - lastStartCreditMs, effectiveTps());
         lastStartCreditMs = now;
         pendingBreaks.removeIf(pending -> now >= pending.deadlineMs());
         if (rebreakPending && now >= rebreakDeadlineMs) rebreakPending = false;
@@ -561,7 +566,7 @@ public class Speedmine extends Module {
             if (secondary != null) secondary.lastProgressMs = now;
             boolean eating = inventory.isEating()
                 || (mc.player.isUsingItem() && mc.player.getUseItem().has(DataComponents.FOOD));
-            if (SpeedminePolicy.canMineBedrockWhileEating(bedrockWhileEating.get(), eating, inventory.getCurrentPriority())) tickAutoMine();
+            if (canMineBedrockWhileEating(bedrockWhileEating.get(), eating, inventory.getCurrentPriority())) tickAutoMine();
             else stopBedrock();
             return;
         }
@@ -765,7 +770,7 @@ public class Speedmine extends Module {
             }));
 
         if (ctx.requiresValidation() || (silent && swapMode.get() == SwapMode.ToolHold)) {
-            double ticksPerMs = SpeedmineTiming.serverTicks(1, TickRate.INSTANCE.getTickRate()) * ctx.calcDelta();
+            double ticksPerMs = serverTicks(1, TickRate.INSTANCE.getTickRate()) * ctx.calcDelta();
             long deadline = System.currentTimeMillis() + (long) Math.clamp(
                 ticksPerMs > 0 ? 1 / ticksPerMs + 1000 : 30000, 2000, 30000);
             // At most two normal validations and the latest instant/rebreak hold.
@@ -851,7 +856,7 @@ public class Speedmine extends Module {
         int budget = autoDoubleMine.get() && doubleBreak.get() ? 2 : 1;
 
         List<BlockPos> targets = findAutoTargets();
-        BlockPos targetBedrock = SpeedmineTargeting.selectBedrockTarget(previousBedrock, targets,
+        BlockPos targetBedrock = selectBedrockTarget(previousBedrock, targets,
             pos -> mc.level.getBlockState(pos).is(Blocks.BEDROCK));
         if (targetBedrock != null) mineBedrock(targetBedrock);
         else if (previousBedrock != null && mc.gameMode != null) mc.gameMode.stopDestroyBlock();
@@ -890,7 +895,7 @@ public class Speedmine extends Module {
         for (Player player : mc.level.players()) {
             boolean friend = Friends.get().isFriend(player);
             double distance = player.distanceTo(mc.player);
-            if (SpeedmineTargeting.eligibleEnemy(player == mc.player, player.isSpectator(), friend, distance, enemyRange.get())) enemies.add(player);
+            if (eligibleEnemy(player == mc.player, player.isSpectator(), friend, distance, enemyRange.get())) enemies.add(player);
             else if (friend) friends++;
             else if (distance > enemyRange.get()) distant++;
         }
@@ -902,7 +907,7 @@ public class Speedmine extends Module {
 
         // Digging an enemy out beats chipping at their surround
         autoAirRejected = autoSelfRejected = autoRangeRejected = autoDisabledRejected = autoUnbreakableRejected = 0;
-        List<BlockPos> targets = SpeedmineTargeting.prioritizeTargets(antiPhase.get(), antiSurround.get(),
+        List<BlockPos> targets = prioritizeTargets(antiPhase.get(), antiSurround.get(),
             () -> collect(enemies, this::phaseBlocks), () -> collect(enemies, this::surroundBlocks));
         if (debugAutoMine.get() && targets.isEmpty()) {
             autoMineStatus = !antiPhase.get() && !antiSurround.get() ? "Both anti-phase and anti-surround are disabled."
@@ -910,6 +915,16 @@ public class Speedmine extends Module {
                     autoAirRejected, autoSelfRejected, autoRangeRejected, autoDisabledRejected, autoUnbreakableRejected);
         }
         return targets;
+    }
+
+    static boolean eligibleEnemy(boolean self, boolean spectator, boolean friend, double distance, double range) {
+        return !self && !spectator && !friend && distance <= range;
+    }
+
+    static List<BlockPos> prioritizeTargets(boolean phase, boolean surround,
+            Supplier<List<BlockPos>> phaseTargets, Supplier<List<BlockPos>> surroundTargets) {
+        List<BlockPos> targets = phase ? phaseTargets.get() : List.of();
+        return targets.isEmpty() && surround ? surroundTargets.get() : targets;
     }
 
     private List<BlockPos> collect(List<Player> enemies, Function<Player, List<BlockPos>> candidates) {
@@ -931,7 +946,7 @@ public class Speedmine extends Module {
     /** Every block the enemy's hitbox overlaps. */
     private List<BlockPos> phaseBlocks(Player enemy) {
         List<BlockPos> out = new ArrayList<>();
-        for (BlockPos pos : SpeedmineTargeting.phaseCandidates(enemy.getBoundingBox())) {
+        for (BlockPos pos : phaseCandidates(enemy.getBoundingBox())) {
             if (outOfRange(pos)) {
                 if (!mc.level.getBlockState(pos).isAir()) phaseRejection = "out of reach at " + pos.toShortString();
                 autoRangeRejected++;
@@ -943,6 +958,16 @@ public class Speedmine extends Module {
                     : mc.level.getBlockState(pos).is(Blocks.BEDROCK) && !mineBedrock.get()
                         ? "mine-bedrock is off at " : "not eligible at ") + pos.toShortString();
             }
+        }
+        return out;
+    }
+
+    static List<BlockPos> phaseCandidates(AABB box) {
+        List<BlockPos> out = new ArrayList<>();
+        // Merely touching a face is not phasing into its block.
+        for (BlockPos pos : BlockPos.betweenClosed(BlockPos.containing(box.minX, box.minY, box.minZ),
+                BlockPos.containing(Math.nextDown(box.maxX), Math.nextDown(box.maxY), Math.nextDown(box.maxZ)))) {
+            out.add(pos.immutable());
         }
         return out;
     }
@@ -973,7 +998,12 @@ public class Speedmine extends Module {
 
     /** True if the block is inside or directly against our own hitbox — breaking it drops or exposes us. */
     private boolean touchesSelf(BlockPos pos) {
-        return SpeedmineTargeting.protectsSelf(mc.player.getBoundingBox(), pos);
+        return protectsSelf(mc.player.getBoundingBox(), pos);
+    }
+
+    static boolean protectsSelf(AABB self, BlockPos pos) {
+        return self.inflate(1).intersects(pos.getX(), pos.getY(), pos.getZ(),
+            pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1);
     }
 
     private boolean mineable(BlockPos pos) {
@@ -999,6 +1029,11 @@ public class Speedmine extends Module {
      *
      * No tool swap — bedrock breaks at the same speed with anything, so whatever is held works.
      */
+    static BlockPos selectBedrockTarget(BlockPos previous, List<BlockPos> targets, Predicate<BlockPos> bedrock) {
+        if (previous != null && targets.contains(previous) && bedrock.test(previous)) return previous;
+        return targets.stream().filter(bedrock).findFirst().orElse(null);
+    }
+
     private void stopBedrock() {
         if (bedrockPos != null && mc.gameMode != null && mc.getConnection() != null) mc.gameMode.stopDestroyBlock();
         bedrockPos = null;
@@ -1059,11 +1094,15 @@ public class Speedmine extends Module {
 
     private void releaseHeldSlot() {
         SpeedmineInventory inventory = SpeedmineInventory.getInstance();
-        if (mc.player != null && SpeedminePolicy.shouldRestoreSlot(heldSlot, inventory.getServerSlot())) {
+        if (mc.player != null && shouldRestoreSlot(heldSlot, inventory.getServerSlot())) {
             inventory.setSlotForced(mc.player.getInventory().getSelectedSlot());
         }
         heldSlot  = -1;
         idleTicks = 0;
+    }
+
+    static boolean shouldRestoreSlot(int held, int server) {
+        return held >= 0 && held == server;
     }
 
     // ── Sequenced packet helpers ──────────────────────────────────────────────
@@ -1112,7 +1151,16 @@ public class Speedmine extends Module {
 
     private boolean shouldPauseMining() {
         SpeedmineInventory inventory = SpeedmineInventory.getInstance();
-        return SpeedminePolicy.shouldPauseMining(multitask.get(), mc.player.isUsingItem(), inventory.isEating(), inventory.getCurrentPriority());
+        return shouldPauseMining(multitask.get(), mc.player.isUsingItem(), inventory.isEating(), inventory.getCurrentPriority());
+    }
+
+    static boolean shouldPauseMining(boolean multitask, boolean usingItem, boolean eating, int priority) {
+        return (!multitask && (usingItem || eating))
+            || (priority > SpeedmineInventory.Priority.NORMAL && (!multitask || priority != SpeedmineInventory.Priority.EATING));
+    }
+
+    static boolean canMineBedrockWhileEating(boolean enabled, boolean eating, int priority) {
+        return enabled && eating && !shouldPauseMining(true, true, true, priority);
     }
 
     private void resetRebreakMonitor() {
@@ -1142,7 +1190,20 @@ public class Speedmine extends Module {
     }
 
     private boolean canStart() {
-        return SpeedmineTiming.canStart(tpsSync.get(), effectiveTps(), startCredit);
+        return canStart(tpsSync.get(), effectiveTps(), startCredit);
+    }
+
+    static boolean canStart(boolean sync, float tps, double credit) {
+        return !sync || !Float.isFinite(tps) || tps >= 20 || credit >= 1;
+    }
+
+    static double replenishStartCredit(double credit, long elapsedMillis, float tps) {
+        // Retain fractional overflow so tick jitter does not discard earned starts.
+        return Math.min(2, credit + serverTicks(elapsedMillis, tps));
+    }
+
+    static double serverTicks(long elapsedMillis, float tps) {
+        return Math.max(0, elapsedMillis) / 1000.0 * Math.clamp(Float.isFinite(tps) ? tps : 20, 0, 20);
     }
 
     public void requestBreak(BlockPos pos) {
@@ -1303,7 +1364,7 @@ public class Speedmine extends Module {
             if (mc.player == null || mc.level == null || hardness < 0) return 0;
             long now = System.currentTimeMillis();
             if (!shouldPauseMining()) {
-                elapsedTicks += SpeedmineTiming.serverTicks(now - lastProgressMs, effectiveTps());
+                elapsedTicks += serverTicks(now - lastProgressMs, effectiveTps());
             }
             lastProgressMs = now;
             float perTick = calcDelta();

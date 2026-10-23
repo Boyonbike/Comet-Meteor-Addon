@@ -3,7 +3,7 @@ package dev.tntcoating.gui;
 import meteordevelopment.meteorclient.gui.GuiThemes;
 import meteordevelopment.meteorclient.gui.themes.meteor.MeteorGuiTheme;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 
 /**
  * The chat tools design system: one palette, one spacing and size scale, pixel-snapped type and bitmap icons.
@@ -80,14 +80,14 @@ public final class ChatToolsStyle {
     /** Cap height, used to centre a line of text vertically in a box. */
     public static int capHeight(float scale) { return Math.round(7 * scale); }
 
-    public static void text(GuiGraphicsExtractor g, String text, int x, int y, int width, int color) {
+    public static void text(GuiGraphics g, String text, int x, int y, int width, int color) {
         type(g, text, x, y, width, color, bodyScale());
     }
-    public static void small(GuiGraphicsExtractor g, String text, int x, int y, int width, int color) {
+    public static void small(GuiGraphics g, String text, int x, int y, int width, int color) {
         type(g, text, x, y, width, color, smallScale());
     }
     /** Draws one line, ending in "..." when it is wider than {@code width}. */
-    public static void type(GuiGraphicsExtractor g, String text, int x, int y, int width, int color, float scale) {
+    public static void type(GuiGraphics g, String text, int x, int y, int width, int color, float scale) {
         if (width <= 0) return;
         var font = Minecraft.getInstance().font;
         int max = Math.max(0, (int) (width / scale));
@@ -96,15 +96,15 @@ public final class ChatToolsStyle {
         g.pose().pushMatrix();
         g.pose().translate(x, y);
         g.pose().scale(scale);
-        g.text(font, clipped, 0, 0, color, false);
+        g.drawString(font, clipped, 0, 0, color, false);
         g.pose().popMatrix();
     }
 
-    public static void round(GuiGraphicsExtractor g, int x, int y, int width, int height, int radius, int color) {
+    public static void round(GuiGraphics g, int x, int y, int width, int height, int radius, int color) {
         round(g, x, y, width, height, radius, color, true, true);
     }
     /** A rectangle whose top and/or bottom corners are rounded; list rows use it to join into one grouped card. */
-    public static void round(GuiGraphicsExtractor g, int x, int y, int width, int height, int radius, int color, boolean top, boolean bottom) {
+    public static void round(GuiGraphics g, int x, int y, int width, int height, int radius, int color, boolean top, boolean bottom) {
         if (width <= 0 || height <= 0) return;
         int r = Math.min(radius, Math.min(width, height) / (top && bottom ? 2 : 1));
         if (r < 1 || !top && !bottom) { g.fill(x, y, x + width, y + height, color); return; }
@@ -117,15 +117,15 @@ public final class ChatToolsStyle {
             if (bottom) g.fill(x + inset, y + height - row - 1, x + width - inset, y + height - row, color);
         }
     }
-    public static void panel(GuiGraphicsExtractor g, int x, int y, int width, int height, int radius, int border, int fill) {
+    public static void panel(GuiGraphics g, int x, int y, int width, int height, int radius, int border, int fill) {
         panel(g, x, y, width, height, radius, border, fill, true, true);
     }
-    public static void panel(GuiGraphicsExtractor g, int x, int y, int width, int height, int radius, int border, int fill, boolean top, boolean bottom) {
+    public static void panel(GuiGraphics g, int x, int y, int width, int height, int radius, int border, int fill, boolean top, boolean bottom) {
         round(g, x, y, width, height, radius, border, top, bottom);
         round(g, x + 1, y + (top ? 1 : 0), width - 2, height - (top ? 1 : 0) - (bottom ? 1 : 0), Math.max(0, radius - 1), fill, top, bottom);
     }
 
-    public static void icon(GuiGraphicsExtractor g, String[] bitmap, int x, int y, int color) {
+    public static void icon(GuiGraphics g, String[] bitmap, int x, int y, int color) {
         for (int row = 0; row < bitmap.length; row++) {
             String line = bitmap[row];
             for (int col = 0; col < line.length(); col++) {
@@ -140,7 +140,7 @@ public final class ChatToolsStyle {
     public static int iconWidth(String[] bitmap) { return bitmap[0].length(); }
     public static int iconHeight(String[] bitmap) { return bitmap.length; }
     /** Draws an icon centred in a box. */
-    public static void icon(GuiGraphicsExtractor g, String[] bitmap, int x, int y, int width, int height, int color) {
+    public static void icon(GuiGraphics g, String[] bitmap, int x, int y, int width, int height, int color) {
         icon(g, bitmap, x + (width - iconWidth(bitmap)) / 2, y + (height - iconHeight(bitmap)) / 2, color);
     }
 }

@@ -70,7 +70,7 @@ public final class InventoryWeaponAttack {
             && attack.target.level() == mc.level && attack.target.isAlive() && !attack.target.isRemoved()
             && mc.player.getInventory().getSelectedSlot() == attack.slot
             && ItemStack.matches(attack.weapon, mc.player.getMainHandItem())
-            && mc.player.isWithinAttackRange(attack.weapon, attack.target.getBoundingBox(), 0)
+            && mc.player.isWithinAttackRange(attack.target.getBoundingBox(), 0)
             && (!attack.aimedAttack
                 || mc.hitResult instanceof EntityHitResult hit && hit.getEntity() == attack.target)
             && !mc.player.isUsingItem();

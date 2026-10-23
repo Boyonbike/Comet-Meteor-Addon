@@ -2,24 +2,24 @@
 mod-version = "0.25.16"
 
 # Fabric (https://fabricmc.net/develop)
-jdk = "25"
-minecraft = "26.1.2"
+jdk = "21"
+minecraft = "1.21.11"
 fabric-loader = "0.19.3"
 
 # Loom (https://github.com/FabricMC/fabric-loom)
 loom = "1.17.21"
 
 # Meteor (https://github.com/MeteorDevelopment/meteor-client/)
-# Pinned to snapshot build 42; to update, take the newest <value> from
-# https://maven.meteordev.org/snapshots/meteordevelopment/meteor-client/26.1.2-SNAPSHOT/maven-metadata.xml
-meteor = "26.1.2-20260810.135545-42"
+# Pinned to build 82 in vendor/maven because upstream pruned this snapshot.
+# See vendor/README.md for the artifact source, checksum and upstream commit.
+meteor = "1.21.11-82"
 
 # Mods
 # Xaero's Minimap, compile-only (players install it themselves). Versions: https://modrinth.com/mod/xaeros-minimap/versions
-xaero-minimap = "fabric-26.1.2-26.6.0"
-# Baritone, compile-only (Meteor's build, which players install themselves). Same jar as baritone-meteor-26.1.jar; newest <value> at
-# https://maven.meteordev.org/snapshots/meteordevelopment/baritone/26.1-SNAPSHOT/maven-metadata.xml
-baritone = "26.1-20260423.173134-2"
+xaero-minimap = "fabric-1.21.11-26.6.0"
+# Baritone, compile-only (Meteor's build, which players install themselves). Same jar as baritone-meteor-1.21.11.jar; newest <value> at
+# https://maven.meteordev.org/snapshots/meteordevelopment/baritone/1.21.11-SNAPSHOT/maven-metadata.xml
+baritone = "1.21.11-20260103.131549-1"
 
 [libraries]
 # Fabric base
@@ -34,4 +34,4 @@ xaero-minimap = { module = "maven.modrinth:xaeros-minimap", version.ref = "xaero
 baritone = { module = "meteordevelopment:baritone", version.ref = "baritone" }
 
 [plugins]
-fabric-loom = { id = "net.fabricmc.fabric-loom", version.ref = "loom" }
+fabric-loom = { id = "net.fabricmc.fabric-loom-remap", version.ref = "loom" }

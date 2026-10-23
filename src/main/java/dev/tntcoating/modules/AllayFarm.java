@@ -129,7 +129,8 @@ public final class AllayFarm extends AllayModule {
             FindItemResult found = findItem(item);
             if (!found.found() || !wanted.test(allay)) return;
             holding(found, hand -> {
-                InteractionResult result = mc.gameMode.interact(mc.player, allay, new EntityHitResult(allay, point), hand);
+                InteractionResult result = mc.gameMode.interactAt(mc.player, allay, new EntityHitResult(allay, point), hand);
+                if (!result.consumesAction()) result = mc.gameMode.interact(mc.player, allay, hand);
                 if (result instanceof InteractionResult.Success success) {
                     if (give) exposed.put(allay.getUUID(), ticks);
                     if (success.swingSource() == InteractionResult.SwingSource.CLIENT) mc.player.swing(hand);

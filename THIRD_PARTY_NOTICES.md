@@ -10,7 +10,7 @@ Air-mining adaptation credits Quiettee Utils (GPL-3.0), as noted in its source.
 The adapted files are Speedmine.java, SpeedmineRange.java, SpeedmineRender.java,
 SpeedmineOption.java, SpeedmineAirMixin.java, SpeedmineBlockUpdateMixin.java,
 SpeedminePredictionAccessor.java, and SpeedmineTest.java.
-Comet adaptations target Minecraft 26.1.2 and remove THM services and limiter dependencies.
+Comet adaptations target Minecraft 1.21.11 and remove THM services and limiter dependencies.
 Original Comet source remains available under its CC0 license (LICENSE).
 The combined distribution includes GPL-covered code and must be distributed under
 GPL v3 terms, including corresponding source for the combined work.
@@ -46,15 +46,20 @@ AutoWaspTakeoff.java, AutoWaspChestSwap.java, AutoWaspSetbacks.java,
 AutoWaspSpeed.java, AutoWaspTargetTracker.java, AutoWaspServerGlide.java,
 AutoWaspGlideTracker.java} and mixin/AutoWaspFireworkAccessor.java were written
 for Comet as part of this port and are distributed under the same GPL v3 terms.
+Ported to Minecraft 1.21.11 on 23 October 2026: AutoWasp.java uses the 1.21.11
+inventory click API for chest-slot swaps, and AutoWaspFlightController.java sets
+movement through Meteor 1.21.11's IVec3d interface.
 These modified files remain covered by GPL v3 and carry source/provenance notices.
 No warranty is provided, including merchantability or fitness for a particular purpose.
 
 The settings credit does not replace the licence or corresponding source.
 `./gradlew build` packages LICENSE-DEVILS and this notice inside the JAR and
-produces `build/distributions/comet-<version>-mc26.1.2-source.zip`, containing
+produces `build/distributions/comet-<version>-mc1.21.11-source.zip`, containing
 the modified source for the combined addon, licence notices, and Gradle build
 inputs. Distribute this matching source archive alongside the compiled JAR under
-GPL v3 terms. Dependencies are declared in the build files and resolved by Gradle.
+GPL v3 terms. Dependencies are declared in the build files and resolved by Gradle;
+the archive includes `vendor/`, the Meteor build the 1.21.11 port compiles against,
+since upstream Maven no longer hosts it (see `vendor/README.md`).
 
 ## NoTextureRotations
 
@@ -73,3 +78,6 @@ only hooked for blocks that have one; SipHash-2-4 for one block is computed with
 allocating; the key is kept in meteor-client/comet/anti-coords.key; the entity tick
 is tracked without Fabric API. AntiCoordsScreenshotMixin.java, AntiCoordsFrameMixin.java
 and KeyedHashTest.java were written for Comet.
+Ported to Minecraft 1.21.11 on 23 October 2026: AntiCoords.java reads the singleplayer
+world folder through Meteor build 82's accessor, and AntiCoordsFrameMixin.java hides
+the HUD at the start of the frame and captures before the GUI is built.

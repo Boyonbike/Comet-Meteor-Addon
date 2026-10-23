@@ -173,7 +173,7 @@ public final class FastStorageESP extends Module {
 
         for (var chunk : Utils.chunks()) {
             if (!(chunk instanceof LevelChunk loaded)) continue;
-            long chunkKey = loaded.getPos().pack();
+            long chunkKey = loaded.getPos().toLong();
             liveChunks.add(chunkKey);
             LongOpenHashSet current = spareChunkEntries;
             current.clear();

@@ -19,7 +19,7 @@ public abstract class FastUseMixin {
     @Inject(method = "startUseItem", at = @At(value = "INVOKE",
         target = "Lnet/minecraft/world/item/ItemStack;isItemEnabled(Lnet/minecraft/world/flag/FeatureFlagSet;)Z",
         shift = At.Shift.AFTER))
-    private void comet$fastUseCooldown(CallbackInfo ci, @Local(name = "heldItem") ItemStack heldItem) {
+    private void comet$fastUseCooldown(CallbackInfo ci, @Local(ordinal = 0) ItemStack heldItem) {
         SafeFastUse fastUse = Modules.get().get(SafeFastUse.class);
         if (fastUse != null && fastUse.isActive()) rightClickDelay = fastUse.getItemUseCooldown(heldItem);
     }

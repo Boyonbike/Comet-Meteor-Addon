@@ -1,6 +1,6 @@
 # Comet by Boyonabike — 0.25.16
 
-Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
+Meteor Client addon for Minecraft **1.21.11**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
 - **Flight and movement:** **adaptive-elytra-fly**, **auto-wasp-devils**, **baritone-elytra**, **elytra-log**, **angle-calculator**.
 - **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **anti-coords**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**, **call-to-arms**, **stash-report**.
@@ -9,7 +9,7 @@ Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. 
 - **Allays:** **allay-farm**, **allay-shulker-killer**. See [Allays](#allays).
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown** and **dub-counter**. See [HUD elements](#hud-elements).
 
-Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.16-mc26.1.2.jar`.
+Requires Meteor 1.21.11 (build 82 or newer), Fabric Loader 0.19.3+ and Java 21+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.16-mc1.21.11.jar`.
 
 **Scaffold**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
@@ -25,7 +25,7 @@ Expand **Comet**, then left-click an upgrade to toggle it or use its **Settings*
 
 Right-click a Comet module to open its settings, then click a section header or arrow to expand its dropdown. Setting sections start collapsed; saved section states are respected when loading a configuration. Adaptive Elytra Fly also has a **Flight Diagnostics** dropdown, and Fast Storage ESP puts **Clear Opened Containers** under **Actions**. The **Comet** section added to Meteor's Scaffold also starts collapsed.
 
-**Newer Meteor builds.** Before applying an upgrade to a Meteor module, Comet checks that the installed Meteor still has every method, field and code location the upgrade attaches to. If a Meteor build has changed one, that upgrade alone is skipped: the stock module keeps working, it is not listed under Comet, and chat names the skipped upgrades when you join a world (details are in the log). Adaptive Elytra Fly refuses to start if its Elytra Fly hook was skipped. Builds older than 42 are rejected by Fabric with a clear message.
+**Newer Meteor builds.** Before applying an upgrade to a Meteor module, Comet checks that the installed Meteor still has every method, field and code location the upgrade attaches to. If a Meteor build has changed one, that upgrade alone is skipped: the stock module keeps working, it is not listed under Comet, and chat names the skipped upgrades when you join a world (details are in the log). Adaptive Elytra Fly refuses to start if its Elytra Fly hook was skipped. Builds older than 82 are rejected by Fabric with a clear message.
 
 Version history is in [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.6.1? See [Upgrading](#upgrading-from-061).
 
@@ -120,7 +120,7 @@ best partial route found so far instead of stalling the tick.
 Credits are always shown at the bottom of the module settings: **ThianYong-hub and
 DEVILS contributors**, Meteor Development, GNU GPL v3, the upstream source and revision,
 and Comet port details. The full licence and provenance are bundled in the JAR as
-**LICENSE-DEVILS** and **THIRD_PARTY_NOTICES.md**. Build with Java 25 using
+**LICENSE-DEVILS** and **THIRD_PARTY_NOTICES.md**. Build with Java 21 using
 `sh gradlew build`; distribute the matching **build/distributions/*-source.zip**
 alongside the JAR to supply the modified corresponding source and build inputs.
 The port has regression coverage for navigation, the speed ramp, setbacks, takeoff,
@@ -157,7 +157,7 @@ Enable **Comet → anti-coords** to make your coordinates as hard as possible to
 
 **Screenshots.** With **clean-screenshots** on (default), the screenshot key saves only the world. The capture is taken after the world is drawn and before anything 2D, so it leaves out vanilla's HUD, F3, chat, open menus and toasts, Meteor's HUD and its waypoint labels, nametags and logout spots, and any other mod's overlay. The hand, block outline and vanilla name tags are hidden as F1 hides them. F1 on its own still shows Meteor's waypoint labels, nametags and logout spots. The HUD disappears for the one frame being captured. Outside a world, screenshots work as usual.
 
-Automated tests check the key hashing against Guava's SipHash-2-4 and every Anti Coords hook against Minecraft 26.1.2; in-game rendering still needs verification.
+Automated tests check the key hashing against Guava's SipHash-2-4 and every Anti Coords hook against Minecraft 1.21.11; in-game rendering still needs verification.
 
 ## Shulker Icons
 
@@ -269,7 +269,7 @@ Automated checks cover cache invalidation, camera transforms and retained GPU bu
 
 Enable **dub-counter** to count the ordinary chest blocks in every chunk your client has loaded, shown as dubs (double chests): two chest blocks make one dub, so 25 chests read **12.5**. Trapped chests, copper chests, barrels and ender chests do not count. The count shows beside the module name in Meteor's active-modules list, and the **dub-counter** HUD element adds the chest and loaded-chunk totals.
 
-The count refreshes five times a second from the chunks' block-entity lists, without reading blocks or allocating anything per chest. It resets when you leave a world or disable the module. Ported from Majkey's DubCounter 1.0.0 addon; remove `DubCounter-1.0.0-mc26.1.2.jar` when you install Comet, because both register **dub-counter** and Meteor keeps whichever loads last.
+The count refreshes five times a second from the chunks' block-entity lists, without reading blocks or allocating anything per chest. It resets when you leave a world or disable the module. Ported from Majkey's DubCounter 1.0.0 addon; remove `DubCounter-1.0.0-mc1.21.11.jar` when you install Comet, because both register **dub-counter** and Meteor keeps whichever loads last.
 
 ## Call to Arms and Stash Report
 
@@ -353,7 +353,7 @@ All modes keep player-body and entity collision checks, world-bound checks, visi
 A separate module. Put **dry sponges** in your hotbar or offhand.
 
 - Searches a cube (**search-radius**, default 5) for valid, unobstructed target cells with a visible, reachable support.
-- Scores each spot by the connected drainable water it would absorb: water sources and flowing water, waterlogged blocks, kelp and seagrass. It models vanilla 26.1.2's six-step absorption traversal and 64-cell cap, counting water displaced by the sponge itself. Waterlogged solids are drained by adjacent placement, never replaced or mined.
+- Scores each spot by the connected drainable water it would absorb: water sources and flowing water, waterlogged blocks, kelp and seagrass. It models vanilla 1.21.11's six-step absorption traversal and 64-cell cap, counting water displaced by the sponge itself. Waterlogged solids are drained by adjacent placement, never replaced or mined.
 - Places the highest-scoring reachable spot (ties go to the closer one). This is a best-next-placement heuristic, not a minimum-sponge solution; flowing water and server changes can alter results.
 - Places one sponge, waits for the server update (up to 40 ticks), lets it settle, then rescans (**scan-interval**, default 5 ticks).
 - **break-wet-sponges** (default off) mines only server-confirmed wet sponges this module placed during the current activation, with the currently held tool. Drops must be picked up normally.
@@ -365,7 +365,7 @@ When both modules are on, Smart Sponge takes priority while a sponge is queued o
 
 ## Speedmine
 
-**speedmine** ports THM Addons' packet miner to Minecraft 26.1.2. It keeps queueing,
+**speedmine** ports THM Addons' packet miner to Minecraft 1.21.11. It keeps queueing,
 double break, rebreak, client prediction, silent tool switching, TPS sync, optional
 air mining and automatic enemy targeting. Source credits and licensing are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -529,7 +529,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.16-mc26.1.2.jar` and the matching `build/distributions/comet-0.25.16-mc26.1.2-source.zip`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.16-mc1.21.11.jar` and the matching `build/distributions/comet-0.25.16-mc1.21.11-source.zip`, which includes `vendor/`. Gradle downloads the Java 21 toolchain if needed. Loom Remap (1.17.21, official Mojang mappings) and Meteor (snapshot build 82, `1.21.11-82`) are pinned in `gradle/libs.versions.toml`. Meteor build 82 is retained in `vendor/maven` because the upstream snapshot repository pruned it; see `vendor/README.md` for its source and checksum. Meteor is not bundled in Comet. Xaero's Minimap (`fabric-1.21.11-26.6.0`) comes from Modrinth's Maven and Baritone (`1.21.11-20260103.131549-1`, the same jar as `baritone-meteor-1.21.11.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
 
 Automated tests cover:
 
@@ -552,6 +552,6 @@ Automated tests cover:
 - adaptive ElytraFly: recorded flight feel (sixteen scripted flights under defaults and the user's saved settings must reproduce their per-tick movement and boost ramps exactly), setbacks that only rewind boost, overdrive and the shared 3D server limit; adaptive cruise/Sprint speed caps, boost caps that stop the fixed curve, maneuver mode's 3D cap (only when climbing and turning together, and re-ramping from the cap afterwards), Sprint acceleration and vertical boost, smooth vertical release and adjustable vertical reversal; low-speed wall manoeuvring and recovery after guarding, preserved steering, reversals and unloaded-chunk protection; bounded swept-body terrain checks, negative coordinates, blended turns and floor touchdown
 - Auto Wasp: the server's per-packet limits (including two packets in one tick), VolytraFly's horizontal and vertical boost curves with caps, the 3D limit while climbing or descending (its hold, the ramps' shares and recovery from it), collision-only speed loss, setback rewind and hold, pinned and teleport corrections, settling after elytra swaps, paced takeoff, ping-aware target prediction, worn-out elytra and chestplate choice with swap hysteresis, the server-glide guard and steering against walls and unloaded chunks, and navigation endpoints
 
-The release builds and its automated tests pass against Meteor 26.1.2-42. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), Elytra Log's logout, and Auto Wasp's pursuit, takeoff, chest swaps, setback recovery and server-glide guard.
+The 1.21.11 port passes all 819 automated tests and 224 offscreen shader pixel checks against Meteor 1.21.11-82. All configured mixin targets are checked against the pinned dependencies. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), Elytra Log's logout, and Auto Wasp's pursuit, takeoff, chest swaps, setback recovery and server-glide guard.
 
 Source follows the official Meteor addon template and API, under the included CC0 license.

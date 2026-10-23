@@ -3,7 +3,7 @@ package dev.tntcoating.modules;
 import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.compat.XaeroBridge;
 import meteordevelopment.meteorclient.MeteorClient;
-import meteordevelopment.meteorclient.events.meteor.KeyInputEvent;
+import meteordevelopment.meteorclient.events.meteor.KeyEvent;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
 import meteordevelopment.meteorclient.settings.KeybindSetting;
 import meteordevelopment.meteorclient.settings.Setting;
@@ -45,7 +45,7 @@ public final class WaypointDelete extends Module {
         if (event.action == KeyAction.Press && key.get().matches(event.input) && deleteLookedAt()) event.cancel();
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST) private void onKey(KeyInputEvent event) {
+    @EventHandler(priority = EventPriority.HIGHEST) private void onKey(KeyEvent event) {
         if (event.action == KeyAction.Press && key.get().matches(event.input) && deleteLookedAt()) event.cancel();
     }
 

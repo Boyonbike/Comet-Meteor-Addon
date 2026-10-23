@@ -1,4 +1,4 @@
-1#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Render the real icon shaders offscreen and verify pixel colours (Linux EGL/OpenGL)."""
 
 import ctypes as C
@@ -83,9 +83,8 @@ def main():
     solid = program((shader_path / "shulker_icon.vert").read_text(), (shader_path / "shulker_icon.frag").read_text())
     version_catalog = (ROOT / "gradle/libs.versions.toml").read_text()
     minecraft_version = re.search(r'^minecraft = "([^"]+)"$', version_catalog, re.MULTILINE).group(1)
-    minecraft = next((ROOT / ".gradle/loom-cache/minecraftMaven").rglob(
-        f"minecraft-merged-*-{minecraft_version}.jar"
-    ))
+    gradle_home = Path(__import__("os").environ.get("GRADLE_USER_HOME", Path.home() / ".gradle"))
+    minecraft = gradle_home / "caches/fabric-loom" / minecraft_version / "minecraft-client.jar"
     with zipfile.ZipFile(minecraft) as jar:
         normal = program(jar.read("assets/minecraft/shaders/core/position_tex_color.vsh").decode(),
                          jar.read("assets/minecraft/shaders/core/position_tex_color.fsh").decode())

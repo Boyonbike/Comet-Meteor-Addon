@@ -12,7 +12,7 @@ import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
@@ -46,7 +46,7 @@ public final class ShulkerIcons extends Module {
     @Override public void onActivate() { cache.clear(); }
     @Override public void onDeactivate() { cache.clear(); }
 
-    public void drawOverlay(GuiGraphicsExtractor graphics, ItemStack shulker, int x, int y) {
+    public void drawOverlay(GuiGraphics graphics, ItemStack shulker, int x, int y) {
         if (!isActive() || drawingOverlay || shulker.isEmpty()
             || !(shulker.getItem() instanceof BlockItem block) || !(block.getBlock() instanceof ShulkerBoxBlock)) return;
         ItemContainerContents contents = shulker.get(DataComponents.CONTAINER);
@@ -73,7 +73,7 @@ public final class ShulkerIcons extends Module {
 
     private RenderedIcon selectIcon(ItemContainerContents contents) {
         var entries = new ArrayList<ShulkerIconSelector.Entry<Item>>();
-        contents.nonEmptyItemCopyStream().forEach(stack -> entries.add(new ShulkerIconSelector.Entry<>(stack.getItem(), stack.getCount())));
+        contents.nonEmptyStream().forEach(stack -> entries.add(new ShulkerIconSelector.Entry<>(stack.getItem(), stack.getCount())));
         var selected = ShulkerIconSelector.selectIcon(entries, rules.get());
         return selected == null ? new RenderedIcon(ItemStack.EMPTY, null)
             : new RenderedIcon(selected.item().getDefaultInstance(), selected.style() == Style.SolidColour ? selected.colour() : null);
