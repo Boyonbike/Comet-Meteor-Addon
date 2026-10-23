@@ -13,7 +13,7 @@
  * wall guard.
  * Ported to Minecraft 1.21.11 for Comet on 2026-10-23: movement is set through
  * Meteor 1.21.11's IVec3d interface.
- * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
+ * Distributed under GNU GPL v3; see LICENSE and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  */

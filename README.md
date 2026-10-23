@@ -1,6 +1,53 @@
-# Comet by Boyonabike — 0.25.16
+# Comet by Boyonabike
 
-Meteor Client addon for Minecraft **1.21.11**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
+[![Build](https://github.com/Boyonbike/Comet-Meteor-Addon/actions/workflows/build.yml/badge.svg?branch=1.21.11)](https://github.com/Boyonbike/Comet-Meteor-Addon/actions/workflows/build.yml)
+[![Licence](https://img.shields.io/badge/licence-GPL--3.0--only-blue.svg)](LICENSE)
+[![Minecraft](https://img.shields.io/badge/Minecraft-1.21.11-3c8527.svg)](https://www.minecraft.net/)
+[![Meteor Client](https://img.shields.io/badge/Meteor%20Client-build%2082-8e44ad.svg)](https://meteorclient.com/)
+
+Comet is a Meteor Client addon for Minecraft **1.21.11** covering movement, building,
+storage, chat and server-aware tooling. It includes the DEVILS Auto Wasp port and
+adaptive elytra flight, TNT surface coating, Scaffold and container improvements,
+Chat Tools with homes, teleports and clan management, storage ESP, Speedmine with
+optional bedrock mining, Xaero waypoints, Discord call-to-arms and stash reports,
+and a set of HUD elements. Every module and its settings are documented below.
+
+> **Unofficial addon.** Comet is not affiliated with or endorsed by Meteor
+> Development, Mojang, or any server. Servers may treat some automated, movement or
+> informational features as cheating; use them only where the server's rules allow it.
+
+## Install
+
+1. Install **[Fabric Loader](https://fabricmc.net/use/installer/) 0.19.3 or newer**
+   for Minecraft 1.21.11.
+2. Install **[Meteor Client](https://meteorclient.com/)** build 82 or newer. Both
+   need **Java 21**.
+3. Download the JAR for your Minecraft version from
+   **[Releases](https://github.com/Boyonbike/Comet-Meteor-Addon/releases)**, or
+   [build it from source](#build-and-tests).
+4. Put the JAR in your `.minecraft/mods` folder and start the game.
+5. Open Meteor's GUI and select the **Comet** category.
+
+The Fabric mod ID stays `tnt-coating`. Remove any older Comet JAR before installing
+a new one; two copies cannot load together. **xaero-waypoints** also needs
+[Xaero's Minimap](https://modrinth.com/mod/xaeros-minimap) and **baritone-elytra**
+needs Meteor's [Baritone](https://meteorclient.com/) build; every other module
+works with Meteor alone.
+
+## Version branches
+
+| Branch | Minecraft | Java | Meteor Client | JAR |
+| --- | --- | --- | --- | --- |
+| [`26.1.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.1.2) (default) | 26.1.2 | 25 | build 42 | `comet-0.25.20-mc26.1.2.jar` |
+| [`26.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.2) | 26.2 | 25 | build 35 | `comet-0.25.20-mc26.2.jar` |
+| [`1.21.11`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/1.21.11) | 1.21.11 | 21 | build 82 (vendored) | `comet-0.25.20-mc1.21.11.jar` |
+
+Each branch is a complete, independently buildable tree with its own README,
+changelog and JAR. Features and the release number are kept in step.
+
+## Modules
+
+Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
 - **Flight and movement:** **adaptive-elytra-fly**, **auto-wasp-devils**, **baritone-elytra**, **elytra-log**, **angle-calculator**.
 - **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **anti-coords**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**, **call-to-arms**, **stash-report**.
@@ -8,8 +55,6 @@ Meteor Client addon for Minecraft **1.21.11**. Open Meteor's **Comet** category.
 - **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**, **auto-replenish**.
 - **Allays:** **allay-farm**, **allay-shulker-killer**. See [Allays](#allays).
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown** and **dub-counter**. See [HUD elements](#hud-elements).
-
-Requires Meteor 1.21.11 (build 82 or newer), Fabric Loader 0.19.3+ and Java 21+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.16-mc1.21.11.jar`.
 
 **Scaffold**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
@@ -27,7 +72,49 @@ Right-click a Comet module to open its settings, then click a section header or 
 
 **Newer Meteor builds.** Before applying an upgrade to a Meteor module, Comet checks that the installed Meteor still has every method, field and code location the upgrade attaches to. If a Meteor build has changed one, that upgrade alone is skipped: the stock module keeps working, it is not listed under Comet, and chat names the skipped upgrades when you join a world (details are in the log). Adaptive Elytra Fly refuses to start if its Elytra Fly hook was skipped. Builds older than 82 are rejected by Fabric with a clear message.
 
-Version history is in [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.6.1? See [Upgrading](#upgrading-from-061).
+Version history is in [CHANGELOG.md](CHANGELOG.md). Phase, Elytra Replace and the
+Trajectories upgrade were removed in 0.25.0; see the
+[0.25.0 changelog](CHANGELOG.md#0250). Upgrading from 0.6.1? See
+[Upgrading](#upgrading-from-061).
+
+<details>
+<summary><strong>Contents</strong></summary>
+
+- [Install](#install)
+- [Version branches](#version-branches)
+- [Modules](#modules)
+  - [DEVILS Auto Wasp](#devils-auto-wasp)
+  - [Movement and player utilities](#movement-and-player-utilities)
+  - [Advanced Auto Replenish](#advanced-auto-replenish)
+  - [Anti Coords](#anti-coords)
+  - [Shulker Icons](#shulker-icons)
+  - [Scaffold optimization](#scaffold-optimization)
+  - [Inventory Tweaks transfers](#inventory-tweaks-transfers)
+  - [Auto Tool and Auto Weapon inventory use](#auto-tool-and-auto-weapon-inventory-use)
+  - [Adaptive Elytra Fly](#adaptive-elytra-fly)
+  - [Fast Storage ESP](#fast-storage-esp)
+  - [Dub Counter](#dub-counter)
+  - [Call to Arms and Stash Report](#call-to-arms-and-stash-report)
+  - [Safe Fast Use](#safe-fast-use)
+  - [Allays](#allays)
+  - [Block Coat](#block-coat)
+  - [Smart Sponge](#smart-sponge)
+  - [Speedmine](#speedmine)
+  - [Xaero Waypoints](#xaero-waypoints)
+  - [Waypoint Delete](#waypoint-delete)
+  - [Chat Tools](#chat-tools)
+  - [Proxy tools](#proxy-tools)
+  - [Baritone Elytra](#baritone-elytra)
+  - [Elytra Log](#elytra-log)
+  - [HUD elements](#hud-elements)
+  - [Server pacing and packets](#server-pacing-and-packets)
+- [Performance](#performance)
+- [Upgrading from 0.6.1](#upgrading-from-061)
+- [Build and tests](#build-and-tests)
+- [Contributing](#contributing)
+- [Licence and credits](#licence-and-credits)
+
+</details>
 
 ## DEVILS Auto Wasp
 
@@ -120,7 +207,7 @@ best partial route found so far instead of stalling the tick.
 Credits are always shown at the bottom of the module settings: **ThianYong-hub and
 DEVILS contributors**, Meteor Development, GNU GPL v3, the upstream source and revision,
 and Comet port details. The full licence and provenance are bundled in the JAR as
-**LICENSE-DEVILS** and **THIRD_PARTY_NOTICES.md**. Build with Java 21 using
+**LICENSE** and **THIRD_PARTY_NOTICES.md**. Build with Java 21 using
 `sh gradlew build`; distribute the matching **build/distributions/*-source.zip**
 alongside the JAR to supply the modified corresponding source and build inputs.
 The port has regression coverage for navigation, the speed ramp, setbacks, takeoff,
@@ -445,6 +532,31 @@ DM recognition supports common `From Name:`, `To Name:`, `Name whispers [to you]
 
 Conversations (up to 100, with 250 messages each), queued whispers, drafts and frame position remain in memory for the current connection and clear on disconnect/server change or module disable. Moving between servers of one network, such as 6b6t's workers, keeps them along with homes, requests and timers. Recents and favourites persist per server/account. The redesigned layout and live server interactions still need an in-game check.
 
+## Proxy tools
+
+Comet adds two helpers to Meteor's **Proxies** screen and one to the disconnect
+screen.
+
+- **Fetch Free Proxies** downloads up to 24 SOCKS4/SOCKS5 proxies from
+  ProxyScrape's public list, keeps entries with at least 50% uptime and a measured
+  latency of 1–3000 ms, puts residential ISPs first, adds them to Meteor's proxy
+  list and tests them off-thread. Review the list and test a proxy before
+  connecting; free proxies are untrusted and can see or alter your traffic.
+- **Proxy links** (on by default) opens web links you click in chat or menus in a
+  separate Chrome/Chromium or Firefox profile bound to Meteor's enabled proxy.
+  Profiles live in `meteor-client/proxy-browser/`; the toggle is saved in
+  `meteor-client/proxy-links.txt`. If no supported browser is found, the click
+  falls back to the system browser and its normal connection.
+- **Verification links:** when a disconnect screen contains a URL, Comet adds
+  **Open Verify Link** and **Open Via Proxy** buttons. The direct button uses a
+  clean local browser profile. The proxy button uses the enabled proxy and, with
+  Chrome/Chromium, fills the username, ticks the confirmation box and submits once
+  you have solved the captcha; it does not solve or bypass the captcha.
+
+Proxy use and verification links are subject to the server's rules and terms of
+service. Comet does not create accounts, solve captchas or bypass bans. Check a
+free proxy's location and trustworthiness before using it.
+
 ## Baritone Elytra
 
 A separate module, **baritone-elytra**. It needs Baritone: Meteor's `baritone-meteor` build, which Comet is built against. With it on, a `#goto` or `#path` longer than **min-distance** (default 300 blocks) is flown instead of walked, and Baritone walks the last stretch after landing. Meteor's waypoint **Go To** counts too. The flying is Baritone's own elytra pathfinder (the one behind `#elytra`): vanilla elytra physics and fireworks, steering around terrain, in the Overworld, Nether and End. Comet supplies what `#elytra` lacks for everyday trips.
@@ -532,7 +644,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.16-mc1.21.11.jar` and the matching `build/distributions/comet-0.25.16-mc1.21.11-source.zip`, which includes `vendor/`. Gradle downloads the Java 21 toolchain if needed. Loom Remap (1.17.21, official Mojang mappings) and Meteor (snapshot build 82, `1.21.11-82`) are pinned in `gradle/libs.versions.toml`. Meteor build 82 is retained in `vendor/maven` because the upstream snapshot repository pruned it; see `vendor/README.md` for its source and checksum. Meteor is not bundled in Comet. Xaero's Minimap (`fabric-1.21.11-26.6.0`) comes from Modrinth's Maven and Baritone (`1.21.11-20260103.131549-1`, the same jar as `baritone-meteor-1.21.11.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.20-mc1.21.11.jar` and the matching `build/distributions/comet-0.25.20-mc1.21.11-source.zip`, which includes `vendor/`. `./gradlew test` runs the automated tests on their own. Gradle downloads the Java 21 toolchain if needed. Loom Remap (1.17.21, official Mojang mappings) and Meteor (snapshot build 82, `1.21.11-82`) are pinned in `gradle/libs.versions.toml`. Meteor build 82 is retained in `vendor/maven` because the upstream snapshot repository pruned it; see `vendor/README.md` for its source and checksum. Meteor is not bundled in Comet. Xaero's Minimap (`fabric-1.21.11-26.6.0`) comes from Modrinth's Maven and Baritone (`1.21.11-20260103.131549-1`, the same jar as `baritone-meteor-1.21.11.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled. CI runs the same build on every push and pull request.
 
 Automated tests cover:
 
@@ -555,8 +667,27 @@ Automated tests cover:
 - adaptive ElytraFly: recorded flight feel (sixteen scripted flights under defaults and the user's saved settings must reproduce their per-tick movement and boost ramps exactly), setbacks that only rewind boost, overdrive and the shared 3D server limit; adaptive cruise/Sprint speed caps, boost caps that stop the fixed curve, maneuver mode's 3D cap (only when climbing and turning together, and re-ramping from the cap afterwards), Sprint acceleration and vertical boost, smooth vertical release and adjustable vertical reversal; low-speed wall manoeuvring and recovery after guarding, preserved steering, reversals and unloaded-chunk protection; bounded swept-body terrain checks, negative coordinates, blended turns and floor touchdown
 - Auto Wasp: the server's per-packet limits (including two packets in one tick), VolytraFly's horizontal and vertical boost curves with caps, the 3D limit while climbing or descending (its hold, the ramps' shares and recovery from it), collision-only speed loss, setback rewind and hold, pinned and teleport corrections, settling after elytra swaps, paced takeoff, ping-aware target prediction, worn-out elytra and chestplate choice with swap hysteresis, the server-glide guard and steering against walls and unloaded chunks, and navigation endpoints
 
-The 1.21.11 port passes all 819 automated tests and 224 offscreen shader pixel checks against Meteor 1.21.11-82. All configured mixin targets are checked against the pinned dependencies. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), Elytra Log's logout, and Auto Wasp's pursuit, takeoff, chest swaps, setback recovery and server-glide guard.
+The 1.21.11 port passes all 819 automated tests and 224 offscreen shader pixel checks against Meteor 1.21.11-82. All configured mixin targets are checked against the pinned dependencies. In-game verification is still pending for placement timing, rotations, Sticky switching, container sneak-use and server acceptance, as well as the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), Elytra Log's logout, and Auto Wasp's pursuit, takeoff, chest swaps, setback recovery and server-glide guard.
 
-## Licensing
+## Contributing
 
-Original Comet code is released under CC0 1.0 (`LICENSE`). The combined JAR and source archive include GPL-3.0-only adaptations of THM Addons and DEVILS, an Apache-2.0 adaptation of NoTextureRotations, and Majkey's DubCounter (included with permission), so the combined work is distributed under **GPL-3.0-only**. VolytraFly's CC0 boost curve is credited in the code and in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which also covers the optional Meteor, Baritone and Xaero integrations. Distribute the matching `build/distributions/*-source.zip` with the JAR under GPL v3 terms.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+the build, test and style expectations, and report the branch and Minecraft
+version you used for gameplay problems.
+
+## Licence and credits
+
+Original Comet code is released under **CC0 1.0** (`LICENSE-CC0`). The repository
+as a whole, and every JAR and source archive, is distributed under
+**GPL-3.0-only** (`LICENSE`, version 3 only) because it combines that code with GPL-3.0-only
+adaptations of THM Addons and DEVILS, an Apache-2.0 adaptation of
+NoTextureRotations (`LICENSE-NoTextureRotations`), and Majkey's DubCounter
+(included with permission). VolytraFly's CC0 boost curve is credited in the code
+and in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which lists every
+component, its source revision and the files it covers, including the optional
+Meteor, Baritone and Xaero integrations.
+
+If you redistribute Comet, ship the matching
+`build/distributions/comet-<version>-mc1.21.11-source.zip` with the JAR, as
+GPL-3.0-only requires. The JAR bundles `LICENSE`, `LICENSE-CC0`,
+`LICENSE-NoTextureRotations` and `THIRD_PARTY_NOTICES.md`.

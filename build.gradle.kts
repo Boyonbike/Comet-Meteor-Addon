@@ -105,14 +105,10 @@ tasks {
     jar {
         inputs.property("archivesName", archivesBaseName)
 
-        from("LICENSE-Speedmine")
-        from("LICENSE-DEVILS")
+        from("LICENSE")
+        from("LICENSE-CC0")
         from("LICENSE-NoTextureRotations")
         from("THIRD_PARTY_NOTICES.md")
-
-        from("LICENSE") {
-            rename { "${it}_$archivesBaseName" }
-        }
     }
 
     withType<org.gradle.api.tasks.bundling.AbstractArchiveTask>().configureEach {
@@ -144,7 +140,7 @@ val sourceDistribution = tasks.register<Zip>("sourceDistribution") {
     // Meteor build 82 resolves only from here, since upstream pruned it.
     from("vendor") { into("vendor") }
     from("gradlew", "gradlew.bat", "build.gradle.kts", "settings.gradle.kts", "gradle.properties",
-        "LICENSE", "LICENSE-Speedmine", "LICENSE-DEVILS", "LICENSE-NoTextureRotations", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md")
+        "LICENSE", "LICENSE-CC0", "LICENSE-NoTextureRotations", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md", "CONTRIBUTING.md")
 }
 
 tasks.named("build") { dependsOn(sourceDistribution) }
