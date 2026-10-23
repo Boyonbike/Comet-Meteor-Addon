@@ -3,28 +3,56 @@ package dev.tntcoating.modules;
 import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.compat.BaritoneBridge;
 import dev.tntcoating.compat.BaritoneBridge.Trip;
+import dev.tntcoating.core.AdaptiveFlightController.Motion;
+import dev.tntcoating.core.AdaptiveFlightEngine;
+import dev.tntcoating.core.BaritoneFlight;
+import dev.tntcoating.core.ElytraBoostDelay;
 import dev.tntcoating.core.ElytraHandoff;
 import dev.tntcoating.core.ElytraHandoff.Refusal;
 import dev.tntcoating.core.ElytraTakeoff;
+import dev.tntcoating.core.FlightCorridor;
+import dev.tntcoating.core.ServerGlide;
+import dev.tntcoating.mixin.FireworkRocketAccessor;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import meteordevelopment.meteorclient.MeteorClient;
+import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
+import meteordevelopment.meteorclient.events.entity.player.InteractItemEvent;
+import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.mixininterface.IVec3;
 import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFly;
+import meteordevelopment.meteorclient.systems.modules.render.Freecam;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.Direction;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.PositionMoveRotation;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.Fireworks;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 public final class BaritoneElytra extends Module {
     /** Blocks of open air needed above the player's head to jump, open the elytra and climb away. */
@@ -40,16 +68,58 @@ public final class BaritoneElytra extends Module {
     private final Setting<Boolean> takeOff = general.add(new BoolSetting.Builder().name("take-off").description("Jump and open the elytra from flat ground. Without this, Baritone needs a drop to fall from, or its elytraAutoJump setting.").defaultValue(true).build());
     private final Setting<Boolean> equip = general.add(new BoolSetting.Builder().name("equip-elytra").description("Put on an elytra from your inventory for the flight.").defaultValue(true).build());
     private final Setting<Boolean> swapBack = general.add(new BoolSetting.Builder().name("swap-back").description("Put the chestplate the elytra replaced back on after landing.").defaultValue(true).visible(equip::get).build());
-    private final Setting<Boolean> restock = general.add(new BoolSetting.Builder().name("restock-fireworks").description("Move fireworks into the hotbar when it has none. Baritone only uses hotbar fireworks unless its allowInventory setting is on.").defaultValue(true).build());
-    private final Setting<Integer> restockSlot = general.add(new IntSetting.Builder().name("restock-slot").description("Hotbar slot (1-9) that receives fireworks when the hotbar has no empty slot; its item goes to where the fireworks were. The neighbouring slot is used while this one is selected.").defaultValue(9).range(1, 9).sliderRange(1, 9).visible(restock::get).build());
+    private final Setting<Boolean> restock = general.add(new BoolSetting.Builder().name("restock-fireworks").description("In vanilla flight, move fireworks into the hotbar when it has none. Adjustable Elytra Fly needs no fireworks.").defaultValue(true).visible(this::needsFireworks).build());
+    private final Setting<Integer> restockSlot = general.add(new IntSetting.Builder().name("restock-slot").description("Hotbar slot (1-9) that receives fireworks when the hotbar has no empty slot; its item goes to where the fireworks were. The neighbouring slot is used while this one is selected.").defaultValue(9).range(1, 9).sliderRange(1, 9).visible(() -> needsFireworks() && restock.get()).build());
+    private final SettingGroup flightSettings = settings.createGroup("Elytra Fly");
+    private final Setting<Boolean> controlledFlight = flightSettings.add(new BoolSetting.Builder().name("elytra-fly")
+        .description("Use Elytra Fly for the whole flight, including approach and landing, without fireworks. Baritone chooses the route and landing spot. Turn off for vanilla firework flight.")
+        .defaultValue(true).onChanged(value -> flightModeChanged()).build());
+    private final Setting<Boolean> useAdaptiveSettings = flightSettings.add(new BoolSetting.Builder().name("use-adaptive-settings")
+        .description("Match Adaptive Elytra Fly's configured boost speeds and ramps, up to 340 b/s without split moves. Turn off to adjust Baritone's speeds and ramps below.")
+        .defaultValue(true).visible(controlledFlight::get).build());
+    private final Setting<Double> flightSpeed = flightSettings.add(new DoubleSetting.Builder().name("speed-bps")
+        .description("Horizontal speed cap in blocks per second. Uses the same boost curve as Adaptive Elytra Fly; terrain and turns can slow flight.")
+        .defaultValue(300).range(0, 340).sliderRange(0, 340).decimalPlaces(1).visible(this::customFlightSettings).build());
+    private final Setting<Double> verticalSpeed = flightSettings.add(new DoubleSetting.Builder().name("vertical-speed-bps")
+        .description("Climb and descent speed cap in blocks per second. Baritone's steering pitch determines the direction and slope.")
+        .defaultValue(60).range(0, 60).sliderRange(0, 60).decimalPlaces(1).visible(this::customFlightSettings).build());
+    private final Setting<Double> rampStep = flightSettings.add(new DoubleSetting.Builder().name("boost-ramp-step")
+        .description("Horizontal acceleration in blocks per tick squared at rest, tapering towards the same curve top as Adaptive Elytra Fly.")
+        .defaultValue(.3).range(.01, 5).sliderRange(.01, 1).decimalPlaces(2).visible(this::customFlightSettings).build());
+    private final Setting<Double> verticalRampStep = flightSettings.add(new DoubleSetting.Builder().name("vertical-ramp-step")
+        .description("Climb and descent acceleration, matching Adaptive Elytra Fly. Zero holds vertical boost at its start speed.")
+        .defaultValue(.5).range(0, 5).sliderRange(0, 2).decimalPlaces(2).visible(this::customFlightSettings).build());
     private final ElytraTakeoff takeoff = new ElytraTakeoff();
+    private final ElytraBoostDelay boostDelay = new ElytraBoostDelay();
+    private final AtomicReference<ClientboundPlayerPositionPacket> correction = new AtomicReference<>();
+    private BaritoneFlight flightController;
+    private boolean landingControlled;
+    private Vec3 lastControlledPosition;
+    private int pendingRocketTicks;
+    private final FlightCorridor.Probe flightProbe = new FlightCorridor.Probe() {
+        @Override public boolean loaded(int x, int z) { return mc.level.getChunkSource().hasChunk(x, z); }
+        @Override public boolean clear(AABB swept) {
+            Motion output = flightController.output();
+            for (VoxelShape shape : mc.level.getBlockCollisions(mc.player, swept)) {
+                if (!FlightCorridor.floorContactAllowed(mc.player.getBoundingBox(),
+                    new Vec3(output.x(), output.y(), output.z()), shape.max(Direction.Axis.Y))) return false;
+            }
+            return true;
+        }
+    };
+    private final FlightCorridor.Probe floorProbe = new FlightCorridor.Probe() {
+        @Override public boolean loaded(int x, int z) { return flightProbe.loaded(x, z); }
+        @Override public boolean clear(AABB swept) {
+            return !mc.level.getBlockCollisions(mc.player, swept).iterator().hasNext();
+        }
+    };
     private BaritoneBridge baritone;
     /** The flight being looked after, or null. */
     private Trip trip;
     /**
      * True when this module started the flight from a #goto: it walks the rest after landing, manages the elytra and
-     * ElytraFly, and reports how the flight ended. A flight started by #elytra or another addon only gets take-off help
-     * and firework restocking.
+     * ElytraFly, and reports how the flight ended. A flight started by #elytra or another addon gets take-off help,
+     * firework restocking and optional adjustable flight, but keeps its own landing and goal handling.
      */
     private boolean ours;
     private boolean glided;
@@ -67,10 +137,11 @@ public final class BaritoneElytra extends Module {
     private int chestplateSlot = -1;
     private boolean resumeElytraFly;
 
-    public BaritoneElytra() { super(TntCoatingAddon.CATEGORY, "baritone-elytra", "Flies long Baritone #goto trips with an elytra and fireworks, then walks the rest."); }
+    public BaritoneElytra() { super(TntCoatingAddon.CATEGORY, "baritone-elytra", "Flies long Baritone #goto trips with adjustable elytra flight, then walks the rest."); }
 
     @Override public String getInfoString() {
         if (trip == null || mc.player == null) return null;
+        if (landingControlled) return "Landing";
         return glided ? String.valueOf((int) remaining(trip)) : "Taking off";
     }
 
@@ -80,7 +151,7 @@ public final class BaritoneElytra extends Module {
         if (baritone == null) {
             error("Baritone isn't installed.");
             toggle();
-        }
+        } else updateRocketlessMode();
     }
 
     @Override public void onDeactivate() {
@@ -100,20 +171,194 @@ public final class BaritoneElytra extends Module {
             resumeElytraFly = false;
             ElytraFlyResume.afterLanding();
         }
-        finishFlight();
-        if (mc.player != null && !mc.player.isFallFlying()) swapBack();
-        baritone = null;
+        try {
+            finishFlight();
+            if (mc.player != null && !mc.player.isFallFlying()) swapBack();
+        } finally {
+            if (baritone != null) baritone.rocketless(false);
+            baritone = null;
+        }
     }
 
     // The world, Baritone's flight and the inventory slots it refers to are all gone.
     @EventHandler private void onGameLeft(GameLeftEvent event) {
-        finishFlight();
-        reset();
+        try {
+            finishFlight();
+            reset();
+        } finally {
+            if (baritone != null) baritone.rocketless(false);
+        }
+    }
+
+    @EventHandler private void onGameJoined(GameJoinedEvent event) { updateRocketlessMode(); }
+
+    @EventHandler private void onInteractItem(InteractItemEvent event) {
+        // Native Baritone can force a rocket even when its normal boost-speed threshold is zero. Stop that use
+        // before Minecraft predicts consumption or sends a packet, including flights started directly by #elytra.
+        if (controlledFlight.get() && baritone != null && mc.player != null && mc.player.isFallFlying()
+            && mc.player.getItemInHand(event.hand).is(Items.FIREWORK_ROCKET) && baritone.flight() != null) {
+            event.toReturn = InteractionResult.FAIL;
+        }
+    }
+
+    @EventHandler private void onPacket(PacketEvent.Receive event) {
+        if (event.packet instanceof ClientboundPlayerPositionPacket position) correction.set(position);
+    }
+
+    @EventHandler private void onSend(PacketEvent.Send event) {
+        if (trip == null || mc.player == null || !mc.player.isFallFlying()
+            || !(event.packet instanceof ServerboundUseItemPacket use)) return;
+        ItemStack stack = mc.player.getItemInHand(use.getHand());
+        if (!stack.is(Items.FIREWORK_ROCKET)) return;
+        Fireworks fireworks = stack.get(DataComponents.FIREWORKS);
+        // Cover the first boost before the rocket entity arrives from the server.
+        pendingRocketTicks = Math.max(pendingRocketTicks,
+            10 * (1 + (fireworks == null ? 0 : fireworks.flightDuration())));
+    }
+
+    @EventHandler private void onPostTick(TickEvent.Post event) {
+        if (pendingRocketTicks > 0) pendingRocketTicks--;
+    }
+
+    @EventHandler(priority = Integer.MIN_VALUE) private void onMove(PlayerMoveEvent event) {
+        if (event.type != MoverType.SELF) return;
+        if (trip == null || !controlledFlight.get() || baritone == null || mc.player == null || mc.level == null
+            || !mc.player.isFallFlying() || mc.player.isInWater() || mc.player.isInLava()
+            || mc.player.isPassenger() || Modules.get().isActive(Freecam.class)) {
+            resetFlightController();
+            return;
+        }
+        try {
+            BaritoneBridge.Steering steering = baritone.steering();
+            if (steering == null) {
+                resetFlightController();
+                return;
+            }
+            pauseElytraFly();
+            AdaptiveElytraFly adaptive = Modules.get().get(AdaptiveElytraFly.class);
+            if (adaptive == null) return;
+            AdaptiveFlightEngine.Settings profile = adaptive.baritoneFlightSettings();
+            if (flightController == null) flightController = new BaritoneFlight(profile);
+            BaritoneFlight.Settings config = useAdaptiveSettings.get()
+                ? new BaritoneFlight.Settings(profile.sprint() * 20, profile.verticalSprint() * 20,
+                    profile.boostRampStep(), profile.verticalRampStep())
+                : new BaritoneFlight.Settings(flightSpeed.get(), verticalSpeed.get(), rampStep.get(), verticalRampStep.get());
+            ClientboundPlayerPositionPacket packet = correction.getAndSet(null);
+            if (packet != null) {
+                Vec3 target = lastControlledPosition == null ? mc.player.position()
+                    : PositionMoveRotation.calculateAbsolute(new PositionMoveRotation(lastControlledPosition,
+                        mc.player.getDeltaMovement(), mc.player.getYRot(), mc.player.getXRot()),
+                        packet.change(), packet.relatives()).position();
+                flightController.setback(lastControlledPosition == null || target.distanceToSqr(lastControlledPosition) > 64 * 64);
+            }
+            boostDelay.observe(mc.player.tickCount, true, true);
+            Vec3 natural = mc.player.getDeltaMovement();
+            ServerGlide.Context glide = new ServerGlide.Context(new Motion(natural.x, natural.y, natural.z), attachedRockets(),
+                steering.pitch(), steering.yaw(), mc.player.getGravity(), mc.player.hasEffect(MobEffects.SLOW_FALLING),
+                this::resolveCollision);
+            Trip landing = steering.landing();
+            landingControlled = landing != null;
+            Motion output;
+            if (landingControlled) {
+                // Baritone's landing waypoint is above the floor. Its vanilla pitch can turn upward below it,
+                // so guide the body to the selected column and descend under Elytra Fly's own control.
+                output = flightController.land(profile, config, mc.player.tickCount,
+                    landing.x() + .5 - mc.player.getX(), landing.z() + .5 - mc.player.getZ(),
+                    boostDelay.ready(), natural.length(), event.movement.length(), mc.player.getBoundingBox(), flightProbe,
+                    () -> floorClearance(profile.margin()), glide, movement -> resolveCollision(mc.player.getBoundingBox(), movement));
+            } else {
+                Trip destination = baritone.flight();
+                if (destination != null) {
+                    double distance = mc.player.position().distanceTo(new Vec3(destination.x() + .5,
+                        destination.y() + .5, destination.z() + .5));
+                    config = BaritoneFlight.approach(config, distance);
+                }
+                output = flightController.move(profile, config, mc.player.tickCount, steering.yaw(), steering.pitch(),
+                    boostDelay.ready(), natural.length(), event.movement.length(), mc.player.getBoundingBox(), flightProbe,
+                    () -> floorClearance(profile.margin()), glide, movement -> resolveCollision(mc.player.getBoundingBox(), movement));
+            }
+            if (output == null) return;
+            lastControlledPosition = mc.player.position();
+            ((IVec3) event.movement).meteor$set(output.x(), output.y(), output.z());
+        } catch (LinkageError | RuntimeException e) {
+            MeteorClient.LOG.error("Baritone Elytra's adjustable flight failed", e);
+            error("Adjustable flight failed; Baritone keeps flying with normal physics. See the log.");
+            controlledFlight.set(false);
+            resetFlightController();
+        }
+    }
+
+    private boolean customFlightSettings() { return controlledFlight.get() && !useAdaptiveSettings.get(); }
+
+    private boolean needsFireworks() { return !controlledFlight.get(); }
+
+    private void flightModeChanged() {
+        // A trip refused for missing fireworks becomes eligible as soon as powered flight is selected.
+        settled = waiting = null;
+        waitingReason = null;
+        recheck = 0;
+        updateRocketlessMode();
+    }
+
+    private void updateRocketlessMode() {
+        if (baritone != null) baritone.rocketless(isActive() && controlledFlight.get()
+            && mc.player != null && mc.level != null);
+    }
+
+    private Motion resolveCollision(AABB body, Motion movement) {
+        Vec3 vec = new Vec3(movement.x(), movement.y(), movement.z());
+        List<VoxelShape> entities = mc.level.getEntityCollisions(mc.player, body.expandTowards(vec));
+        Vec3 allowed = Entity.collideBoundingBox(mc.player, vec, body, mc.level, entities);
+        return new Motion(allowed.x, allowed.y, allowed.z);
+    }
+
+    private double floorClearance(double margin) {
+        FlightCorridor.Result below = FlightCorridor.inspect(mc.player.getBoundingBox(), new Vec3(0, -1, 0), 32, floorProbe);
+        return below.reason() == FlightCorridor.Reason.CLEAR ? Double.POSITIVE_INFINITY
+            : Math.max(0, below.clearDistance() - margin);
+    }
+
+    private void resetFlightController() {
+        if (flightController != null) flightController.reset();
+        landingControlled = false;
+        lastControlledPosition = null;
+        correction.set(null);
+    }
+
+    private void pauseElytraFly() {
+        ElytraFly elytraFly = Modules.get().get(ElytraFly.class);
+        if (elytraFly != null && elytraFly.isActive()) {
+            ElytraFly.ChestSwapMode chestSwap = elytraFly.chestSwap.get();
+            Setting<?> dropSetting = elytraFly.settings.get("insta-drop");
+            BoolSetting drop = dropSetting instanceof BoolSetting bool ? bool : null;
+            boolean instaDrop = drop != null && drop.get();
+            try {
+                // A handoff must keep the wings on and must not arm Meteor's forced-ground drop listener.
+                elytraFly.chestSwap.set(ElytraFly.ChestSwapMode.Never);
+                if (drop != null) drop.set(false);
+                elytraFly.toggle();
+                resumeElytraFly = true;
+            } finally {
+                elytraFly.chestSwap.set(chestSwap);
+                if (drop != null) drop.set(instaDrop);
+            }
+        }
+    }
+
+    private int attachedRockets() {
+        int count = 0;
+        for (FireworkRocketEntity rocket : mc.level.getEntitiesOfClass(FireworkRocketEntity.class,
+            mc.player.getBoundingBox().inflate(16))) {
+            if (rocket.getEntityData().get(FireworkRocketAccessor.comet$attachedTarget())
+                .orElse(Integer.MIN_VALUE) == mc.player.getId()) count++;
+        }
+        return Math.max(count, pendingRocketTicks > 0 ? 1 : 0);
     }
 
     @EventHandler private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.level == null || baritone == null) return;
         try {
+            updateRocketlessMode();
             if (trip != null) tickFlight();
             else tickGround();
             if (trip == null && mc.player.onGround()) swapBack();
@@ -151,6 +396,7 @@ public final class BaritoneElytra extends Module {
 
     private void launch(Trip walk) {
         try {
+            updateRocketlessMode();
             baritone.fly(walk);
         } catch (IllegalArgumentException e) {
             settled = walk.goal();
@@ -169,11 +415,14 @@ public final class BaritoneElytra extends Module {
         takeoff.reset(glided);
         restockWait = 0;
         pathWait = 0;
+        resetFlightController();
+        boostDelay.reset();
+        pendingRocketTicks = 0;
+        if (!glided) boostDelay.swapped();
         ElytraFly elytraFly = Modules.get().get(ElytraFly.class);
-        if (ours && elytraFly.isActive()) {
-            elytraFly.toggle();
-            resumeElytraFly = true;
-            info("Paused ElytraFly during the flight; Baritone steers with normal elytra physics.");
+        if ((ours || controlledFlight.get()) && elytraFly.isActive()) {
+            pauseElytraFly();
+            info("Paused Meteor ElytraFly while Baritone controls the flight.");
         }
     }
 
@@ -183,6 +432,7 @@ public final class BaritoneElytra extends Module {
             endFlight();
             return;
         }
+        if (ours || controlledFlight.get()) pauseElytraFly();
         // #goto and #goal mid-flight redirect it, and the new goal is the one to walk to after landing. A flight someone
         // else started is followed wherever it goes, landing spot included.
         if (!ours || flight.goal() != null && flight.goal() != trip.goal()) trip = flight;
@@ -250,13 +500,16 @@ public final class BaritoneElytra extends Module {
                 baritone.walk(flight);
                 info("Landed %d blocks from the goal; walking the rest.", (int) remaining);
             }
-            case LANDED_SHORT -> warning("Landed %d blocks short of %d, %d. Baritone lands early when fireworks or elytra durability run low; #goto again to carry on.", (int) remaining, flight.x(), flight.z());
+            case LANDED_SHORT -> warning("Landed %d blocks short of %d, %d. Baritone lands early when %s run low; #goto again to carry on.", (int) remaining, flight.x(), flight.z(), controlledFlight.get() ? "elytra durability reserves" : "fireworks or elytra durability reserves");
             case STOPPED_MID_AIR -> warning("Baritone stopped the flight in mid-air; you're gliding on your own.");
             case STOPPED_ON_GROUND -> info("The elytra flight was cancelled before take-off.");
         }
     }
 
     private void finishFlight() {
+        resetFlightController();
+        boostDelay.reset();
+        pendingRocketTicks = 0;
         trip = null;
         ours = false;
         glided = false;
@@ -284,7 +537,8 @@ public final class BaritoneElytra extends Module {
         }
         boolean clear = !mc.player.isInWater() && !mc.player.isInLava() && openAbove();
         return ElytraHandoff.check(remaining(walk), minDistance.get(), baritone.elytraSupported(), durability, baritone.minDurability(),
-            fireworks(), baritone.minFireworks(), mc.player.isFallFlying(), mc.player.onGround(), clear);
+            needsFireworks() ? fireworks() : 0, baritone.minFireworks(), mc.player.isFallFlying(), mc.player.onGround(), clear,
+            controlledFlight.get());
     }
 
     private void report(Refusal refusal) {
@@ -329,7 +583,7 @@ public final class BaritoneElytra extends Module {
     }
 
     private void restock() {
-        if (!restock.get() || baritone.useInventory()) return;
+        if (!needsFireworks() || !restock.get() || baritone.useInventory()) return;
         if (restockWait > 0) {
             restockWait--;
             return;

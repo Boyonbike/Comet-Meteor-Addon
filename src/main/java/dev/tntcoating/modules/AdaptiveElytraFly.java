@@ -741,6 +741,11 @@ public final class AdaptiveElytraFly extends Module {
         updateStatus();
     }
 
+    /** Shares the configured curves and handling with Baritone without activating manual Elytra Fly. */
+    public AdaptiveFlightEngine.Settings baritoneFlightSettings() {
+        return engineSettings(null);
+    }
+
     /** The engine's settings from this module's and Meteor Elytra Fly's; Meteor's stock speeds only gate axes. */
     private AdaptiveFlightEngine.Settings engineSettings(ElytraFly fly) {
         return new AdaptiveFlightEngine.Settings(acceleration.get(), braking.get(), adaptiveTurnRate.get(),
