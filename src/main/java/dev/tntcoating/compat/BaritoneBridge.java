@@ -11,7 +11,7 @@ public interface BaritoneBridge {
     /** Null when neither Meteor's Baritone build nor the standalone Baritone mod is installed. */
     static BaritoneBridge create() {
         FabricLoader loader = FabricLoader.getInstance();
-        return loader.isModLoaded("baritone-meteor") || loader.isModLoaded("baritone") ? new BaritoneElytraBridge() : null;
+        return loader.isModLoaded("baritone-meteor") || loader.isModLoaded("baritone") ? BaritoneElytraBridge.instance() : null;
     }
 
     /** False when Baritone ships no native elytra pathfinder for this CPU and operating system. */
@@ -35,6 +35,18 @@ public interface BaritoneBridge {
 
     /** Baritone's own description of what its elytra process is doing, for diagnostics. */
     String flightStatus();
+
+    /**
+     * Baritone's movement rotation for this player tick, or null while taking off, walking, or before a fresh movement
+     * rotation is available. During landing it includes the chosen landing column's air waypoint. This follows its
+     * elytra route even when free look leaves the camera elsewhere.
+     */
+    default Steering steering() {
+        return null;
+    }
+
+    /** Temporarily removes native firework requirements and ordinary boosts; false restores the user's settings. */
+    default void rocketless(boolean enabled) {}
 
     /** Hands the trip to Baritone's elytra process. Throws {@link IllegalArgumentException} with Baritone's reason when it refuses. */
     void fly(Trip trip);
@@ -63,4 +75,10 @@ public interface BaritoneBridge {
      * @param x    the destination given to the elytra process
      */
     record Trip(Object goal, int x, int y, int z) {}
+
+    record Steering(float yaw, float pitch, Trip landing) {
+        public Steering(float yaw, float pitch) {
+            this(yaw, pitch, null);
+        }
+    }
 }

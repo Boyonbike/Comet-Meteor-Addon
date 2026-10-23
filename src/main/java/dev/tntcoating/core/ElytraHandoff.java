@@ -44,12 +44,19 @@ public final class ElytraHandoff {
      */
     public static Refusal check(double distance, int minDistance, boolean supported, int elytraDurability, int minDurability,
                                 int fireworks, int minFireworks, boolean fallFlying, boolean onGround, boolean clear) {
+        return check(distance, minDistance, supported, elytraDurability, minDurability, fireworks, minFireworks,
+            fallFlying, onGround, clear, false);
+    }
+
+    /** Controlled flight supplies its own propulsion; vanilla flight still needs fireworks. */
+    public static Refusal check(double distance, int minDistance, boolean supported, int elytraDurability, int minDurability,
+                                int fireworks, int minFireworks, boolean fallFlying, boolean onGround, boolean clear,
+                                boolean rocketless) {
         if (distance < minDistance) return Refusal.SHORT;
         if (!supported) return Refusal.UNSUPPORTED;
-        // Baritone lands for safety once durability is below its minimum or fireworks are at theirs, so taking off at
-        // those levels would only land again straight away.
+        // Keep durability protection in both modes. Only vanilla propulsion depends on the firework reserve.
         if (elytraDurability < 0 || elytraDurability < minDurability) return Refusal.NO_ELYTRA;
-        if (fireworks <= minFireworks) return Refusal.FIREWORKS;
+        if (!rocketless && fireworks <= minFireworks) return Refusal.FIREWORKS;
         if (fallFlying) return null;
         if (!onGround) return Refusal.AIRBORNE;
         return clear ? null : Refusal.COVERED;

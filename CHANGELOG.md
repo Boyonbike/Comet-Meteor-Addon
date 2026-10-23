@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Baritone Elytra adjustable flight:** the new **Elytra Fly** section powers the whole flight without needing or consuming fireworks: takeoff assistance, automatic boost during travel, a slower final approach and controlled descent through touchdown. Baritone chooses the route and landing spot. By default, boost speeds and ramps match Adaptive Elytra Fly; turn **use-adaptive-settings** off to adjust horizontal and vertical speed caps and ramp steps separately. Terrain checks, setback recovery and durability protection remain. Comet skips firework restocking and temporarily bypasses Baritone's rocket reserve and ordinary boost settings; forced rocket use is blocked before consumption. Prior Baritone settings are restored when this mode is disabled or the world is left. Meteor ElytraFly is paused and restored around the flight. Turn **elytra-fly** off for vanilla firework flight. Flight is limited to 340 b/s without split moves. In-game route tracking remains to be verified.
+
 ## 0.25.20
 
 - **Free proxies and proxy-bound links:** Meteor's **Proxies** screen gains **Fetch Free Proxies**, which lists up to 24 SOCKS4/SOCKS5 proxies from ProxyScrape's public list, filtered to at least 50% uptime and 1-3000 ms latency, with residential ISPs first, and adds them to the proxy list for testing. **Proxy links** (on by default) opens links clicked in chat or menus in a separate Chrome/Chromium or Firefox profile bound to the enabled proxy; profiles are kept under `meteor-client/proxy-browser/` and the toggle in `meteor-client/proxy-links.txt`. Disconnect screens that contain a URL gain **Open Verify Link** and **Open Via Proxy** buttons, and Chrome can fill the username, confirmation box and submit button of the verification form, leaving the captcha to you. These tools are subject to the server's rules; Comet does not create accounts, solve captchas or bypass bans. See [Proxy tools](README.md#proxy-tools).
