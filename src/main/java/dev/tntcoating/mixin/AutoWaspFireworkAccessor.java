@@ -1,3 +1,8 @@
+/*
+ * Part of Comet's Auto Wasp port; see AutoWasp.java and THIRD_PARTY_NOTICES.md.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
+
 package dev.tntcoating.mixin;
 
 import java.util.OptionalInt;

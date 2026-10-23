@@ -127,11 +127,14 @@ The port has regression coverage for navigation, the speed ramp, setbacks, takeo
 chest swaps, prediction and the server-glide guard; in-game pursuit, inventory swaps
 and 6b6t's acceptance of these defaults still need gameplay verification.
 
-## Bephax ports
+## Movement and player utilities
+
+These three modules are original Comet implementations; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party provenance.
 
 - **no-hurt-cam** removes the camera tilt and shake when damaged while it is on.
-- **angle-calculator** continuously aims your yaw at the centre of the configured **to** block, using its X/Z coordinates. **level-pitch** defaults on and keeps pitch at zero. Riding also turns the vehicle. This controls your view; it does not move you automatically.
-- **anti-spawn-set** blocks outgoing bed and respawn-anchor interactions. **block-beds**, **block-anchors** and **notify** default on. Like Bephax, this blocks every interaction with those blocks, including sleeping, anchor charging and explosive use in other dimensions.
+- **angle-calculator** aims your view at the centre of the configured **to** block, using its X/Z coordinates. **level-pitch** defaults on and keeps pitch at zero. Riding also turns the vehicle. This controls your view; it does not move you automatically.
+- **anti-spawn-set** cancels outgoing bed and respawn-anchor interactions before the server sees them. **block-beds**, **block-anchors** and **notify** default on. It blocks every interaction with those blocks, including sleeping, anchor charging and explosive use in other dimensions.
 
 ## Advanced Auto Replenish
 
@@ -142,7 +145,7 @@ Comet upgrades Meteor's existing **auto-replenish** in place. Its Player and Com
 - **refill-all-stackable** defaults on. Turn it off to select categories: blocks, food, tools, weapons, projectiles, ender pearls, potions, totems, golden apples and fireworks. Tools and weapons default off. Tools always keep their exact item/material; replacing broken or consumed unstackable items also requires Meteor's **unstackable** setting.
 - **respect-custom-names** defaults on and requires the same custom name when replacing an emptied slot. Partly filled stacks always require matching item components, including names, enchantments and potion data, so incompatible stacks are never swapped over remaining items. **same-enchants** and **excluded-items** still apply.
 
-Transfers use Meteor's targeted inventory clicks without opening the inventory. Bephax's shift-click and delayed-click queue are replaced by direct transfers to the intended slot, so an earlier empty hotbar slot cannot redirect a refill. Transfers pause for open containers, carried cursor items and Comet's temporary tool/weapon loans. Manual screen changes reset tracked slots through Meteor's original lifecycle. These features have automated build and compatibility coverage; in-game movement, camera effects and server inventory acceptance still need verification.
+Transfers use Meteor's targeted inventory clicks without opening the inventory. Comet replaces the original shift-click and delayed-click queue with direct transfers to the intended slot, so an earlier empty hotbar slot cannot redirect a refill. Transfers pause for open containers, carried cursor items and Comet's temporary tool/weapon loans. Manual screen changes reset tracked slots through Meteor's original lifecycle. These features have automated build and compatibility coverage; in-game movement, camera effects and server inventory acceptance still need verification.
 
 ## Anti Coords
 
@@ -269,7 +272,7 @@ Automated checks cover cache invalidation, camera transforms and retained GPU bu
 
 Enable **dub-counter** to count the ordinary chest blocks in every chunk your client has loaded, shown as dubs (double chests): two chest blocks make one dub, so 25 chests read **12.5**. Trapped chests, copper chests, barrels and ender chests do not count. The count shows beside the module name in Meteor's active-modules list, and the **dub-counter** HUD element adds the chest and loaded-chunk totals.
 
-The count refreshes five times a second from the chunks' block-entity lists, without reading blocks or allocating anything per chest. It resets when you leave a world or disable the module. Ported from Majkey's DubCounter 1.0.0 addon; remove any older `DubCounter` JAR when you install Comet, because both register **dub-counter** and Meteor keeps whichever loads last.
+The count refreshes five times a second from the chunks' block-entity lists, without reading blocks or allocating anything per chest. It resets when you leave a world or disable the module. Adapted from Majkey's DubCounter 1.0.0 addon with the author's permission; remove any older `DubCounter` JAR when you install Comet, because both register **dub-counter** and Meteor keeps whichever loads last.
 
 ## Call to Arms and Stash Report
 
@@ -554,4 +557,6 @@ Automated tests cover:
 
 The release builds and its automated tests pass against Meteor 26.2-35. No gameplay in this release has been tested in Minecraft or on 6b6t. Placement timing, rotations, Sticky switching, container sneak-use and server acceptance all still need an in-game check, as do the Xaero markers, waypoint deletion, every part of Baritone Elytra (hand-off, take-off, restocking, chestplate swaps, landing and walking the rest), Elytra Log's logout, and Auto Wasp's pursuit, takeoff, chest swaps, setback recovery and server-glide guard.
 
-Source follows the official Meteor addon template and API, under the included CC0 license.
+## Licensing
+
+Original Comet code is released under CC0 1.0 (`LICENSE`). The combined JAR and source archive include GPL-3.0-only adaptations of THM Addons and DEVILS, an Apache-2.0 adaptation of NoTextureRotations, and Majkey's DubCounter (included with permission), so the combined work is distributed under **GPL-3.0-only**. VolytraFly's CC0 boost curve is credited in the code and in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which also covers the optional Meteor, Baritone and Xaero integrations. Distribute the matching `build/distributions/*-source.zip` with the JAR under GPL v3 terms.

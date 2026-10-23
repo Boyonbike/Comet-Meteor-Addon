@@ -1,3 +1,9 @@
+/*
+ * Adapted from NoTextureRotations by rfresh2 (https://github.com/rfresh2/NoTextureRotations).
+ * Modified for Comet by Boyonabike.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package dev.tntcoating.core;
 
 import com.google.common.hash.Hashing;
