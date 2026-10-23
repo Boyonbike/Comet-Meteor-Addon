@@ -3,6 +3,7 @@
  * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
  * By using this code you agree to the license terms and to keep your repo public.
  * Adapted for Comet / Minecraft 26.1.2.
+ * SPDX-License-Identifier: GPL-3.0-only
  */
 
 package dev.tntcoating.render;

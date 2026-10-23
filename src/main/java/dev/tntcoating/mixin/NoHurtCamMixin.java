@@ -1,3 +1,8 @@
+/*
+ * Original Comet implementation by Boyonabike.
+ * SPDX-License-Identifier: CC0-1.0
+ */
+
 package dev.tntcoating.mixin;
 
 import dev.tntcoating.modules.NoHurtCam;
@@ -11,9 +16,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(GameRenderer.class)
 public abstract class NoHurtCamMixin {
     @Inject(method = "bobHurt", at = @At("HEAD"), cancellable = true)
-    private void comet$skipHurtCamera(CallbackInfo ci) {
+    private void comet$cancelHurtCamera(CallbackInfo ci) {
+        if (hurtCameraDisabled()) ci.cancel();
+    }
+
+    private static boolean hurtCameraDisabled() {
         Modules modules = Modules.get();
-        NoHurtCam module = modules == null ? null : modules.get(NoHurtCam.class);
-        if (module != null && module.shouldDisableHurtCam()) ci.cancel();
+        if (modules == null) return false;
+        NoHurtCam module = modules.get(NoHurtCam.class);
+        return module != null && module.shouldDisableHurtCam();
     }
 }

@@ -1,3 +1,8 @@
+/*
+ * Part of Comet's dub-counter adaptation from Majkey's DubCounter, with permission.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
+
 package dev.tntcoating.core;
 
 /** Dubs are double chests: two ordinary chest blocks make one, so an unpaired chest counts as half. */
