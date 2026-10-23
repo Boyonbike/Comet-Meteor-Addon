@@ -1,3 +1,10 @@
+/*
+ * Boost curve from VolytraFly by Volizray (CC0-1.0):
+ * https://github.com/Volizray/VolytraFly-Addon
+ * Adapted for Comet by Boyonabike.
+ * SPDX-License-Identifier: CC0-1.0
+ */
+
 package dev.tntcoating.core;
 
 import java.util.Objects;

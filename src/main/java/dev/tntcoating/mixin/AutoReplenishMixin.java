@@ -24,7 +24,7 @@ import java.util.List;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
-/** Adds Bephax-style refill controls to the original Meteor instance and lifecycle. */
+/** Adds Comet's refill controls to the original Meteor instance and lifecycle. */
 @Mixin(value = AutoReplenish.class, remap = false)
 public abstract class AutoReplenishMixin {
     @Shadow @Final private SettingGroup sgGeneral;
@@ -64,16 +64,16 @@ public abstract class AutoReplenishMixin {
             .description("Maximum targeted transfers each refill tick.").defaultValue(1).range(1, 5).sliderRange(1, 5).build());
         comet$respectNames = comet$bool("respect-custom-names", "Require matching custom names when replacing an emptied slot. Partial stacks always require matching components.", true);
         comet$allStackable = comet$bool("refill-all-stackable", "Refill every stackable item, overriding category filters. Excluded items still apply.", true);
-        comet$blocks = comet$bool("refill-blocks", "Refill building blocks.", true);
-        comet$food = comet$bool("refill-food", "Refill food.", true);
+        comet$blocks = comet$bool("refill-blocks", "Top up building blocks.", true);
+        comet$food = comet$bool("refill-food", "Top up food.", true);
         comet$tools = comet$bool("refill-tools", "Replace consumed or broken tools with the same item and material.", false);
         comet$weapons = comet$bool("refill-weapons", "Replace consumed or broken weapons with the same item.", false);
-        comet$projectiles = comet$bool("refill-projectiles", "Refill arrows and firework rockets.", true);
-        comet$pearls = comet$bool("refill-ender-pearls", "Refill ender pearls.", true);
-        comet$potions = comet$bool("refill-potions", "Refill potions.", true);
-        comet$totems = comet$bool("refill-totems", "Refill totems when Meteor's Auto Totem is not managing the slot.", true);
-        comet$gaps = comet$bool("refill-golden-apples", "Refill golden and enchanted golden apples.", true);
-        comet$fireworks = comet$bool("refill-fireworks", "Refill firework rockets.", true);
+        comet$projectiles = comet$bool("refill-projectiles", "Top up arrows and firework rockets.", true);
+        comet$pearls = comet$bool("refill-ender-pearls", "Top up ender pearls.", true);
+        comet$potions = comet$bool("refill-potions", "Top up potions.", true);
+        comet$totems = comet$bool("refill-totems", "Top up totems when Meteor's Auto Totem is not managing the slot.", true);
+        comet$gaps = comet$bool("refill-golden-apples", "Top up golden and enchanted golden apples.", true);
+        comet$fireworks = comet$bool("refill-fireworks", "Top up firework rockets.", true);
     }
 
     @Unique private Setting<Boolean> comet$bool(String name, String description, boolean value) {

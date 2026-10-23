@@ -1,3 +1,10 @@
+/*
+ * Adapted from Majkey's DubCounter by Majkey, with the author's permission.
+ * Modified for Comet by Boyonabike: block-entity counting, cached five-times-a-second
+ * refresh, HUD lines and Comet's module registration.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
+
 package dev.tntcoating.modules;
 
 import dev.tntcoating.TntCoatingAddon;
@@ -13,7 +20,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 
-/** Ordinary chest blocks in loaded chunks, shown as dubs (double chests). A port of Majkey's DubCounter addon. */
+/** Ordinary chest blocks in loaded chunks, shown as dubs (double chests). Adapted from Majkey's DubCounter addon with permission. */
 public final class DubCounter extends Module {
     private int chests, chunks, ticks;
     private String dubs = DubCount.format(0);

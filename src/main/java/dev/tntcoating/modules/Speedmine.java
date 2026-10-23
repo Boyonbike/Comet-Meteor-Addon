@@ -2,7 +2,8 @@
  * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
  * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
  * By using this code you agree to the license terms and to keep your repo public.
- * Adapted for Comet / Minecraft 26.1.2.
+ * Adapted for Comet / Minecraft 1.21.11.
+ * SPDX-License-Identifier: GPL-3.0-only
  */
 
 package dev.tntcoating.modules;

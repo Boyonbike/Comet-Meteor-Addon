@@ -1,6 +1,8 @@
 /*
  * Part of Comet's Auto Wasp port; see AutoWasp.java and THIRD_PARTY_NOTICES.md for DEVILS provenance.
  * Written for Comet by Boyonabike on 2026-10-22, independent of Adaptive Elytra Fly's classes.
+ * Boost curve from VolytraFly by Volizray (CC0-1.0):
+ * https://github.com/Volizray/VolytraFly-Addon
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
