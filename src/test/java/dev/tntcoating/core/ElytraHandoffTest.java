@@ -29,6 +29,19 @@ class ElytraHandoffTest {
         assertEquals(Refusal.FIREWORKS, check(5000, 432, 5, false, true, true));
         assertNull(check(5000, 432, 6, false, true, true));
     }
+    @Test void controlledFlightTakesOffWithNoFireworks() {
+        assertNull(ElytraHandoff.check(5000, 300, true, 432, 5, 0, 5, false, true, true, true));
+        assertNull(ElytraHandoff.check(5000, 300, true, 432, 5, 0, 5, true, false, false, true));
+    }
+    @Test void rocketlessFlightStillRequiresUsableWingsAndOpenGround() {
+        assertEquals(Refusal.NO_ELYTRA, ElytraHandoff.check(5000, 300, true, -1, 5, 0, 5, false, true, true, true));
+        assertEquals(Refusal.NO_ELYTRA, ElytraHandoff.check(5000, 300, true, 4, 5, 0, 5, false, true, true, true));
+        assertEquals(Refusal.COVERED, ElytraHandoff.check(5000, 300, true, 432, 5, 0, 5, false, true, false, true));
+        assertEquals(Refusal.AIRBORNE, ElytraHandoff.check(5000, 300, true, 432, 5, 0, 5, false, false, true, true));
+    }
+    @Test void vanillaFlightStillRequiresFireworks() {
+        assertEquals(Refusal.FIREWORKS, ElytraHandoff.check(5000, 300, true, 432, 5, 0, 5, false, true, true, false));
+    }
     @Test void coveredOrAirborneIsCheckedAgainLater() {
         assertEquals(Refusal.COVERED, check(5000, 432, 64, false, true, false));
         assertEquals(Refusal.AIRBORNE, check(5000, 432, 64, false, false, true));
