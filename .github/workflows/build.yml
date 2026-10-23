@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: ['26.1.2', 'release/**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 

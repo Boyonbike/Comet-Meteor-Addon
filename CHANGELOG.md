@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.25.20
 
-- **Licensing and attribution:** replaced the BepHax-derived Angle Calculator, Anti Spawn Set and No Hurt Cam module/mixin with original Comet implementations, so no BepHax source code or assets remain. Documented every third-party component in `THIRD_PARTY_NOTICES.md`, including VolytraFly (CC0-1.0), Quiettee Utils, THM Addons, DEVILS, NoTextureRotations, Majkey's DubCounter (used with the author's permission), Meteor Client, Baritone and Xaero's mods. Clarified that the combined distribution is GPL-3.0-only and that the matching source archive must accompany the JAR.
+- **Free proxies and proxy-bound links:** Meteor's **Proxies** screen gains **Fetch Free Proxies**, which lists up to 24 SOCKS4/SOCKS5 proxies from ProxyScrape's public list, filtered to at least 50% uptime and 1-3000 ms latency, with residential ISPs first, and adds them to the proxy list for testing. **Proxy links** (on by default) opens links clicked in chat or menus in a separate Chrome/Chromium or Firefox profile bound to the enabled proxy; profiles are kept under `meteor-client/proxy-browser/` and the toggle in `meteor-client/proxy-links.txt`. Disconnect screens that contain a URL gain **Open Verify Link** and **Open Via Proxy** buttons, and Chrome can fill the username, confirmation box and submit button of the verification form, leaving the captcha to you. These tools are subject to the server's rules; Comet does not create accounts, solve captchas or bypass bans. See [Proxy tools](README.md#proxy-tools).
+- **Licensing and attribution:** the combined work now has a single GPL-3.0-only `LICENSE`; original Comet code remains available under CC0 1.0 in `LICENSE-CC0`, and the NoTextureRotations adaptation keeps the Apache-2.0 text in `LICENSE-NoTextureRotations`. Removed the duplicate GPL copies, updated `THIRD_PARTY_NOTICES.md` with the component map and copyright, and made the JAR and source archive bundle all three texts. Replaced the BepHax-derived Angle Calculator, Anti Spawn Set and No Hurt Cam module/mixin with original Comet implementations, so no BepHax source or assets remain. Documented VolytraFly (CC0-1.0), Quiettee Utils, THM Addons, DEVILS, NoTextureRotations, Majkey's DubCounter (with permission), Meteor, Baritone and Xaero.
+- **Release housekeeping:** README now starts with install steps, badges, a supported-branch table and a contents list, and documents the proxy tools. Added `CONTRIBUTING.md` and `.gitattributes`, stopped tracking `logs/latest.log` and `.vscode/`, shortened and linked the mod metadata, and made CI build tagged releases as well as branches.
 
 ## 0.25.16
 
@@ -22,7 +24,7 @@
 
 ## 0.25.14
 
-- Removed **Home Packet Log** and **Dig Probe** from Comet. Their source, tests, module-specific helpers and usage guide are preserved in `archived-modules/packet-diagnostics-2026-10-22/`, with verified checksums. Shared logging and interaction helpers remain available to other modules.
+- Removed **Home Packet Log** and **Dig Probe** from Comet. Their source remains available in the commit history before this release; the shared logging and interaction helpers stay available to other modules.
 
 ## 0.25.13
 

@@ -10,7 +10,7 @@
  * VolytraFly boost and setback settings sized to the server's movement limits,
  * server-glide settings, ping-aware target prediction, worn-out elytra handling
  * and chest-swap hysteresis.
- * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
+ * Distributed under GNU GPL v3; see LICENSE and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  */
@@ -647,7 +647,7 @@ public class AutoWasp extends Module {
         list.add(theme.label("Source: github.com/ThianYong-hub/DEVILS"));
         list.add(theme.label("Upstream revision: 2440a168c3ba"));
         list.add(theme.label("Comet port: Boyonabike, 22 October 2026"));
-        list.add(theme.label("Licence: LICENSE-DEVILS inside the Comet JAR"));
+        list.add(theme.label("Licence: GPL-3.0-only (LICENSE inside the Comet JAR)"));
         list.add(theme.label("Modified source: accompanying Comet source ZIP"));
         return list;
     }
