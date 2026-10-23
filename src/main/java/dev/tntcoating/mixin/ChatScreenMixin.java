@@ -44,8 +44,8 @@ public abstract class ChatScreenMixin {
         var mc = net.minecraft.client.Minecraft.getInstance();
         var finder = new PlayerNameStyleFinder(mc.font, (int) event.x(), (int) event.y(), onlineNames(mc))
             .includeInsertions(true);
-        mc.gui.getChat().captureClickableText(finder, mc.getWindow().getGuiScaledHeight(),
-            mc.gui.getGuiTicks(), displayMode);
+        mc.gui.hud.getChat().captureClickableText(finder, mc.getWindow().getGuiScaledHeight(),
+            mc.gui.hud.getGuiTicks(), displayMode);
         Style style = finder.result();
         String player = tools.playerFor(style);
         if (player != null) {

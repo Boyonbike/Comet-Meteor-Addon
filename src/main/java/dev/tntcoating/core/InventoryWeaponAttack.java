@@ -38,7 +38,7 @@ public final class InventoryWeaponAttack {
 
     public void defer(AttackEntityEvent event, ItemStack previous, ItemStack weapon) {
         boolean aimedAttack = mc.hitResult instanceof EntityHitResult hit && hit.getEntity() == event.entity;
-        pending = new Pending(mc.player, mc.level, mc.screen, event.entity, aimedAttack,
+        pending = new Pending(mc.player, mc.level, mc.gui.screen(), event.entity, aimedAttack,
             mc.player.getInventory().getSelectedSlot(),
             weapon.copy(), new WeaponAttackReadiness(previous, weapon, mc.player.getId()));
         event.cancel();
@@ -65,7 +65,7 @@ public final class InventoryWeaponAttack {
         }
 
         boolean valid = mc.gameMode != null
-            && mc.screen == attack.screen
+            && mc.gui.screen() == attack.screen
             && Modules.get().isActive(AutoWeapon.class) && mc.player.isAlive() && !mc.player.isSpectator()
             && attack.target.level() == mc.level && attack.target.isAlive() && !attack.target.isRemoved()
             && mc.player.getInventory().getSelectedSlot() == attack.slot

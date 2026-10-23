@@ -17,7 +17,7 @@ public abstract class AntiCoordsFrameMixin {
 
     // Vanilla's HUD, F3, chat, menus and toasts, and Meteor's 2D layer, are all drawn by this call.
     @Inject(method = "render", at = @At(value = "INVOKE",
-        target = "Lnet/minecraft/client/gui/render/GuiRenderer;render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V"))
+        target = "Lnet/minecraft/client/gui/render/GuiRenderer;render()V"))
     private void comet$captureWorld(DeltaTracker deltaTracker, boolean advanceGameTime, CallbackInfo ci) {
         AntiCoords.captureWorld();
     }

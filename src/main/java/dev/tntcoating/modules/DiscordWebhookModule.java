@@ -231,7 +231,7 @@ abstract class DiscordWebhookModule extends Module {
             }
             if (!hidGui) {
                 // The confirmation prompt closes on its own next frame; any other menu has to be closed by you.
-                if (mc.screen != null) {
+                if (mc.gui.screen() != null) {
                     if (++ticks == 20) info("Close the menu to take the %s's screenshot.", noun);
                     if (ticks >= MENU_WAIT_TICKS) {
                         stop();
@@ -240,8 +240,8 @@ abstract class DiscordWebhookModule extends Module {
                     }
                     return;
                 }
-                guiWasHidden = mc.options.hideGui;
-                mc.options.hideGui = true;
+                guiWasHidden = mc.gui.hud.isHidden();
+                if (!guiWasHidden) mc.gui.hud.toggle();
                 hidGui = true;
                 ticks = 0;
                 return;
@@ -257,7 +257,7 @@ abstract class DiscordWebhookModule extends Module {
                 return;
             }
             stop();
-            RenderTarget target = mc.getMainRenderTarget();
+            RenderTarget target = mc.gameRenderer.mainRenderTarget();
             try {
                 Screenshot.takeScreenshot(target, DiscordWebhook.downscale(target.width, target.height), image -> Util.ioPool().execute(() -> encode(image)));
             } catch (RuntimeException e) {
@@ -265,7 +265,7 @@ abstract class DiscordWebhookModule extends Module {
                 warning("Couldn't take the screenshot, so the %s went without one.", noun);
                 post(upload, null);
             } finally {
-                mc.options.hideGui = guiWasHidden;
+                if (mc.gui.hud.isHidden() != guiWasHidden) mc.gui.hud.toggle();
             }
         }
 
@@ -275,7 +275,7 @@ abstract class DiscordWebhookModule extends Module {
 
         private void stop() {
             MeteorClient.EVENT_BUS.unsubscribe(this);
-            if (hidGui) mc.options.hideGui = guiWasHidden;
+            if (hidGui && mc.gui.hud.isHidden() != guiWasHidden) mc.gui.hud.toggle();
         }
 
         /** Runs off the render thread: Minecraft only writes PNGs to files, so this reads one back. */

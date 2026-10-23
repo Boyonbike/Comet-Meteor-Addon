@@ -73,7 +73,7 @@ public final class AntiCoords extends Module {
     }
 
     private void rebuildChunks() {
-        if (mc.level != null) mc.levelRenderer.allChanged();
+        if (mc.level != null) mc.levelExtractor.allChanged();
     }
 
     private static Mode seedMode() {
@@ -153,8 +153,8 @@ public final class AntiCoords extends Module {
         AntiCoords module = instance;
         if (module == null || module.pendingScreenshot == null || module.capturing) return;
         module.capturing = true;
-        module.hudWasHidden = module.mc.options.hideGui;
-        module.mc.options.hideGui = true;
+        module.hudWasHidden = module.mc.gui.hud.isHidden();
+        if (!module.hudWasHidden) module.mc.gui.hud.toggle();
     }
 
     /** Once the world is drawn and before every 2D layer, so no HUD, overlay or menu from any mod can be in the capture. */
@@ -165,7 +165,7 @@ public final class AntiCoords extends Module {
         module.pendingScreenshot = null;
         module.capturing = false;
         Minecraft mc = module.mc;
-        mc.options.hideGui = module.hudWasHidden;
-        Screenshot.grab(mc.gameDirectory, mc.getMainRenderTarget(), callback);
+        if (mc.gui.hud.isHidden() != module.hudWasHidden) mc.gui.hud.toggle();
+        Screenshot.grab(mc.gameDirectory, mc.gameRenderer.mainRenderTarget(), callback);
     }
 }

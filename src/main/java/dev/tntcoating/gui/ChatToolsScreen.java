@@ -194,7 +194,7 @@ public final class ChatToolsScreen extends Screen {
             if (text.length() > 1) { whisper = tools.isWhisper(text); sent = tools.sendCommand(text); } else sent = false;
         }
         else if (page == Page.Conversation) { whisper = true; sent = tools.sendPrivate(recipient, text); }
-        else { mc.getConnection().sendChat(text); mc.gui.getChat().addRecentChat(text); }
+        else { mc.getConnection().sendChat(text); mc.gui.hud.getChat().addRecentChat(text); }
         if (sent) {
             input.setValue(""); drafts.put(draftKey(), "");
             long wait = whisper ? tools.whisperWait() : 0;
@@ -1055,8 +1055,8 @@ public final class ChatToolsScreen extends Screen {
         return visibleSearch != null && visibleSearch.isFocused() && visibleSearch.charTyped(event);
     }
     @Override public void onFilesDrop(List<Path> files) { importFiles(files); }
-    @Override public void tick() { if (!tools.isActive() || Minecraft.getInstance().getConnection() == null) Minecraft.getInstance().setScreen(null); }
+    @Override public void tick() { if (!tools.isActive() || Minecraft.getInstance().getConnection() == null) Minecraft.getInstance().gui.setScreen(null); }
     @Override public void removed() { saveDraft(); dragging = resizing = false; if (input != null) focus(null); }
-    @Override public void onClose() { Minecraft.getInstance().setScreen(Minecraft.getInstance().level == null ? null : parent); }
+    @Override public void onClose() { Minecraft.getInstance().gui.setScreen(Minecraft.getInstance().level == null ? null : parent); }
     @Override public boolean isPauseScreen() { return false; }
 }

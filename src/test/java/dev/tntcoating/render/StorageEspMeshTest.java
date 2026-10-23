@@ -1,13 +1,12 @@
 package dev.tntcoating.render;
 
-import com.mojang.blaze3d.GraphicsWorkarounds;
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import meteordevelopment.meteorclient.renderer.MeshBuilder;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
@@ -26,18 +25,17 @@ import java.util.function.Supplier;
 import static org.junit.jupiter.api.Assertions.*;
 
 class StorageEspMeshTest {
-    @Test void sharedFormatControlReproducesClosedBufferFailure() throws Exception {
+    @Test void defaultFormatBuildersOwnIndependentBuffers() throws Exception {
         try (GpuFixture fixture = new GpuFixture()) {
             Uploaded first = upload(populate(ordinaryBuilder(), 2, 1));
             Uploaded second = upload(populate(ordinaryBuilder(), 1, 20));
-            assertSame(first.vertices, second.vertices);
-            assertSame(first.indices, second.indices);
-            first.close();
 
-            IllegalStateException failure = assertThrows(IllegalStateException.class,
-                () -> upload(populate(ordinaryBuilder(), 1, 40)));
-            assertEquals("Buffer already closed", failure.getMessage());
-            assertTrue(fixture.device.writes > 0, "Exercise Minecraft's immediate-buffer reuse path.");
+            assertNotSame(first.vertices, second.vertices);
+            assertNotSame(first.indices, second.indices);
+            first.close();
+            assertFalse(second.vertices.isClosed());
+            assertFalse(second.indices.isClosed());
+            assertTrue(fixture.device.writes > 0, "Exercise the explicit upload path.");
         }
     }
 
@@ -68,7 +66,7 @@ class StorageEspMeshTest {
         }
     }
 
-    @Test void replacingAndUnloadingBatchesLeavesMeteorImmediateBuffersUsable() throws Exception {
+    @Test void replacingAndUnloadingBatchesLeavesOtherBatchesUsable() throws Exception {
         try (GpuFixture fixture = new GpuFixture()) {
             Uploaded ordinary = upload(populate(ordinaryBuilder(), 4, 100));
             Uploaded old = upload(populate(StorageEspMesh.createBuilder(), 3, 1));
@@ -88,8 +86,8 @@ class StorageEspMeshTest {
             assertArrayEquals(replacementVertices, replacement.vertices.data);
 
             Uploaded nextOrdinary = assertDoesNotThrow(() -> upload(populate(ordinaryBuilder(), 1, 200)));
-            assertSame(ordinary.vertices, nextOrdinary.vertices);
-            assertSame(ordinary.indices, nextOrdinary.indices);
+            assertNotSame(ordinary.vertices, nextOrdinary.vertices);
+            assertNotSame(ordinary.indices, nextOrdinary.indices);
             assertVertexLayout(nextOrdinary.vertices.data, 200);
             assertArrayEquals(neighborVertices, neighbor.vertices.data);
             assertArrayEquals(replacementVertices, replacement.vertices.data);
@@ -97,12 +95,12 @@ class StorageEspMeshTest {
             neighbor.close();
             replacement.close();
             assertDoesNotThrow(() -> upload(populate(ordinaryBuilder(), 1, 300)));
-            assertTrue(fixture.device.writes >= 4);
+            assertTrue(fixture.device.writes >= 6);
         }
     }
 
     private static MeshBuilder ordinaryBuilder() {
-        return new MeshBuilder(DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.TRIANGLES);
+        return new MeshBuilder(DefaultVertexFormat.POSITION_COLOR, PrimitiveTopology.TRIANGLES);
     }
 
     private static MeshBuilder populate(MeshBuilder mesh, int quads, int x) {
@@ -148,27 +146,18 @@ class StorageEspMeshTest {
         }
     }
 
-    /** Replaces only the GPU transport; MeshBuilder and VertexFormat execute their real upload code. */
+    /** Replaces only the GPU transport; MeshBuilder executes its real upload code. */
     private static final class GpuFixture implements AutoCloseable {
         private final Field launcherField = field(FabricLauncherBase.class, "launcher");
         private final Field deviceField = field(RenderSystem.class, "DEVICE");
-        private final Field workaroundField = field(GraphicsWorkarounds.class, "instance");
-        private final Field vertexField = field(VertexFormat.class, "immediateDrawVertexBuffer");
-        private final Field indexField = field(VertexFormat.class, "immediateDrawIndexBuffer");
         private final Object previousLauncher;
         private final Object previousDevice;
-        private final Object previousWorkaround;
-        private final Object previousVertices;
-        private final Object previousIndices;
         private final boolean previousRendering;
         private final RecordingDevice device = new RecordingDevice();
 
         GpuFixture() throws IllegalAccessException {
             previousLauncher = launcherField.get(null);
             previousDevice = deviceField.get(null);
-            previousWorkaround = workaroundField.get(null);
-            previousVertices = vertexField.get(DefaultVertexFormat.POSITION_COLOR);
-            previousIndices = indexField.get(DefaultVertexFormat.POSITION_COLOR);
             // MeshBuilder reads Fabric's development flag during static initialization.
             launcherField.set(null, Proxy.newProxyInstance(FabricLauncher.class.getClassLoader(),
                 new Class<?>[] {FabricLauncher.class}, (proxy, method, arguments) -> {
@@ -176,8 +165,6 @@ class StorageEspMeshTest {
                     throw new AssertionError("Unexpected launcher call: " + method.getName());
                 }));
             deviceField.set(null, device);
-            vertexField.set(DefaultVertexFormat.POSITION_COLOR, null);
-            indexField.set(DefaultVertexFormat.POSITION_COLOR, null);
             // Utils initializes a projection UBO, so install the recording device before loading it.
             previousRendering = Utils.rendering3D;
             Utils.rendering3D = false;
@@ -185,9 +172,6 @@ class StorageEspMeshTest {
 
         @Override public void close() throws IllegalAccessException {
             Utils.rendering3D = previousRendering;
-            vertexField.set(DefaultVertexFormat.POSITION_COLOR, previousVertices);
-            indexField.set(DefaultVertexFormat.POSITION_COLOR, previousIndices);
-            workaroundField.set(null, previousWorkaround);
             deviceField.set(null, previousDevice);
             launcherField.set(null, previousLauncher);
             device.uploaded.forEach(MemoryBuffer::close);
@@ -208,7 +192,7 @@ class StorageEspMeshTest {
         final List<MemoryBuffer> uploaded = new ArrayList<>();
         int writes;
 
-        RecordingDevice() { super(null); }
+        RecordingDevice() { super(null, null); }
 
         @Override public GpuBuffer createBuffer(Supplier<String> label, int usage, long size) {
             return new MemoryBuffer(usage, Math.toIntExact(size));
@@ -218,19 +202,18 @@ class StorageEspMeshTest {
             MemoryBuffer result = new MemoryBuffer(usage, source.remaining());
             result.write(0, source);
             uploaded.add(result);
+            writes++;
             return result;
         }
 
         @Override public CommandEncoder createCommandEncoder() {
-            return new CommandEncoder(null, null) {
+            return new CommandEncoder(null, null, null) {
                 @Override public void writeToBuffer(GpuBufferSlice target, ByteBuffer source) {
                     ((MemoryBuffer) target.buffer()).write(Math.toIntExact(target.offset()), source);
                     writes++;
                 }
             };
         }
-
-        @Override public String getRenderer() { return "Comet regression fixture"; }
     }
 
     private static final class MemoryBuffer extends GpuBuffer {
@@ -249,5 +232,8 @@ class StorageEspMeshTest {
 
         @Override public boolean isClosed() { return closed; }
         @Override public void close() { closed = true; }
+        @Override public GpuBufferSlice.MappedView map(long offset, long length, boolean read, boolean write) {
+            throw new UnsupportedOperationException();
+        }
     }
 }

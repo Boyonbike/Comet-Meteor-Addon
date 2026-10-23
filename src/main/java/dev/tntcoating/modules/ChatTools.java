@@ -69,7 +69,7 @@ import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ServerboundCommandSuggestionPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandSignedPacket;
-import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.level.storage.LevelResource;
 
 public final class ChatTools extends Module {
@@ -196,16 +196,16 @@ public final class ChatTools extends Module {
     }
 
     private void openPopupFromKey() {
-        if (mc.screen == null) openPopup(null);
+        if (mc.gui.screen() == null) openPopup(null);
     }
 
     public void openPopup(String player) {
         if (!isActive() || mc.player == null || mc.getConnection() == null) return;
         checkSession();
         if (popup == null) popup = new ChatToolsScreen(this);
-        if (mc.screen != popup) {
-            popup.returnTo(mc.screen);
-            mc.setScreen(popup);
+        if (mc.gui.screen() != popup) {
+            popup.returnTo(mc.gui.screen());
+            mc.gui.setScreen(popup);
         }
         if (player != null && ChatMessages.validName(player)) popup.openConversation(player);
     }
@@ -334,7 +334,7 @@ public final class ChatTools extends Module {
     public void pickFriendRowColor() { pickColor(friendRowColor); }
     public void pickClanRowColor() { pickColor(clanRowColor); }
     /** Opens Meteor's colour picker, which returns to the current screen when closed. */
-    private void pickColor(Setting<SettingColor> setting) { mc.setScreen(new ColorSettingScreen(GuiThemes.get(), setting)); }
+    private void pickColor(Setting<SettingColor> setting) { mc.gui.setScreen(new ColorSettingScreen(GuiThemes.get(), setting)); }
     public boolean messageNotifications() { return messageToasts.get(); }
     public void toggleMessageNotifications() { messageToasts.set(!messageToasts.get()); }
     public boolean hidingMessages() { return hideMessages.get(); }
@@ -414,10 +414,10 @@ public final class ChatTools extends Module {
         if (!message.incoming()) whispers.delivered(message.player());
         rememberPlayer(message.player());
         if (message.incoming()) replyPlayer = message.player();
-        boolean read = mc.screen == popup && popup != null && popup.reading(message.player());
+        boolean read = mc.gui.screen() == popup && popup != null && popup.reading(message.player());
         messages.add(message, read);
         if (message.incoming() && !read && messageToasts.get())
-            SystemToast.addOrUpdate(mc.getToastManager(), DM_TOAST,
+            SystemToast.addOrUpdate(mc.gui.toastManager(), DM_TOAST,
                 Component.literal("Message from " + message.player()), Component.literal("Open Chat Tools to reply."));
         if (hideMessages.get()) event.cancel();
     }
@@ -432,7 +432,7 @@ public final class ChatTools extends Module {
 
     public void send(String command) {
         if (mc.getConnection() == null) return;
-        mc.gui.getChat().addRecentChat(command);
+        mc.gui.hud.getChat().addRecentChat(command);
         mc.getConnection().sendCommand(withoutSlash(command));
     }
 
@@ -552,11 +552,11 @@ public final class ChatTools extends Module {
 
     @Override public void onActivate() { resetSession(); refreshMessagePatterns(); refreshCooldowns(); friendRefreshTicks = 0; refreshHighlights(); }
     @Override public void onDeactivate() {
-        if (popup != null && mc.screen == popup) popup.onClose();
+        if (popup != null && mc.gui.screen() == popup) popup.onClose();
         resetSession();
         friendNames = Set.of();
         clanNames = Set.of();
-        if (mc.gui != null) mc.gui.getChat().rescaleChat();
+        if (mc.gui != null) mc.gui.hud.getChat().rescaleChat();
     }
     @EventHandler private void onTick(TickEvent.Pre event) {
         checkSession();
@@ -593,11 +593,11 @@ public final class ChatTools extends Module {
         clanNames = clan;
         clanColor = clanRgb;
         clanInChat = clanShown;
-        if (chatChanged && mc.gui != null) mc.gui.getChat().rescaleChat();
+        if (chatChanged && mc.gui != null) mc.gui.hud.getChat().rescaleChat();
     }
 
     private void resetSession() {
-        if (popup != null && mc.screen == popup) mc.setScreen(null);
+        if (popup != null && mc.gui.screen() == popup) mc.gui.setScreen(null);
         messages.clear();
         recentPlayers.clear();
         recentKey = null;
@@ -804,7 +804,7 @@ public final class ChatTools extends Module {
         if (mc.getConnection() == null || style == null) return null;
         String insertion = onlineName(style.getInsertion());
         if (insertion != null) return insertion;
-        if (style.getHoverEvent() instanceof HoverEvent.ShowEntity show && show.entity().type == EntityType.PLAYER) {
+        if (style.getHoverEvent() instanceof HoverEvent.ShowEntity show && show.entity().type == EntityTypes.PLAYER) {
             PlayerInfo info = mc.getConnection().getPlayerInfo(show.entity().uuid);
             if (info != null && !isSelf(info.getProfile().name())) return info.getProfile().name();
             if (show.entity().name.isPresent()) {

@@ -42,12 +42,15 @@ class MeteorUpgradeCheckTest {
     }
 
     @Test void minecraftHooksFitThePinnedMinecraftBuild() throws Exception {
-        for (String name : List.of("NoHurtCamMixin", "SmartElytraSwapMixin", "SpeedmineAirMixin", "SpeedmineBlockUpdateMixin", "SpeedminePredictionAccessor", "GameModeInvoker",
-            "AntiCoordsBlockStateMixin", "AntiCoordsEntityTickMixin", "AntiCoordsScreenshotMixin", "AntiCoordsFrameMixin")) {
+        int checked = 0;
+        for (String name : configuredMixins()) {
             ClassNode mixin = read("dev/tntcoating/mixin/" + name);
-            assertNotNull(mixin);
+            assertNotNull(mixin, name);
+            if (MeteorUpgradeCheck.targetsMeteor(mixin)) continue;
+            checked++;
             assertEquals(List.of(), MeteorUpgradeCheck.problems(mixin, MeteorUpgradeCheckTest::read), name);
         }
+        assertTrue(checked >= 20, "only " + checked + " Minecraft mixins were checked");
     }
 
     @Test void replenishUpgradeFallsBackIfMeteorChangesItsSlotTracking() throws Exception {

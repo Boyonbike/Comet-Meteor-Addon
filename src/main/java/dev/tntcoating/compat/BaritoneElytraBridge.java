@@ -54,11 +54,9 @@ final class BaritoneElytraBridge implements BaritoneBridge {
     @Override
     public boolean readyForTakeoff() {
         IBaritone baritone = baritone();
-        IElytraProcess elytra = baritone.getElytraProcess();
-        // Baritone 26.1 does not expose its calculated path. Its public status remains in PAUSE until
-        // the pathfinder has produced one, after which the process advances to a takeoff state.
-        return !elytra.displayName().contains("Waiting for elytra path")
-            && !baritone.getPathingBehavior().isPathing();
+        // Baritone 26.2 exposes the calculated elytra path directly, so wait for it instead of
+        // inferring readiness from the process's display name.
+        return !baritone.getElytraProcess().getPath().isEmpty() && !baritone.getPathingBehavior().isPathing();
     }
 
     @Override

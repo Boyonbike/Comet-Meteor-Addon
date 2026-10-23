@@ -364,7 +364,7 @@ public final class AdaptiveElytraFly extends Module {
 
     /** Runs at vanilla's actual Jump-to-glide check, so holding Jump or ordinary jumps never equip wings. */
     public void prepareSmartTakeoff() {
-        if (!canSmartSwap(Modules.get().get(ElytraFly.class)) || mc.screen != null || !mc.isWindowActive()
+        if (!canSmartSwap(Modules.get().get(ElytraFly.class)) || mc.gui.screen() != null || !mc.isWindowActive()
             || mc.player.onGround() || mc.player.isFallFlying() || mc.player.isInWater()
             || mc.player.isInLava() || mc.player.isPassenger() || mc.player.getAbilities().flying
             || mc.player.hasEffect(MobEffects.LEVITATION)) return;
@@ -794,7 +794,7 @@ public final class AdaptiveElytraFly extends Module {
 
     /** The physical Sprint key, including a rebound mouse button, while Minecraft is focused with no screen open. */
     private boolean sprintKeyDown() {
-        return sprintBoost.get() && mc.screen == null && mc.isWindowActive() && Input.isPressed(mc.options.keySprint);
+        return sprintBoost.get() && mc.gui.screen() == null && mc.isWindowActive() && Input.isPressed(mc.options.keySprint);
     }
 
     /**
@@ -890,7 +890,7 @@ public final class AdaptiveElytraFly extends Module {
     private void updateStatus() {
         hud = String.format(Locale.ROOT, "%s %.0f b/s", state, measuredSpeed);
         // Diagnostics labels are only visible in a settings screen; skip their formatting during play.
-        if (mc.screen == null) return;
+        if (mc.gui.screen() == null) return;
         if (statusLabel != null) statusLabel.set(String.format(Locale.ROOT, "%s | measured %.1f b/s", state, measuredSpeed));
         if (speedLabel != null) {
             double maximum = controlling && !engine.boostActive() ? engine.adaptiveMaximum()

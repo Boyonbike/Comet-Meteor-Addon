@@ -40,7 +40,7 @@ public final class CometModuleSettings {
             var row = section.add(theme.table()).expandX().widget();
             row.add(theme.module(upgrade)).expandX();
             var settings = row.add(theme.button("Settings")).widget();
-            settings.action = () -> mc.setScreen(theme.moduleScreen(upgrade));
+            settings.action = () -> mc.gui.setScreen(theme.moduleScreen(upgrade));
             row.row();
         }
         return list;

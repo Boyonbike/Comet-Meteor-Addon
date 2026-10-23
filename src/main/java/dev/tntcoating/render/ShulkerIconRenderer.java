@@ -15,7 +15,6 @@ import net.minecraft.client.renderer.state.gui.BlitRenderState;
 import net.minecraft.client.renderer.state.gui.GuiItemRenderState;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
-import com.mojang.blaze3d.shaders.UniformType;
 
 public final class ShulkerIconRenderer {
     /** Subscribed once at start-up so a resource reload, which can reset the device's pipeline cache, recompiles. */
@@ -63,18 +62,17 @@ public final class ShulkerIconRenderer {
 
         private static RenderPipeline create() {
             RenderPipeline base = RenderPipelines.GUI_TEXTURED_PREMULTIPLIED_ALPHA;
-            return RenderPipeline.builder()
+            var builder = RenderPipeline.builder()
                 .withLocation(id("pipeline/shulker_icon"))
                 .withVertexShader(id("shaders/shulker_icon.vert"))
                 .withFragmentShader(id("shaders/shulker_icon.frag"))
-                .withSampler("Sampler0")
-                .withUniform("DynamicTransforms", UniformType.UNIFORM_BUFFER)
-                .withUniform("Projection", UniformType.UNIFORM_BUFFER)
-                .withVertexFormat(base.getVertexFormat(), base.getVertexFormatMode())
+                .withVertexBinding(0, base.getVertexFormatBinding(0))
+                .withPrimitiveTopology(base.getPrimitiveTopology())
                 .withDepthStencilState(java.util.Optional.ofNullable(base.getDepthStencilState()))
                 .withColorTargetState(base.getColorTargetState())
-                .withCull(base.isCull())
-                .build();
+                .withCull(base.isCull());
+            base.getBindGroupLayouts().forEach(builder::withBindGroupLayout);
+            return builder.build();
         }
     }
 

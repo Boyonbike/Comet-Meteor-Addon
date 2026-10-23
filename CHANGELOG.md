@@ -2,6 +2,7 @@
 
 ## 0.25.16
 
+- **26.2 port:** built against Minecraft 26.2 and Meteor 26.2 build 35, with Xaero's Minimap 26.6.1 and Baritone 26.2 as compile-only integrations. The custom shader and solid-colour icon pipelines use 26.2's render-pipeline bindings, screenshots hook its new global screenshot handler, and the storage, GUI and HUD hooks moved to their 26.2 entry points. The automated suite and its Minecraft hook checks pass against the pinned 26.2 build.
 - **Anti Coords:** the new **anti-coords** module makes your coordinates as hard as possible to work out from what you show. It hides the texture rotations and model offsets that blocks pick from their own position, adapted from rfresh2's NoTextureRotations (Apache-2.0). **Fixed** mode (default) gives every block the same rotation and offset; **Keyed** keeps vanilla's variety by hashing positions under a secret key. Unlike the original, doors, beds and tall plants are covered too. With **clean-screenshots** (default on), the screenshot key saves only the world, leaving out every HUD, F3, chat, menu, Meteor overlay and other mods' overlays. See [Anti Coords](README.md#anti-coords).
 
 ## 0.25.15

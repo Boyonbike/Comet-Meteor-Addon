@@ -121,7 +121,7 @@ public abstract class InventoryTweaksMixin {
     @Unique
     private InventoryMoveScheduler.Context comet$context() {
         if (!((InventoryTweaks) (Object) this).isActive() || !Utils.canUpdate() || mc.gameMode == null || sorter != null
-            || !(mc.screen instanceof AbstractContainerScreen<?> screen)
+            || !(mc.gui.screen() instanceof AbstractContainerScreen<?> screen)
             || screen.getMenu() != mc.player.containerMenu || !mc.player.containerMenu.getCarried().isEmpty()) return null;
         return new InventoryMoveScheduler.Context(mc.player, mc.level, screen, mc.player.containerMenu);
     }

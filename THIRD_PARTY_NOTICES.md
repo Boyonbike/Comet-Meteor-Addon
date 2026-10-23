@@ -10,7 +10,7 @@ Air-mining adaptation credits Quiettee Utils (GPL-3.0), as noted in its source.
 The adapted files are Speedmine.java, SpeedmineRange.java, SpeedmineRender.java,
 SpeedmineOption.java, SpeedmineAirMixin.java, SpeedmineBlockUpdateMixin.java,
 SpeedminePredictionAccessor.java, and SpeedmineTest.java.
-Comet adaptations target Minecraft 26.1.2 and remove THM services and limiter dependencies.
+Comet adaptations target Minecraft 26.2 and remove THM services and limiter dependencies.
 Original Comet source remains available under its CC0 license (LICENSE).
 The combined distribution includes GPL-covered code and must be distributed under
 GPL v3 terms, including corresponding source for the combined work.
@@ -51,7 +51,7 @@ No warranty is provided, including merchantability or fitness for a particular p
 
 The settings credit does not replace the licence or corresponding source.
 `./gradlew build` packages LICENSE-DEVILS and this notice inside the JAR and
-produces `build/distributions/comet-<version>-mc26.1.2-source.zip`, containing
+produces `build/distributions/comet-<version>-mc26.2-source.zip`, containing
 the modified source for the combined addon, licence notices, and Gradle build
 inputs. Distribute this matching source archive alongside the compiled JAR under
 GPL v3 terms. Dependencies are declared in the build files and resolved by Gradle.

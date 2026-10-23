@@ -14,6 +14,6 @@ public abstract class GUIMoveMixin {
     // so this also releases held movement keys when the window opens.
     @Inject(method = "skip", at = @At("HEAD"), cancellable = true)
     private void comet$skipChatTools(CallbackInfoReturnable<Boolean> cir) {
-        if (Minecraft.getInstance().screen instanceof ChatToolsScreen) cir.setReturnValue(true);
+        if (Minecraft.getInstance().gui.screen() instanceof ChatToolsScreen) cir.setReturnValue(true);
     }
 }
