@@ -39,7 +39,10 @@
     "ShulkerIconOversizedMixin",
     "SpeedmineAirMixin",
     "SpeedmineBlockUpdateMixin",
-    "SpeedminePredictionAccessor"
+    "SpeedminePredictionAccessor",
+    "ProxiesScreenMixin",
+    "ScreenProxyUrlMixin",
+    "DisconnectedScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1
