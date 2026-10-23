@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.25.16
+
+- **Anti Coords:** the new **anti-coords** module makes your coordinates as hard as possible to work out from what you show. It hides the texture rotations and model offsets that blocks pick from their own position, adapted from rfresh2's NoTextureRotations (Apache-2.0). **Fixed** mode (default) gives every block the same rotation and offset; **Keyed** keeps vanilla's variety by hashing positions under a secret key. Unlike the original, doors, beds and tall plants are covered too. With **clean-screenshots** (default on), the screenshot key saves only the world, leaving out every HUD, F3, chat, menu, Meteor overlay and other mods' overlays. See [Anti Coords](README.md#anti-coords).
+
 ## 0.25.15
 
 - **Auto Wasp flies at the server's limits:** pursuit used DEVILS' fixed 2 blocks per tick (40 b/s). It now boosts on VolytraFly's curve, from 60 b/s at once towards 300 b/s, up to the new **horizontal-max-bps** (default 240, up to 300). A vanilla server only checks how far each move packet travels, and pursuit takes 6b6t's limits to be the same, as Adaptive Elytra Fly's boost does. 240 b/s is the fastest that is never set back for distance, even when lag delivers two packets in one tick; up to 300 b/s is set back only when that happens. Speeds are now set in blocks per second like Adaptive Elytra Fly: **horizontal-max-bps** replaces **horizontal-speed** (set it to 40 for roughly the old pace), and **vertical-max-bps** (default and maximum 60) replaces **vertical-speed**, with climbs and descents boosting from 30 b/s as in VolytraFly. The new **3d-max-bps** (default 180) caps total 3D speed while climbing or descending and for half a second after, so climbs and dives fly slower than level flight; the boost ramps are held to it meanwhile and speed up again from it afterwards. With the default **ramp-step** (0.3), pursuit reaches 240 b/s in about 3.5 seconds.

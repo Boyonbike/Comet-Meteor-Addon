@@ -95,6 +95,7 @@ tasks {
 
         from("LICENSE-Speedmine")
         from("LICENSE-DEVILS")
+        from("LICENSE-NoTextureRotations")
         from("THIRD_PARTY_NOTICES.md")
 
         from("LICENSE") {
@@ -129,7 +130,7 @@ val sourceDistribution = tasks.register<Zip>("sourceDistribution") {
     from("gradle") { into("gradle") }
     from("scripts") { into("scripts") }
     from("gradlew", "gradlew.bat", "build.gradle.kts", "settings.gradle.kts", "gradle.properties",
-        "LICENSE", "LICENSE-Speedmine", "LICENSE-DEVILS", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md")
+        "LICENSE", "LICENSE-Speedmine", "LICENSE-DEVILS", "LICENSE-NoTextureRotations", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md")
 }
 
 tasks.named("build") { dependsOn(sourceDistribution) }

@@ -31,18 +31,12 @@ public final class CometMixinPlugin implements IMixinConfigPlugin {
         if (decided != null) return decided;
         MeteorUpgradeCheck.ClassNodes classes = name -> MixinService.getService().getBytecodeProvider()
             .getClassNode(name.replace('/', '.'));
-        List<String> group = MeteorUpgrades.group(simpleName(mixinClassName));
-        Map<String, List<String>> problems = new HashMap<>();
-        for (String member : group) {
-            List<String> found = check(mixinPackage.isEmpty() ? member : mixinPackage + "." + member, classes);
-            if (!found.isEmpty()) problems.put(member, found);
-        }
+        String member = simpleName(mixinClassName);
+        List<String> problems = check(mixinPackage.isEmpty() ? member : mixinPackage + "." + member, classes);
         boolean apply = problems.isEmpty();
-        for (String member : group) {
-            decisions.put(mixinPackage.isEmpty() ? member : mixinPackage + "." + member, apply);
-            if (apply) continue;
-            List<String> own = problems.get(member);
-            String reason = own != null ? String.join("; ", own) : "needed together with " + String.join(", ", problems.keySet());
+        decisions.put(mixinClassName, apply);
+        if (!apply) {
+            String reason = String.join("; ", problems);
             MeteorUpgrades.disable(member, reason);
             LOG.warn("Skipping Comet's {}: this Meteor build is not compatible ({})", member, reason);
         }

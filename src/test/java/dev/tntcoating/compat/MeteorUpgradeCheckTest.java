@@ -42,7 +42,8 @@ class MeteorUpgradeCheckTest {
     }
 
     @Test void minecraftHooksFitThePinnedMinecraftBuild() throws Exception {
-        for (String name : List.of("NoHurtCamMixin", "SmartElytraSwapMixin", "SpeedmineAirMixin", "SpeedmineBlockUpdateMixin", "SpeedminePredictionAccessor", "GameModeInvoker")) {
+        for (String name : List.of("NoHurtCamMixin", "SmartElytraSwapMixin", "SpeedmineAirMixin", "SpeedmineBlockUpdateMixin", "SpeedminePredictionAccessor", "GameModeInvoker",
+            "AntiCoordsBlockStateMixin", "AntiCoordsEntityTickMixin", "AntiCoordsScreenshotMixin", "AntiCoordsFrameMixin")) {
             ClassNode mixin = read("dev/tntcoating/mixin/" + name);
             assertNotNull(mixin);
             assertEquals(List.of(), MeteorUpgradeCheck.problems(mixin, MeteorUpgradeCheckTest::read), name);
@@ -91,8 +92,12 @@ class MeteorUpgradeCheckTest {
         assertTrue(MeteorUpgradeCheck.targetsMeteor(read("dev/tntcoating/mixin/ScaffoldMixin")));
     }
 
-    @Test void anUngroupedMixinAppliesAlone() {
-        assertEquals(List.of("ScaffoldMixin"), MeteorUpgrades.group("ScaffoldMixin"));
+    @Test void aSkippedUpgradeIsRememberedAndReported() {
+        String mixin = "CometMixinPluginTestMixin";
+        assertTrue(MeteorUpgrades.applied(mixin));
+        MeteorUpgrades.disable(mixin, "this Meteor build moved onTick");
+        assertFalse(MeteorUpgrades.applied(mixin));
+        assertEquals("this Meteor build moved onTick", MeteorUpgrades.disabled().get(mixin));
     }
 
     private static MeteorUpgradeCheck.ClassNodes withReplacement(String name, ClassNode replacement) {

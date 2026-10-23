@@ -10,8 +10,6 @@ import dev.tntcoating.core.ChatTeleportState;
 import dev.tntcoating.core.ChatToolsLayout;
 import dev.tntcoating.core.ChatTpaRequests;
 import dev.tntcoating.modules.ChatTools;
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -28,10 +26,7 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
-import org.lwjgl.PointerBuffer;
 import org.lwjgl.glfw.GLFW;
-import org.lwjgl.system.MemoryStack;
-import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import static dev.tntcoating.gui.ChatToolsStyle.*;
 
@@ -50,9 +45,9 @@ public final class ChatToolsScreen extends Screen {
     private static final Page[] TABS = {Page.Home, Page.Players, Page.Clan, Page.Homes, Page.Hotspot, Page.Settings};
     private static final String[] TAB_LABELS = {"Overview", "Players", "Clan", "Homes", "Hotspot", "Settings"};
     private static final long NOTICE_MILLIS = 4_000;
-    private static final long MAX_IMPORT_BYTES = 1 << 20;
     private static final String DOT = " · ";
     private final ChatTools tools;
+    private final ChatToolsFiles files = new ChatToolsFiles();
     private final List<Hit> hits = new ArrayList<>();
     private final List<ChatServerSettings.Entry> settingsPath = new ArrayList<>();
     private final Map<String, String> drafts = new HashMap<>();
@@ -64,7 +59,7 @@ public final class ChatToolsScreen extends Screen {
     private int x = -1, y, w, h, bodyTop, bodyBottom, cursor, scroll, maxScroll;
     private int cx, cw;
     private ChatToolsLayout.Frame layout;
-    private boolean dragging, resizing, content, choosingFile;
+    private boolean dragging, resizing, content;
     private double dragX, dragY;
     private String notice = "";
     private long noticeAt;
@@ -393,8 +388,8 @@ public final class ChatToolsScreen extends Screen {
         String typed = clanField.getValue().strip();
         var entered = ChatClan.typed(typed).names().stream().filter(name -> !tools.inClan(name)).toList();
         var actions = new Actions(cx + cw, cursor)
-            .add("Import CSV", choosingFile ? "Waiting for the file picker" : "Add members from a .csv file, or drop one on this window",
-                Tone.Secondary, !choosingFile, this::importCsv)
+            .add("Import CSV", files.choosing() ? "Waiting for the file picker" : "Add members from a .csv file, or drop one on this window",
+                Tone.Secondary, !files.choosing(), this::importCsv)
             .add("Add", entered.isEmpty() ? "Type usernames to add, separated by commas"
                     : "Add " + (entered.size() == 1 ? entered.getFirst() : entered.size() + " players") + " to the clan",
                 Tone.Primary, !entered.isEmpty(), this::addTyped);
@@ -432,56 +427,17 @@ public final class ChatToolsScreen extends Screen {
         focus(clanField);
     }
 
-    /**
-     * Meteor's own Import buttons use this native picker too. It waits on its own thread, because blocking the game
-     * thread while the player browses would also stop keep-alive replies to the server.
-     */
+    /** Opens the native picker on its own thread, then imports the chosen clan list. */
     private void importCsv() {
-        if (choosingFile) return;
-        choosingFile = true;
-        var mc = Minecraft.getInstance();
-        Thread picker = new Thread(() -> {
-            Path chosen = null;
-            boolean failed = false;
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                PointerBuffer filters = stack.pointers(stack.UTF8("*.csv"), stack.UTF8("*.txt"));
-                String path = TinyFileDialogs.tinyfd_openFileDialog("Import clan members", null, filters, "CSV files", false);
-                if (path != null) chosen = Path.of(path);
-            } catch (RuntimeException | LinkageError e) {
-                failed = true;
-            }
-            Path file = chosen;
-            boolean error = failed;
-            mc.execute(() -> {
-                choosingFile = false;
-                if (error) notice("Could not open a file picker. Drop the .csv file on this window instead.");
-                else if (file != null) importFiles(List.of(file));
-            });
-        }, "Comet clan import");
-        picker.setDaemon(true);
-        picker.start();
+        files.choose(Minecraft.getInstance(), this::importFiles, this::notice);
     }
 
-    private void importFiles(List<Path> files) {
+    private void importFiles(List<Path> paths) {
         if (page != Page.Clan) navigate(Page.Clan);
-        List<String> names = List.of();
-        int invalid = 0;
-        for (Path file : files) {
-            String name = String.valueOf(file.getFileName());
-            String lower = name.toLowerCase(Locale.ROOT);
-            if (!lower.endsWith(".csv") && !lower.endsWith(".txt")) { notice(name + " is not a .csv file."); return; }
-            try {
-                if (Files.size(file) > MAX_IMPORT_BYTES) { notice(name + " is too large for a clan list."); return; }
-                var result = ChatClan.csv(ChatClan.decode(Files.readAllBytes(file)));
-                names = ChatClan.add(names, result.names());
-                invalid += result.invalid();
-            } catch (IOException | RuntimeException e) {
-                notice("Could not read " + name + ".");
-                return;
-            }
-        }
-        int added = tools.addToClan(names);
-        notice(ChatClan.summary(added, names.size() - added, invalid));
+        var imported = ChatToolsFiles.read(paths, this::notice);
+        if (imported == null) return;
+        int added = tools.addToClan(imported.names());
+        notice(ChatClan.summary(added, imported.names().size() - added, imported.invalid()));
     }
 
     private void homes() {

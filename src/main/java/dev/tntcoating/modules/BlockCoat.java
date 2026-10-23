@@ -26,7 +26,6 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import dev.tntcoating.TntCoatingAddon;
-import dev.tntcoating.mixin.GameModeInvoker;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.movement.Flight;
 import dev.tntcoating.core.ModeGeometry;
@@ -48,8 +47,6 @@ import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Input;
-import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
-import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
@@ -65,9 +62,18 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.*;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -614,10 +620,6 @@ public final class BlockCoat extends Module {
     private int window() { return serverMode.get() == ServerMode.Conservative ? 2 : pendingCap.get(); }
     private boolean rotating() { return rotate.get(); }
 
-    private boolean clickable(BlockHitResult hit) {
-        return BlockUtils.isClickable(mc.level.getBlockState(hit.getBlockPos()).getBlock());
-    }
-
     /** Hotbar-switch packets a placement adds; none when the block is already held or in the offhand. */
     private int switchPackets(FindItemResult material) {
         if (material.isOffhand() || material.slot() == mc.player.getInventory().getSelectedSlot()) return 0;
@@ -893,7 +895,7 @@ public final class BlockCoat extends Module {
         else {
             BlockHitResult cached = hitCache.get(target);
             // Search again past a cached container face in case an ordinary face is now usable.
-            hit = cached != null && !clickable(cached) && visibleHit(target, cached, liquid) ? cached : supportHit(target, liquid);
+            hit = cached != null && !BlockCoatInteraction.clickable(cached) && visibleHit(target, cached, liquid) ? cached : supportHit(target, liquid);
             if (hit != null) hitCache.put(target, hit); else hitCache.remove(target);
         }
         return hit == null ? reject(rayLimited ? Rejection.Deferred : Rejection.Reach) : new Validation(Rejection.None, hit, liquid);
@@ -920,7 +922,7 @@ public final class BlockCoat extends Module {
         boolean extraRotation = rotating() && rotationsPlanned > 0;
         if (extraRotation && !extraRotations.get()) return false;
         BlockHitResult hit = validation.hit;
-        int cost = PacketBudget.placementCost(switchPackets(planned), extraRotation, clickable(hit));
+        int cost = PacketBudget.placementCost(switchPackets(planned), extraRotation, BlockCoatInteraction.clickable(hit));
         if (!packetBudget.allows(tick, plannedPackets + cost, packetLimit.get())) { packetLimited = true; return false; }
         plannedPackets += cost;
         if (rotating()) rotationsPlanned++;
@@ -964,7 +966,7 @@ public final class BlockCoat extends Module {
                 tracker.markSent(target, reservation, tick);
                 coatingInteraction = true;
                 try {
-                    interactWithSupport(hit, offhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND);
+                    BlockCoatInteraction.use(hit, offhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND, containerSupports.get());
                 } finally {
                     coatingInteraction = false;
                 }
@@ -977,28 +979,6 @@ public final class BlockCoat extends Module {
         return true;
     }
 
-    /** Sneak-use containers so they act as support instead of opening their screen. */
-    private void interactWithSupport(BlockHitResult hit, InteractionHand hand) {
-        if (!clickable(hit)) {
-            BlockUtils.interact(hit, hand, true);
-            return;
-        }
-        if (!containerSupports.get()) return;
-        Input original = mc.player.input.keyPresses;
-        var connection = mc.getConnection();
-        if (connection == null) return;
-        // In 26.1.2 shift state is carried by the ordinary player input packet.
-        Input sneaking = new Input(original.forward(), original.backward(), original.left(), original.right(),
-            original.jump(), true, original.sprint());
-        connection.send(new ServerboundPlayerInputPacket(sneaking));
-        try {
-            // Send the sequenced interaction without client-side container prediction or local crouching.
-            ((GameModeInvoker) mc.gameMode).comet$startPrediction(mc.level, sequence -> new ServerboundUseItemOnPacket(hand, hit, sequence));
-            mc.player.swing(hand);
-        } finally {
-            connection.send(new ServerboundPlayerInputPacket(original));
-        }
-    }
 
     @EventHandler
     private void onRender(Render3DEvent event) {

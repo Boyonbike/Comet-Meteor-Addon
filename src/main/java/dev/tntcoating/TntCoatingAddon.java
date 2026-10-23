@@ -8,6 +8,7 @@ import dev.tntcoating.modules.AutoWasp;
 import dev.tntcoating.modules.AllayFarm;
 import dev.tntcoating.modules.AllayShulkerKiller;
 import dev.tntcoating.modules.AngleCalculator;
+import dev.tntcoating.modules.AntiCoords;
 import dev.tntcoating.modules.AntiSpawnSet;
 import dev.tntcoating.modules.NoHurtCam;
 import dev.tntcoating.modules.BaritoneElytra;
@@ -77,6 +78,7 @@ public final class TntCoatingAddon extends MeteorAddon {
         ordered.add(new DubCounter());
         ordered.add(new ShulkerIcons());
         ordered.add(new NoHurtCam());
+        ordered.add(new AntiCoords());
         ordered.add(new XaeroWaypoints());
         ordered.add(new WaypointDelete());
         ordered.add(new ChatTools());

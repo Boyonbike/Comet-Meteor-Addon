@@ -3,3 +3,10 @@ build/
 run/
 .idea/
 *.iml
+.aider*
+.venv/
+.venv-aider/
+bin/
+logs/
+extracted/
+.claude/

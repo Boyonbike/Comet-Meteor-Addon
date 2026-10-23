@@ -1,15 +1,15 @@
-# Comet by Boyonabike — 0.25.15
+# Comet by Boyonabike — 0.25.16
 
 Meteor Client addon for Minecraft **26.1.2**. Open Meteor's **Comet** category. Modules appear in this order, grouped by purpose:
 
 - **Flight and movement:** **adaptive-elytra-fly**, **auto-wasp-devils**, **baritone-elytra**, **elytra-log**, **angle-calculator**.
-- **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**, **call-to-arms**, **stash-report**.
+- **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **anti-coords**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**, **call-to-arms**, **stash-report**.
 - **Building:** **scaffold**, **block-coat**, **smart-sponge**, **speedmine**, **safe-fast-use**, **anti-spawn-set**.
 - **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**, **auto-replenish**.
 - **Allays:** **allay-farm**, **allay-shulker-killer**. See [Allays](#allays).
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown** and **dub-counter**. See [HUD elements](#hud-elements).
 
-Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.15-mc26.1.2.jar`.
+Requires Meteor 26.1.2 (build 42 or newer), Fabric Loader 0.19.3+ and Java 25+; **xaero-waypoints** also needs Xaero's Minimap and **baritone-elytra** needs Baritone. Phase, Elytra Replace and the Trajectories upgrade were removed in 0.25.0 (see the [changelog](CHANGELOG.md#0250)). The Fabric mod ID stays `tnt-coating` for upgrade continuity; remove the old JAR before installing `comet-0.25.16-mc26.1.2.jar`.
 
 **Scaffold**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:
 
@@ -143,6 +143,21 @@ Comet upgrades Meteor's existing **auto-replenish** in place. Its Player and Com
 - **respect-custom-names** defaults on and requires the same custom name when replacing an emptied slot. Partly filled stacks always require matching item components, including names, enchantments and potion data, so incompatible stacks are never swapped over remaining items. **same-enchants** and **excluded-items** still apply.
 
 Transfers use Meteor's targeted inventory clicks without opening the inventory. Bephax's shift-click and delayed-click queue are replaced by direct transfers to the intended slot, so an earlier empty hotbar slot cannot redirect a refill. Transfers pause for open containers, carried cursor items and Comet's temporary tool/weapon loans. Manual screen changes reset tracked slots through Meteor's original lifecycle. These features have automated build and compatibility coverage; in-game movement, camera effects and server inventory acceptance still need verification.
+
+## Anti Coords
+
+Enable **Comet → anti-coords** to make your coordinates as hard as possible to work out from what you show.
+
+**Textures**, adapted from [NoTextureRotations](https://github.com/rfresh2/NoTextureRotations) by rfresh2. Grass, stone, sand and many other blocks pick a rotated or alternative texture from their own coordinates, and flowers, grass, bamboo and dripstone pick a small offset the same way. No world seed is needed: a screenshot or video showing enough of these blocks can be checked against positions until one fits.
+
+- **mode**: **Fixed** (default) gives every block the same rotation and offset, so they reveal nothing. **Keyed** keeps vanilla's variety: each block's place within a 256-block square is hashed with SipHash-2-4 under a secret key, with a separate key derived for each server and dimension. Without the key the textures reveal nothing about where you are; even with it, only your place within that square. The key is saved in `meteor-client/comet/anti-coords.key`, so textures stay the same between sessions. Delete it to get a new one.
+- **hide-rotations** and **hide-offsets** both default on. Your own movement, and the integrated server in singleplayer, still collide with the real bamboo and dripstone offsets, so you stay in sync with the server. Your crosshair targets the offsets you see.
+- Toggling the module or changing these settings rebuilds the loaded chunks.
+- Meteor's **no-render → no-texture-rotations** is a simpler version that also moves your collisions; leave it off while using Anti Coords.
+
+**Screenshots.** With **clean-screenshots** on (default), the screenshot key saves only the world. The capture is taken after the world is drawn and before anything 2D, so it leaves out vanilla's HUD, F3, chat, open menus and toasts, Meteor's HUD and its waypoint labels, nametags and logout spots, and any other mod's overlay. The hand, block outline and vanilla name tags are hidden as F1 hides them. F1 on its own still shows Meteor's waypoint labels, nametags and logout spots. The HUD disappears for the one frame being captured. Outside a world, screenshots work as usual.
+
+Automated tests check the key hashing against Guava's SipHash-2-4 and every Anti Coords hook against Minecraft 26.1.2; in-game rendering still needs verification.
 
 ## Shulker Icons
 
@@ -514,7 +529,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.15-mc26.1.2.jar` and the matching `build/distributions/comet-0.25.15-mc26.1.2-source.zip`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.16-mc26.1.2.jar` and the matching `build/distributions/comet-0.25.16-mc26.1.2-source.zip`. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled.
 
 Automated tests cover:
 

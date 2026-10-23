@@ -14,6 +14,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import dev.tntcoating.core.SpeedmineInventory;
+import dev.tntcoating.core.SpeedminePolicy;
+import dev.tntcoating.core.SpeedmineTiming;
 
 import java.util.List;
 
@@ -34,7 +36,7 @@ class SpeedmineTest {
     })
     void airMiningOnlyClaimsWithinConfiguredMovementAndGameModes(boolean grounded, boolean gliding,
             boolean allowGliding, boolean creative, boolean spectator, double speed, double maximum, boolean expected) {
-        assertEquals(expected, Speedmine.canClaimAir(grounded, gliding, allowGliding, creative, spectator, speed, maximum));
+        assertEquals(expected, SpeedminePolicy.canClaimAir(grounded, gliding, allowGliding, creative, spectator, speed, maximum));
     }
 
     @ParameterizedTest
@@ -50,14 +52,14 @@ class SpeedmineTest {
     })
     void multitaskAllowsManualAndAutomaticItemUse(boolean multitask, boolean usingItem, boolean eating,
                                                 int priority, boolean expectedPause) {
-        assertEquals(expectedPause, Speedmine.shouldPauseMining(multitask, usingItem, eating, priority));
+        assertEquals(expectedPause, SpeedminePolicy.shouldPauseMining(multitask, usingItem, eating, priority));
     }
 
     @Test
     void multitaskStillYieldsToOtherInventoryOwners() {
         for (int priority : new int[] {SpeedmineInventory.Priority.EXTERNAL}) {
-            assertTrue(Speedmine.shouldPauseMining(true, false, false, priority));
-            assertTrue(Speedmine.shouldPauseMining(true, true, true, priority));
+            assertTrue(SpeedminePolicy.shouldPauseMining(true, false, false, priority));
+            assertTrue(SpeedminePolicy.shouldPauseMining(true, true, true, priority));
         }
     }
 
@@ -72,20 +74,20 @@ class SpeedmineTest {
     })
     void bedrockEatingRequiresItsToggleAndManualOrAutoEating(boolean enabled, boolean eating,
                                                            int priority, boolean expected) {
-        assertEquals(expected, Speedmine.canMineBedrockWhileEating(enabled, eating, priority));
+        assertEquals(expected, SpeedminePolicy.canMineBedrockWhileEating(enabled, eating, priority));
     }
 
     @Test
     void bedrockEatingStillYieldsToOtherInventoryOwners() {
         for (int priority : new int[] {SpeedmineInventory.Priority.EXTERNAL}) {
-            assertFalse(Speedmine.canMineBedrockWhileEating(true, true, priority));
+            assertFalse(SpeedminePolicy.canMineBedrockWhileEating(true, true, priority));
         }
     }
 
     @Test
     void bedrockEatingDoesNotUnpauseThePacketMiner() {
-        assertTrue(Speedmine.canMineBedrockWhileEating(true, true, SpeedmineInventory.Priority.EATING));
-        assertTrue(Speedmine.shouldPauseMining(false, true, true, SpeedmineInventory.Priority.EATING));
+        assertTrue(SpeedminePolicy.canMineBedrockWhileEating(true, true, SpeedmineInventory.Priority.EATING));
+        assertTrue(SpeedminePolicy.shouldPauseMining(false, true, true, SpeedmineInventory.Priority.EATING));
     }
 
     @ParameterizedTest
@@ -155,26 +157,26 @@ class SpeedmineTest {
     @ParameterizedTest
     @CsvSource({"1000,20,20", "1000,10,10", "1000,5,5", "50,20,1", "100,10,1", "1000,0,0", "1000,-5,0", "1000,30,20", "-50,20,0"})
     void progressAndStartBudgetFollowServerTicks(long millis, float tps, double ticks) {
-        assertEquals(ticks, Speedmine.serverTicks(millis, tps), 1e-9);
+        assertEquals(ticks, SpeedmineTiming.serverTicks(millis, tps), 1e-9);
     }
 
     @Test
     void changingTpsKeepsAlreadyEarnedProgress() {
-        assertEquals(15, Speedmine.serverTicks(500, 20) + Speedmine.serverTicks(500, 10), 1e-9);
+        assertEquals(15, SpeedmineTiming.serverTicks(500, 20) + SpeedmineTiming.serverTicks(500, 10), 1e-9);
     }
 
     @Test
     void invalidEstimateFallsBackToVanillaRate() {
-        assertEquals(20, Speedmine.serverTicks(1000, Float.NaN), 1e-9);
+        assertEquals(20, SpeedmineTiming.serverTicks(1000, Float.NaN), 1e-9);
     }
 
     @Test
     void fullTpsMatchesUnsyncedStartsEvenWithoutCredit() {
         for (double credit : new double[] {0, 0.98, 1}) {
-            assertTrue(Speedmine.canStart(true, 20, credit));
-            assertTrue(Speedmine.canStart(false, 10, credit));
+            assertTrue(SpeedmineTiming.canStart(true, 20, credit));
+            assertTrue(SpeedmineTiming.canStart(false, 10, credit));
         }
-        assertTrue(Speedmine.canStart(true, Float.NaN, 0));
+        assertTrue(SpeedmineTiming.canStart(true, Float.NaN, 0));
     }
 
     @ParameterizedTest
@@ -183,8 +185,8 @@ class SpeedmineTest {
         double credit = 0;
         int starts = 0;
         for (int tick = 0; tick < 100; tick++) {
-            credit = Speedmine.replenishStartCredit(credit, tick % 2 == 0 ? 49 : 51, tps);
-            if (Speedmine.canStart(true, tps, credit)) {
+            credit = SpeedmineTiming.replenishStartCredit(credit, tick % 2 == 0 ? 49 : 51, tps);
+            if (SpeedmineTiming.canStart(true, tps, credit)) {
                 starts++;
                 credit = Math.max(0, credit - 1);
             }
@@ -194,10 +196,10 @@ class SpeedmineTest {
 
     @Test
     void startCreditCannotAccumulateAnUnlimitedBurstDuringPause() {
-        double credit = Speedmine.replenishStartCredit(0, 60000, 10);
-        assertTrue(Speedmine.canStart(true, 10, credit));
-        assertTrue(Speedmine.canStart(true, 10, credit - 1));
-        assertFalse(Speedmine.canStart(true, 10, credit - 2));
+        double credit = SpeedmineTiming.replenishStartCredit(0, 60000, 10);
+        assertTrue(SpeedmineTiming.canStart(true, 10, credit));
+        assertTrue(SpeedmineTiming.canStart(true, 10, credit - 1));
+        assertFalse(SpeedmineTiming.canStart(true, 10, credit - 2));
     }
 
     @ParameterizedTest

@@ -55,3 +55,21 @@ produces `build/distributions/comet-<version>-mc26.1.2-source.zip`, containing
 the modified source for the combined addon, licence notices, and Gradle build
 inputs. Distribute this matching source archive alongside the compiled JAR under
 GPL v3 terms. Dependencies are declared in the build files and resolved by Gradle.
+
+## NoTextureRotations
+
+Anti Coords' texture rotation and offset hiding is adapted from NoTextureRotations by rfresh2:
+https://github.com/rfresh2/NoTextureRotations
+Revisions: 5f20453dce38f04a9b1671fe4638a68c882272d1 (26.x branch) and
+8cb7deeede7205474be36b5863890b610d6095f3 (keyed-hash branch).
+License: Apache License 2.0, full text in LICENSE-NoTextureRotations.
+
+The adapted files are modules/AntiCoords.java, core/KeyedHash.java and
+mixin/{AntiCoordsBlockStateMixin.java,AntiCoordsEntityTickMixin.java}.
+Modified for Comet by Boyonabike on 23 October 2026: rewritten as a Meteor module
+with Fixed and Keyed modes and no other config; the texture seed hook moved from
+Block to the block state so doors, beds and tall plants are covered too; offsets are
+only hooked for blocks that have one; SipHash-2-4 for one block is computed without
+allocating; the key is kept in meteor-client/comet/anti-coords.key; the entity tick
+is tracked without Fabric API. AntiCoordsScreenshotMixin.java, AntiCoordsFrameMixin.java
+and KeyedHashTest.java were written for Comet.
