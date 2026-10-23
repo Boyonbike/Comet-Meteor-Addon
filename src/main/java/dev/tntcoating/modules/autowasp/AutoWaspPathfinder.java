@@ -9,7 +9,7 @@
  * local inventory integration, lifecycle/navigation guards and settings credits;
  * block-keyed clearance and floor/ceiling caches shared by nearby samples, and
  * chasing the live target whenever it is in plain sight.
- * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
+ * Distributed under GNU GPL v3; see LICENSE and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  */

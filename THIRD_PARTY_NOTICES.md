@@ -1,19 +1,27 @@
 # Third-party notices
 
-Comet by Boyonabike is an addon for Meteor Client. The original Comet source is
-published under CC0 1.0 (`LICENSE`). The JAR and source archive combine that code
-with GPL-3.0-only adaptations, so the combined work is distributed under
-**GNU GPL version 3 only (GPL-3.0-only)**. Every third-party component is listed
-below with its licence, source and the files it covers.
+# Third-party notices
+
+Comet by Boyonabike is an addon for Meteor Client. Original Comet code is published
+under CC0 1.0 (`LICENSE-CC0`). The JAR and source archive combine that code with
+GPL-3.0-only adaptations, so the combined work is distributed under **GNU GPL
+version 3 only (GPL-3.0-only)**, whose full text is `LICENSE`. The "or any later
+version" option in the GPL's example notice is not used. The Apache-2.0 text
+for the NoTextureRotations adaptation is `LICENSE-NoTextureRotations`. Every
+third-party component is listed below with its licence, source and the files it
+covers.
+
+Copyright (c) 2026 Boyonabike and Comet contributors.
+
 
 ## Summary
 
 | Component | Licence | How Comet uses it |
 | --- | --- | --- |
-| Comet original code | CC0-1.0 | `LICENSE` |
-| THM Addons (Speedmine) | GPL-3.0-only | Adapted source |
-| DEVILS (Auto Wasp) | GPL-3.0-only | Adapted source |
-| NoTextureRotations (Anti Coords) | Apache-2.0 | Adapted source |
+| Comet original code | CC0-1.0 | `LICENSE-CC0` |
+| THM Addons (Speedmine) | GPL-3.0-only | Adapted source; see `LICENSE` |
+| DEVILS (Auto Wasp) | GPL-3.0-only | Adapted source; see `LICENSE` |
+| NoTextureRotations (Anti Coords) | Apache-2.0 | Adapted source; see `LICENSE-NoTextureRotations` |
 | VolytraFly | CC0-1.0 | Boost-curve behaviour, credited |
 | Majkey's DubCounter | No upstream licence; included with permission | Adapted source |
 | Meteor Client | GPL-3.0-only | Runtime dependency and API; not bundled |
@@ -22,13 +30,21 @@ below with its licence, source and the files it covers.
 | Fabric Loader / Fabric API | Apache-2.0 | Runtime dependencies; not bundled |
 | Minecraft | Mojang EULA | Runtime dependency; not bundled |
 
+## Comet original code
+
+Code written for Comet, including modules that do not adapt third-party source, is
+released under CC0 1.0 (`LICENSE-CC0`). Because the distributed JAR also contains
+GPL-3.0-only adaptations, the repository and every binary release as a whole are
+distributed under GPL-3.0-only (`LICENSE`). CC0 permits this; the original code
+remains available under CC0 as well. Contributions are accepted under GPL-3.0-only.
+
 ## Speedmine — THM Addons
 
 Speedmine and its mining, reach, rendering and option adaptations originate from
 THM Addons: https://github.com/Magnus-Krill/THM-Addons
 Commit: e952b86ff4e3836ba5c7db982fad22205126ef3a (26.2 branch).
 Copyright THM Addons contributors; original headers and contributor credits are retained.
-Licence: GNU GPL version 3 only (GPL-3.0-only), included as `LICENSE-Speedmine`.
+Licence: GNU GPL version 3 only (GPL-3.0-only); full text in `LICENSE`.
 
 The adapted files are `Speedmine.java`, `SpeedmineRange.java`,
 `SpeedmineRender.java`, `SpeedmineOption.java`, `SpeedmineAirMixin.java`,
@@ -53,7 +69,7 @@ and `devils-addon/src/main/java/com/devils/addon/modules/autowasp/`.
 Credit: ThianYong-hub and DEVILS contributors.
 The Auto Wasp implementation is also based on Meteor Client,
 Copyright (c) Meteor Development: https://github.com/MeteorDevelopment/meteor-client
-Licence: GNU GPL version 3 only (GPL-3.0-only); full text in `LICENSE-DEVILS`.
+Licence: GNU GPL version 3 only (GPL-3.0-only); full text in `LICENSE`.
 
 Modified for Comet by Boyonabike on 22 October 2026: ported to Minecraft 26.1.2
 and current Meteor mappings; registered separately as `auto-wasp-devils`; replaced
@@ -190,8 +206,8 @@ removed:
 
 ## Source distribution and GPL compliance
 
-`./gradlew build` packages `LICENSE`, `LICENSE-Speedmine`, `LICENSE-DEVILS`,
-`LICENSE-NoTextureRotations` and this notice inside the JAR. It also produces
+`./gradlew build` packages `LICENSE`, `LICENSE-CC0`, `LICENSE-NoTextureRotations`
+and this notice inside the JAR. It also produces
 `build/distributions/comet-<version>-mc26.2-source.zip`, containing the complete
 modified source, Gradle build inputs, licence texts and this notice. Distribute
 that matching source archive alongside the compiled JAR under GPL-3.0-only terms.
@@ -202,5 +218,5 @@ not part of the source archive.
 
 The third-party code and Comet's adaptations are provided without any warranty,
 including merchantability or fitness for a particular purpose. See the full
-licence texts in `LICENSE-Speedmine`, `LICENSE-DEVILS`,
-`LICENSE-NoTextureRotations` and `LICENSE` for the applicable terms.
+licence texts in `LICENSE`, `LICENSE-CC0` and
+`LICENSE-NoTextureRotations` for the applicable terms.

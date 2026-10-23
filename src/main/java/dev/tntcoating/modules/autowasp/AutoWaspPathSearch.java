@@ -8,7 +8,7 @@
  * Modified for Comet by Boyonabike on 2026-10-22: Minecraft 26.1.2 mappings,
  * local inventory integration, lifecycle/navigation guards and settings credits;
  * per-search node memos and a time budget that returns the best partial route.
- * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
+ * Distributed under GNU GPL v3; see LICENSE and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  */

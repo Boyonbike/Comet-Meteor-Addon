@@ -10,3 +10,6 @@ bin/
 logs/
 extracted/
 .claude/
+.vscode/
+.DS_Store
+Thumbs.db

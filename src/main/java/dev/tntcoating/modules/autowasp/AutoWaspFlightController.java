@@ -11,7 +11,7 @@
  * limit while climbing or descending, setback rewind and pinned-glide recovery,
  * swap settling, paced takeoff, collision-only ramp loss and the server-glide
  * wall guard.
- * Distributed under GNU GPL v3; see LICENSE-DEVILS and THIRD_PARTY_NOTICES.md.
+ * Distributed under GNU GPL v3; see LICENSE and THIRD_PARTY_NOTICES.md.
  * This program is distributed WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  */
