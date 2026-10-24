@@ -50,4 +50,14 @@ class ScaffoldAdapterTest {
         layers.reset();
         assertTrue(layers.expand(List.of(), 63, 2, true, cell -> true).isEmpty());
     }
+    @Test void narrowLayersReplaceAbandonedTrajectoryWhileKeepingCurrentConfirmedBases() {
+        var layers = new ScaffoldAdapter.Layers();
+        var east = new ScaffoldPlanner.Candidate(new ScaffoldPlanner.Cell(2, 63, 0), 1, 10, 0, 0);
+        var north = new ScaffoldPlanner.Candidate(new ScaffoldPlanner.Cell(0, 63, -2), 1, 10, 0, 0);
+        layers.replace(List.of(east), 63, cell -> true);
+        layers.replace(List.of(north), 63, cell -> true);
+        var planned = layers.expand(List.of(), 63, 2, false, cell -> true);
+        assertEquals(1, planned.size());
+        assertEquals(new ScaffoldPlanner.Cell(0, 62, -2), planned.getFirst().cell());
+    }
 }

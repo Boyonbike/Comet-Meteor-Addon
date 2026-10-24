@@ -271,7 +271,11 @@ public final class CometScaffold extends Module {
         var snapshot = ScaffoldAdapter.snapshot(position.x, position.z, mc.player.getEyeY(), y,
             vx, vz, directionX, directionZ, mc.player.getBbWidth() / 2.0, mc.player.blockInteractionRange(), System.nanoTime(), lookahead);
         plan = planner.plan(preset.get(), snapshot, cell -> credible(new BlockPos(cell.x(), cell.y(), cell.z())));
-        if (profile.layers.get() > 1) layers.remember(layerPlanner.plan(preset.get(), snapshot, cell -> false).candidates(), y, this::inEnvelope);
+        if (profile.layers.get() > 1) {
+            var desiredLayers = layerPlanner.plan(preset.get(), snapshot, cell -> false).candidates();
+            if (preset.get() == ScaffoldPlanner.Preset.Narrow) layers.replace(desiredLayers, y, this::inEnvelope);
+            else layers.remember(desiredLayers, y, this::inEnvelope);
+        }
         if (autoJump.get() && mc.player.onGround() && mc.player.horizontalCollision && !heightLocked(profile)) mc.player.jumpFromGround();
         if (tower.get() && mc.options.keyJump.isDown() && mc.player.onGround() && !heightLocked(profile)
             && mc.level.noCollision(mc.player, mc.player.getBoundingBox().move(0, 1, 0))) mc.player.jumpFromGround();

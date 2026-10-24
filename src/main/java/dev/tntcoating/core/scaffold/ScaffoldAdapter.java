@@ -32,6 +32,10 @@ public final class ScaffoldAdapter {
     public static final class Layers {
         private final Map<ScaffoldPlanner.Cell, ScaffoldPlanner.Candidate> bases = new LinkedHashMap<>();
         public void reset() { bases.clear(); }
+        public void replace(List<ScaffoldPlanner.Candidate> desired, int floorY, Predicate<ScaffoldPlanner.Cell> inEnvelope) {
+            reset();
+            remember(desired, floorY, inEnvelope);
+        }
         public void remember(List<ScaffoldPlanner.Candidate> desired, int floorY, Predicate<ScaffoldPlanner.Cell> inEnvelope) {
             bases.entrySet().removeIf(e -> e.getKey().y() != floorY || !inEnvelope.test(e.getKey()));
             for (var base : desired) if (base.cell().y() == floorY && inEnvelope.test(base.cell())) bases.put(base.cell(), base);
