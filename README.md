@@ -175,6 +175,14 @@ the three ticks other players' movement takes to show, at most 8 ticks, measured
 where the client shows it rather than the velocity the server last sent. When flying
 straight at the target, pursuit also matches its speed instead of trailing behind.
 
+**min-distance** (default 0, up to 20) holds a horizontal standoff from the target so
+you can place end crystals instead of ramming it. The aim is unchanged: prediction,
+offset, avoid-landing and the safe corridor still choose the height, and the pathfinder
+still plans to the same target. When you are closer than the standoff, pursuit holds a
+ring that many blocks from the target at the aim's height instead of following a route
+closer; 0 disables. Horizontal offset does not move the ring; vertical offset still
+changes its height. If the ring is blocked it may hold rather than route around it.
+
 **Server Glide.** A vanilla server keeps simulating an ordinary glide from each position
 you report, and a wall hit in that hidden move deals damage however slowly you were
 really moving. **server-glide-guard** (default on) follows that glide, including rockets,
