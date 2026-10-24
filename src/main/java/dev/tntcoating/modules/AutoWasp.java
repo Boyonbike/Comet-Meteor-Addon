@@ -22,6 +22,7 @@ import dev.tntcoating.modules.autowasp.AutoWaspChestSwap;
 import dev.tntcoating.modules.autowasp.AutoWaspFlightController;
 import dev.tntcoating.modules.autowasp.AutoWaspPathfinder;
 import dev.tntcoating.modules.autowasp.AutoWaspSpeed;
+import dev.tntcoating.modules.autowasp.AutoWaspStandoff;
 import dev.tntcoating.modules.autowasp.AutoWaspTargetTracker;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
@@ -140,6 +141,16 @@ public class AutoWasp extends Module {
         .name("offset")
         .description("How many blocks offset to wasp at from the target.")
         .defaultValue(0, 0, 0)
+        .build()
+    );
+
+    private final Setting<Double> minDistance = sgGeneral.add(new DoubleSetting.Builder()
+        .name("min-distance")
+        .description("How many blocks to hold from the target horizontally, so you can place end crystals instead of ramming it. 0 disables.")
+        .defaultValue(0)
+        .range(0, 20)
+        .sliderRange(0, 20)
+        .decimalPlaces(1)
         .build()
     );
 
@@ -394,10 +405,23 @@ public class AutoWasp extends Module {
         if (target == null || target.level() != mc.level || target.isRemoved() || target.isDeadOrDying()) return;
         if (!hasUsableElytra() || !mc.player.isFallFlying()) return;
 
-        Vec3 targetPos = getTargetPos();
-        Vec3 steer = pathfinder.steerTarget(targetPos);
+        // The aim is untouched; outside the standoff the steering point and lead are exactly as before.
+        Vec3 aim = getTargetPos();
+        Vec3 hold = AutoWaspStandoff.holdPoint(aim, target.position(), mc.player.position(), minDistance.get());
+
+        Vec3 steer;
+        boolean direct;
+        if (hold != aim) {
+            // Inside the standoff, hold the ring directly so no waypoint or shortcut can pull closer.
+            steer = hold;
+            direct = true;
+        } else {
+            steer = pathfinder.steerTarget(aim);
+            direct = steer == aim;
+        }
+
         // Only a straight approach matches the target's own movement; a waypoint is a fixed point to pass.
-        Vec3 lead = predictMovement.get() && steer == targetPos ? targetTracker.velocity() : Vec3.ZERO;
+        Vec3 lead = predictMovement.get() && direct ? targetTracker.velocity() : Vec3.ZERO;
         flightController.onMove(event, steer, lead);
     }
 
