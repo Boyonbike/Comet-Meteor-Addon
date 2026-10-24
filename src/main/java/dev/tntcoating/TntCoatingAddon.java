@@ -2,6 +2,8 @@ package dev.tntcoating;
 
 import dev.tntcoating.compat.MeteorUpgrades;
 import dev.tntcoating.core.InventorySlotLoan;
+import dev.tntcoating.core.scaffold.ScaffoldCoordinator;
+import dev.tntcoating.modules.CometScaffold;
 import dev.tntcoating.core.InventoryWeaponAttack;
 import dev.tntcoating.modules.AdaptiveElytraFly;
 import dev.tntcoating.modules.AutoWasp;
@@ -86,6 +88,7 @@ public final class TntCoatingAddon extends MeteorAddon {
         ordered.add(new StashReport());
         // Building and block use.
         upgraded(ordered, modules.get(Scaffold.class), "ScaffoldMixin");
+        ordered.add(new CometScaffold());
         ordered.add(new BlockCoat());
         ordered.add(new SmartSponge());
         ordered.add(new Speedmine());
@@ -110,6 +113,7 @@ public final class TntCoatingAddon extends MeteorAddon {
                 modules.getGroup(CATEGORY).add(module);
             }
         });
+        ScaffoldCoordinator.initialize();
         Map<String, String> skipped = MeteorUpgrades.disabled();
         if (!skipped.isEmpty()) {
             skipped.forEach((mixin, reason) -> MeteorClient.LOG.warn("Comet upgrade {} is off for this Meteor build: {}", mixin, reason));
