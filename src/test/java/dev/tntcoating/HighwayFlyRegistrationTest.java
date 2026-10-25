@@ -3,11 +3,34 @@ package dev.tntcoating;
 import java.util.HashSet;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import static org.junit.jupiter.api.Assertions.*;
 
 class HighwayFlyRegistrationTest {
+    @Test void highwayFlightPausesBothScaffoldControllers() throws Exception {
+        // Check the compiled module integration without starting a Minecraft client.
+        ClassNode highway = new ClassNode();
+        try (var stream = getClass().getResourceAsStream("/dev/tntcoating/modules/HighwayFly.class")) {
+            assertNotNull(stream);
+            new ClassReader(stream).accept(highway, 0);
+        }
+        var conflicts = new HashSet<String>();
+        var incompatible = highway.methods.stream()
+            .filter(m -> m.name.equals("incompatibleModules")).findFirst().orElseThrow();
+        for (var instruction : incompatible.instructions) {
+            if (instruction instanceof LdcInsnNode load && load.cst instanceof Type type) {
+                conflicts.add(type.getInternalName());
+            }
+        }
+        assertTrue(conflicts.contains("dev/tntcoating/modules/CometScaffold"),
+            "Highway Fly must pause Comet Scaffold so its edge guard cannot interrupt travel");
+        assertTrue(conflicts.contains("meteordevelopment/meteorclient/systems/modules/movement/Scaffold"),
+            "Highway Fly must also pause Meteor Scaffold");
+    }
+
     @Test void registersOneHighwayModuleAndPreservesScaffold() throws Exception {
         ClassNode addon = new ClassNode();
         try (var stream = getClass().getResourceAsStream("/dev/tntcoating/TntCoatingAddon.class")) {

@@ -38,12 +38,13 @@ works with Meteor alone.
 
 | Branch | Minecraft | Java | Meteor Client | JAR |
 | --- | --- | --- | --- | --- |
-| [`26.1.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.1.2) (default) | 26.1.2 | 25 | build 42 | `comet-0.26.24-mc26.1.2.jar` |
-| [`26.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.2) | 26.2 | 25 | build 35 | `comet-0.26.16-mc26.2.jar` |
-| [`1.21.11`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/1.21.11) | 1.21.11 | 21 | build 82 (vendored) | `comet-0.25.21-mc1.21.11.jar` |
+| [`26.1.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.1.2) (default) | 26.1.2 | 25 | build 42 | `comet-0.26.25-mc26.1.2.jar` |
+| [`26.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.2) | 26.2 | 25 | build 35 | `comet-0.26.25-mc26.2.jar` |
+| [`1.21.11`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/1.21.11) | 1.21.11 | 21 | build 82 (vendored) | `comet-0.26.25-mc1.21.11.jar` |
 
 Each branch is a complete, independently buildable tree with its own README,
-changelog and JAR. Independent Comet Scaffold remains specific to 26.1.2; Highway Fly combines the travel helpers in every tree.
+changelog and JAR. Features and the release number are kept in step; **Highway Fly**
+and **Comet Scaffold** are available in every tree.
 
 ## Modules
 
@@ -827,7 +828,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.26.24-mc26.1.2.jar` and the matching `build/distributions/comet-0.26.24-mc26.1.2-source.zip`. `./gradlew test` runs the automated tests on their own. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled. CI runs the same build on every push and pull request.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.26.25-mc26.1.2.jar` and the matching `build/distributions/comet-0.26.25-mc26.1.2-source.zip`. `./gradlew test` runs the automated tests on their own. Gradle downloads the Java 25 toolchain if needed. Loom (1.17.21) and Meteor (snapshot build 42, `26.1.2-20260810.135545-42`) are pinned in `gradle/libs.versions.toml`, which explains how to move to a newer Meteor build. Xaero's Minimap (`fabric-26.1.2-26.6.0`) comes from Modrinth's Maven and Baritone (`26.1-20260423.173134-2`, the same jar as `baritone-meteor-26.1.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled. CI runs the same build on every push and pull request.
 
 Automated tests cover:
 
