@@ -6,6 +6,8 @@ import dev.tntcoating.core.scaffold.ScaffoldCoordinator;
 import dev.tntcoating.modules.CometScaffold;
 import dev.tntcoating.core.InventoryWeaponAttack;
 import dev.tntcoating.modules.AdaptiveElytraFly;
+import dev.tntcoating.modules.HighwayFly;
+import dev.tntcoating.modules.HighwayDashboard;
 import dev.tntcoating.modules.AutoWasp;
 import dev.tntcoating.modules.AllayFarm;
 import dev.tntcoating.modules.AllayShulkerKiller;
@@ -71,6 +73,8 @@ public final class TntCoatingAddon extends MeteorAddon {
         List<Module> ordered = new ArrayList<>();
         // Flight and flight safety.
         ordered.add(new AdaptiveElytraFly());
+        ordered.add(new HighwayFly());
+        ordered.add(new HighwayDashboard());
         ordered.add(new AutoWasp());
         ordered.add(new BaritoneElytra());
         ordered.add(new ElytraLog());
