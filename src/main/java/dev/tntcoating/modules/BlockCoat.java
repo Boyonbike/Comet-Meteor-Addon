@@ -26,6 +26,7 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import dev.tntcoating.TntCoatingAddon;
+import dev.tntcoating.core.scaffold.ScaffoldCoordinator;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.movement.Flight;
 import dev.tntcoating.core.ModeGeometry;
@@ -203,6 +204,7 @@ public final class BlockCoat extends Module {
     private BlockPos jumpPending;
     private int tick;
     private int generation;
+    private boolean scaffoldSuspended;
     private boolean jumpActive, jumpPlaced;
     private int pauseUntil;
     private float facingYaw;
@@ -243,6 +245,26 @@ public final class BlockCoat extends Module {
 
     /** The packets-per-second ceiling shared with Smart Sponge, so both modules respect one limit. */
     public int packetLimit() { return packetLimit.get(); }
+    public boolean knownUnconfirmed(BlockPos pos) { return tracker.unconfirmed(pos); }
+
+    /** Cancel deferred work immediately on handoff, but keep sent attempts for authoritative settlement. */
+    public void scaffoldSuspension(boolean suspended) {
+        if (!isActive()) return;
+        if (scaffoldSuspended == suspended) return;
+        scaffoldSuspended = suspended;
+        generation++;
+        tracker.discardUnsent();
+        releaseSticky();
+        clearPreview();
+        jumpActive = jumpPlaced = false;
+        takeoffCell = jumpPending = null;
+        strip.clear(); criticalStrip.clear();
+        candidates.clear(); searchQueue.clear(); hitCache.clear();
+        dirty.set(true); reorder = true;
+        pacer.reset();
+        lastPosition = null;
+        lastGround = mc.player != null && mc.player.onGround();
+    }
     @Override public BlockCoat fromTag(CompoundTag tag) {
         super.fromTag(BlockCoatSettings.migrate(tag));
         return this;
@@ -250,6 +272,7 @@ public final class BlockCoat extends Module {
 
     private void reset() {
         releaseSticky();
+        scaffoldSuspended = false;
         heldItemPause.reset();
         generation++;
         pacer.reset(); packetBudget.reset(); sentPackets.set(0);
@@ -406,6 +429,9 @@ public final class BlockCoat extends Module {
             dirty.set(true);
             takeoffCell = null;
         }
+
+        scaffoldSuspension(ScaffoldCoordinator.buildersPaused());
+        if (scaffoldSuspended) { status = "Paused for Scaffold"; return; }
 
         Vec3 position = mc.player.position();
         boolean grounded = mc.player.onGround();
@@ -935,7 +961,7 @@ public final class BlockCoat extends Module {
         Runnable interact = () -> {
             // Rotations can defer execution. Recheck everything against live player/world state.
             if (!isActive() || mc.player == null || mc.level != level || mc.gameMode == null
-                || pauseForHeldItem() || spongeHasPriority() || token != generation || coatingBlock.get() != reservation.block
+                || ScaffoldCoordinator.buildersPaused() || pauseForHeldItem() || spongeHasPriority() || token != generation || coatingBlock.get() != reservation.block
                 || conservativeTnt.get() != scheduledConservativeTnt || corrected.get() || tick - scheduledTick > 1
                 || liquidFiller.get() != scheduledLiquidFiller
                 || !tracker.current(target, reservation)) {
@@ -954,6 +980,7 @@ public final class BlockCoat extends Module {
             int liveLimit = underfoot ? 1 : (perTick.get());
             if (interactions >= liveLimit) { tracker.cancel(target, reservation); return; }
             if (paced() && pacer.budget(tick, rateCap(), tracker.pendingCount() - 1, window()) <= 0) { tracker.cancel(target, reservation); return; }
+            if (!ScaffoldCoordinator.prediction(target)) { tracker.cancel(target, reservation); return; }
             interactions++;
             pacer.sent(tick);
             boolean offhand = material.isOffhand();

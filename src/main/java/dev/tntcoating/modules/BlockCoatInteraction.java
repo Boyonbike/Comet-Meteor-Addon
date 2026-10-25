@@ -20,7 +20,7 @@ final class BlockCoatInteraction {
     }
 
     /**
-     * Sneak-use containers so they act as support instead of opening their screen. In 26.1.2 the
+     * Sneak-use containers so they act as support instead of opening their screen. In this tree the
      * shift state is carried by the ordinary player input packet.
      */
     static void use(BlockHitResult hit, InteractionHand hand, boolean containerSupports) {

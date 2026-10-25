@@ -912,7 +912,7 @@ public final class HighwayFly extends Module {
             AdaptiveElytraFly.class, ElytraFly.class, AutoWalk.class, Flight.class,
             AirJump.class, LongJump.class, Speed.class,
             meteordevelopment.meteorclient.systems.modules.world.Timer.class,
-            Blink.class, Scaffold.class, Freecam.class, NoFall.class)) {
+            Blink.class, CometScaffold.class, Scaffold.class, Freecam.class, NoFall.class)) {
             Module module = Modules.get().get(type);
             if (module == null) continue;
             if (module instanceof NoFall) {

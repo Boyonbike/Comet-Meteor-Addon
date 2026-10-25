@@ -39,6 +39,7 @@ public final class MeteorUpgradeCheck {
         "Lorg/spongepowered/asm/mixin/injection/ModifyArgs;",
         "Lorg/spongepowered/asm/mixin/injection/ModifyConstant;",
         "Lorg/spongepowered/asm/mixin/injection/ModifyVariable;",
+        "Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;",
         "Lcom/llamalad7/mixinextras/injector/ModifyExpressionValue;",
         "Lcom/llamalad7/mixinextras/injector/ModifyReturnValue;",
         "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;",

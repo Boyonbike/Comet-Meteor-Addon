@@ -82,12 +82,14 @@ tasks {
             "version" to project.version,
             "minecraft_version" to toMinecraftCompat(libs.versions.minecraft.get()),
             "jdk_version" to libs.versions.jdk.get(),
+            "meteor_build" to libs.versions.meteor.get(),
         )
 
         inputs.properties(propertyMap)
         filesMatching("fabric.mod.json") {
             expand(propertyMap)
         }
+        filesMatching("comet-scaffold-build.properties") { expand(propertyMap) }
     }
 
     jar {

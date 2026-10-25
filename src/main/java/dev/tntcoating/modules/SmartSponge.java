@@ -1,6 +1,7 @@
 package dev.tntcoating.modules;
 
 import dev.tntcoating.TntCoatingAddon;
+import dev.tntcoating.core.scaffold.ScaffoldCoordinator;
 import dev.tntcoating.core.PacketBudget;
 import dev.tntcoating.core.PlacementGeometry;
 import dev.tntcoating.core.PlacementPriority;
@@ -76,6 +77,7 @@ public final class SmartSponge extends Module {
     private int ticks, nextScan, sentAt, generation;
     private ClientLevel world;
     private BlockPos mining;
+    private boolean scaffoldSuspended;
     private String status = "Starting";
 
     private record Update(BlockPos pos, BlockState state) {}
@@ -86,8 +88,19 @@ public final class SmartSponge extends Module {
     }
 
     public boolean blocksCoating() {
-        return isActive() && mc.player != null && mc.player.isAlive() && world == mc.level
+        return isActive() && !ScaffoldCoordinator.buildersPaused() && mc.player != null && mc.player.isAlive() && world == mc.level
             && (priority.blocks(ticks) || (collect.get() && mining != null));
+    }
+
+    public boolean knownUnconfirmed(BlockPos pos) { return sent && pos.equals(pending); }
+
+    public void scaffoldSuspension(boolean suspended) {
+        if (!isActive() || scaffoldSuspended == suspended) return;
+        scaffoldSuspended = suspended;
+        generation++;
+        stopMining();
+        if (!sent) { pending = null; priority.reset(); }
+        nextScan = ticks + 1;
     }
 
     @Override public String getInfoString() { return status; }
@@ -101,6 +114,7 @@ public final class SmartSponge extends Module {
 
     private void reset() {
         priority.reset();
+        scaffoldSuspended = false;
         generation++;
         stopMining();
         pending = null;
@@ -159,6 +173,7 @@ public final class SmartSponge extends Module {
                 if (!sponge) owned.remove(update.pos);
             }
         }
+        scaffoldSuspension(ScaffoldCoordinator.buildersPaused());
         if (!mc.player.isAlive()) { stopMining(); return; }
         if (pending != null) {
             if (ticks - sentAt > 40) {
@@ -172,6 +187,7 @@ public final class SmartSponge extends Module {
                 return;
             }
         }
+        if (scaffoldSuspended) { status = "Paused for Scaffold"; return; }
         // A passenger sends no movement packets, so Meteor would never run the rotation callbacks below.
         if (mc.player.isPassenger()) { stopMining(); status = "Paused while riding"; return; }
         if (ticks < nextScan) return;
@@ -293,7 +309,7 @@ public final class SmartSponge extends Module {
         sentAt = ticks;
         int token = generation;
         Rotations.rotate(Rotations.getYaw(hit.getLocation()), Rotations.getPitch(hit.getLocation()), 90, () -> {
-            if (!isActive() || token != generation || mc.level != world || mc.player == null || correction || !pos.equals(pending)) return;
+            if (!isActive() || ScaffoldCoordinator.buildersPaused() || token != generation || mc.level != world || mc.player == null || correction || !pos.equals(pending)) return;
             FindItemResult item = InvUtils.findInHotbar(Items.SPONGE);
             BlockState support = world.getBlockState(hit.getBlockPos());
             if (!item.found() || !placeable(pos) || !waterNearby(pos) || !visible(hit)
@@ -303,6 +319,7 @@ public final class SmartSponge extends Module {
                 return;
             }
             boolean offhand = item.isOffhand();
+            if (!ScaffoldCoordinator.prediction(pos)) { pending = null; priority.resolve(ticks, 0); return; }
             if (!offhand) InvUtils.swap(item.slot(), true);
             try {
                 sentAt = ticks;
@@ -329,7 +346,7 @@ public final class SmartSponge extends Module {
                 }
                 int token = generation;
                 Rotations.rotate(Rotations.getYaw(hit.getLocation()), Rotations.getPitch(hit.getLocation()), 90, () -> {
-                    if (isActive() && collect.get() && token == generation && mc.level == world && mc.player != null && !correction
+                    if (isActive() && !ScaffoldCoordinator.buildersPaused() && collect.get() && token == generation && mc.level == world && mc.player != null && !correction
                         && wet.contains(pos) && owned.contains(pos) && world.getBlockState(pos).is(Blocks.WET_SPONGE) && visible(hit)) {
                         BlockUtils.breakBlock(pos, true);
                     }
