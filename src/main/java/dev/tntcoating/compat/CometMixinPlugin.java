@@ -57,8 +57,21 @@ public final class CometMixinPlugin implements IMixinConfigPlugin {
             // Leave the decision to Mixin itself, exactly as without this plugin.
             return List.of();
         }
-        if (node == null || !MeteorUpgradeCheck.targetsMeteor(node)) return List.of();
-        return MeteorUpgradeCheck.problems(node, classes);
+        if (node == null) return List.of();
+        if (mixin.endsWith(".ScaffoldMovementMixin") || mixin.equals("ScaffoldMovementMixin")) {
+            List<String> problems = new java.util.ArrayList<>(MeteorUpgradeCheck.problems(node, classes));
+            problems.addAll(ScaffoldRotationCompatibility.problems(classes));
+            return problems;
+        }
+        if (!MeteorUpgradeCheck.targetsMeteor(node)) return List.of();
+        List<String> problems = new java.util.ArrayList<>(MeteorUpgradeCheck.problems(node, classes));
+        if (mixin.endsWith(".ScaffoldLegacyOwnershipMixin") || mixin.equals("ScaffoldLegacyOwnershipMixin")) {
+            try {
+                ClassNode guard = classes.get("dev/tntcoating/mixin/ScaffoldLegacyDispatchMixin");
+                problems.addAll(guard == null ? List.of("legacy dispatch guard missing") : MeteorUpgradeCheck.problems(guard, classes));
+            } catch (Exception e) { problems.add("cannot verify legacy dispatch guard"); }
+        }
+        return problems;
     }
 
     private static String simpleName(String className) {

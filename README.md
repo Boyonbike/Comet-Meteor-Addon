@@ -38,13 +38,13 @@ works with Meteor alone.
 
 | Branch | Minecraft | Java | Meteor Client | JAR |
 | --- | --- | --- | --- | --- |
-| [`26.1.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.1.2) (default) | 26.1.2 | 25 | build 42 | `comet-0.26.24-mc26.1.2.jar` |
-| [`26.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.2) | 26.2 | 25 | build 35 | `comet-0.26.16-mc26.2.jar` |
-| [`1.21.11`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/1.21.11) | 1.21.11 | 21 | build 82 (vendored) | `comet-0.25.21-mc1.21.11.jar` |
+| [`26.1.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.1.2) (default) | 26.1.2 | 25 | build 42 | `comet-0.26.25-mc26.1.2.jar` |
+| [`26.2`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.2) | 26.2 | 25 | build 35 | `comet-0.26.25-mc26.2.jar` |
+| [`1.21.11`](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/1.21.11) | 1.21.11 | 21 | build 82 (vendored) | `comet-0.26.25-mc1.21.11.jar` |
 
 Each branch is a complete, independently buildable tree with its own README,
-changelog and JAR. Features and the release number are kept in step, and
-**Highway Fly** combines the travel helpers in every tree.
+changelog and JAR. Features and the release number are kept in step; **Highway Fly**
+and **Comet Scaffold** are available in every tree.
 
 ## Modules
 
@@ -52,7 +52,7 @@ Open Meteor's **Comet** category. Modules appear in this order, grouped by purpo
 
 - **Flight and movement:** **adaptive-elytra-fly**, **highway-fly**, **highway-dashboard**, **auto-wasp-devils**, **baritone-elytra**, **elytra-log**, **angle-calculator**.
 - **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **anti-coords**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**, **call-to-arms**, **stash-report**.
-- **Building:** **scaffold**, **block-coat**, **smart-sponge**, **speedmine**, **safe-fast-use**, **anti-spawn-set**.
+- **Building:** **scaffold**, **comet-scaffold**, **block-coat**, **smart-sponge**, **speedmine**, **safe-fast-use**, **anti-spawn-set**.
 - **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**, **auto-replenish**.
 - **Allays:** **allay-farm**, **allay-shulker-killer**. See [Allays](#allays).
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown**, **auto-set-home-timer**, **highway-fly-status**, **highway-fly-runtime** and **dub-counter**. See [HUD elements](#hud-elements).
@@ -90,6 +90,7 @@ Trajectories upgrade were removed in 0.25.0; see the
   - [Anti Coords](#anti-coords)
   - [Shulker Icons](#shulker-icons)
   - [Scaffold optimization](#scaffold-optimization)
+  - [Independent Comet Scaffold](#independent-comet-scaffold)
   - [Inventory Tweaks transfers](#inventory-tweaks-transfers)
   - [Auto Tool and Auto Weapon inventory use](#auto-tool-and-auto-weapon-inventory-use)
   - [Adaptive Elytra Fly](#adaptive-elytra-fly)
@@ -292,6 +293,69 @@ The module gains a **Comet** setting group:
 - **log-setbacks** defaults on. Every server setback (rubber-band) while Scaffold is on adds one JSON line to `meteor-client/comet/scaffold-setback-logs`. Each Scaffold session gets its own file, opened at the first setback and capped at 4 MB; chat shows the path when it opens. A line holds where the server put you and how far (`correction*`), ping, sneak/sprint/jump input, tower state, Scaffold's settings, `extraRotationPacketsLastSecond`, and `pauseTicksLeft` (above zero when the previous setback's pause was still running). It also has the move the server rejected (`rejected*`: speed, vertical speed, on-ground flag, yaw/pitch snap of the sent rotation, blocks placed that tick) and how many ticks back the target position was (`targetTicksAgo`). `supportPlacedTicksAgo` shows whether you were standing on a block Scaffold had just placed. A 20-tick `timeline` lists each reported position relative to the target, with its ground flag, sent rotation and placements.
 
 Retry history is bounded and clears on module/world changes. Live server testing is still needed for placement acceptance, rejected-block recovery, tower behaviour and actual frame/packet improvements.
+
+## Independent Comet Scaffold
+
+**comet-scaffold** is a separate module with exactly two presets. It does not drive
+Meteor's Scaffold. Both remain available; enabling either disables the other.
+While Comet Scaffold is active, Block Coat and Smart Sponge pause without losing
+their enabled state or settings, then resume through fresh validation.
+
+| Preset | Purpose | Default floor policy |
+| --- | --- | --- |
+| **Narrow** (initial) | Only the swept footpath needed by sprinting, sprint-jumps, diagonals and corners. Earlier support deadlines take priority. | Follow grounded height, retaining it through ordinary jumps. |
+| **Wide** | Fill a transverse strip out to the full reachable contact-face range, without a fixed nine-block width limit. Repair holes and alternate lateral opportunities. | Lock the plane when Wide is selected. |
+
+Wide lets you move freely: it does not hold you to finish outer rows. The module
+list reports confirmed contiguous width, desired width, holes and pending work;
+outer coverage can remain incomplete if you move faster than placements finish.
+Narrow looks ahead using current motion, steering and measured confirmation
+latency. Both use confirmed supports, so edge protection can hold the immediate
+footpath while waiting. Neither preset promises to keep up through arbitrary lag.
+
+Each preset keeps its own advanced height, vertical offset, layer, lookahead and
+reach-margin settings. Absolute Y means target block Y. Above-head placement and
+a configurable downward key are available. Additional layers are explicit and
+do not widen Narrow. Tower, auto-jump and edge sneaking are optional and off;
+fixed planes suppress tower. The module pauses for screens, manual item use,
+water, riding and flight. Existing Auto Replenish can replenish hotbar stacks.
+
+**Materials.** Full non-falling blocks are selected by default. Empty allowed-blocks
+accepts every eligible block; denied-blocks always excludes its entries. Sticky
+switching saves slot packets and restores after 20 idle ticks. Normal, Silent and
+Disabled are also available. Offhand blocks avoid hotbar switching. Unusual
+BlockItem subclasses with special placement behaviour are conservatively excluded.
+
+**Packets and timing.** Start with 150 observed packets per real second and a
+50 ms minimum interaction interval. At most one interaction occurs per client
+tick. A dedicated ordinary movement slot yields to Meteor rotations; no extra
+rotation-only packets are created. These are starting settings to measure on
+6b6t, not claimed server limits. Other modules' traffic is counted but cannot be
+stopped by Scaffold. Air-place and container supports are separate options, off
+by default; container interactions use proper prediction sequences.
+
+Predictions remain quarantined until authoritative state is reconciled, including
+through disabling, preset changes and handoffs. A visible ghost block or prediction
+acknowledgement alone does not become a trusted anchor. If narrow rotation hooks
+are incompatible with a newer Meteor build, placement pauses with a visible
+compatibility status. The legacy Scaffold upgrade is checked separately.
+
+**Diagnostics.** Summary (default), Off and Trace write bounded asynchronous JSONL
+sessions to `meteor-client/comet/comet-scaffold-logs`, at most 4 MiB per session.
+Summary includes exact build identifiers/settings, preset changes, five-second
+success summaries, actual outgoing packet categories, sent/confirmed/retry counts,
+latency, coverage, deadline misses and edge holds. Corrections/rejections/timeouts
+include the bounded preceding two seconds. Trace adds packet/attempt detail.
+Logger drops, capacity and disk errors are reported. Position and movement data
+appear in diagnostic records. Counts mean observed local sends and authoritative
+occupancy, not proof a packet caused a placement or reached the server.
+
+For a controlled 6b6t comparison, use the same route/settings at normal Timer speed:
+first stationary Wide, then walking/turning Wide, then Narrow sprinting and
+sprint-jumping. Compare confirmed occupancy per packet, achieved width, distance,
+edge holds, retries and corrections. Keep successful and failed session logs.
+Automated geometry/lifecycle/packet/compatibility tests are included; single-player
+and actual 6b6t acceptance require gameplay validation.
 
 ## Inventory Tweaks transfers
 
@@ -764,7 +828,7 @@ Block updates refresh only the changed cell and its neighbours. Moving one block
 
 ## Build and tests
 
-Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.25.21-mc1.21.11.jar` and the matching `build/distributions/comet-0.25.21-mc1.21.11-source.zip`, which includes `vendor/`. `./gradlew test` runs the automated tests on their own. Gradle downloads the Java 21 toolchain if needed. Loom Remap (1.17.21, official Mojang mappings) and Meteor (snapshot build 82, `1.21.11-82`) are pinned in `gradle/libs.versions.toml`. Meteor build 82 is retained in `vendor/maven` because the upstream snapshot repository pruned it; see `vendor/README.md` for its source and checksum. Meteor is not bundled in Comet. Xaero's Minimap (`fabric-1.21.11-26.6.0`) comes from Modrinth's Maven and Baritone (`1.21.11-20260103.131549-1`, the same jar as `baritone-meteor-1.21.11.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled. CI runs the same build on every push and pull request.
+Run `./gradlew clean build` (`gradlew.bat clean build` on Windows). Output: `build/libs/comet-0.26.25-mc1.21.11.jar` and the matching `build/distributions/comet-0.26.25-mc1.21.11-source.zip`, which includes `vendor/`. `./gradlew test` runs the automated tests on their own. Gradle downloads the Java 21 toolchain if needed. Loom Remap (1.17.21, official Mojang mappings) and Meteor (snapshot build 82, `1.21.11-82`) are pinned in `gradle/libs.versions.toml`. Meteor build 82 is retained in `vendor/maven` because the upstream snapshot repository pruned it; see `vendor/README.md` for its source and checksum. Meteor is not bundled in Comet. Xaero's Minimap (`fabric-1.21.11-26.6.0`) comes from Modrinth's Maven and Baritone (`1.21.11-20260103.131549-1`, the same jar as `baritone-meteor-1.21.11.jar`) from Meteor's Maven, as compile-only dependencies; neither is bundled. CI runs the same build on every push and pull request.
 
 Automated tests cover:
 

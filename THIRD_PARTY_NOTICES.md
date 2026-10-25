@@ -1,7 +1,5 @@
 # Third-party notices
 
-# Third-party notices
-
 Comet by Boyonabike is an addon for Meteor Client. Original Comet code is published
 under CC0 1.0 (`LICENSE-CC0`). The JAR and source archive combine that code with
 GPL-3.0-only adaptations, so the combined work is distributed under **GNU GPL
@@ -37,6 +35,39 @@ released under CC0 1.0 (`LICENSE-CC0`). Because the distributed JAR also contain
 GPL-3.0-only adaptations, the repository and every binary release as a whole are
 distributed under GPL-3.0-only (`LICENSE`). CC0 permits this; the original code
 remains available under CC0 as well. Contributions are accepted under GPL-3.0-only.
+
+## Comet Scaffold — original implementation and design references
+
+The independent `CometScaffold`, placement adapter, `core/scaffold` policies and
+their integration mixins are new Comet implementations. They reuse Comet's
+existing StickySlot, face-sampling, packet-cost, sequenced-interaction and logging
+helpers and depend on Meteor's GPLv3 API. No additional client JARs or assets are
+bundled. Their original code remains available under `LICENSE-CC0`; the combined
+distribution stays GPL-3.0-only with the matching source archive.
+
+The following revisions were studied for functional requirements, without copying
+their scaffold source into this implementation:
+
+- LiquidBounce/CCBlueX: `3889854bc55e45f208c8ae16a46bb9edf578d0f7`,
+  https://github.com/CCBlueX/LiquidBounce/tree/3889854bc55e45f208c8ae16a46bb9edf578d0f7
+  — movement prediction, stable planning and plan/verify separation; GPLv3.
+- BlackOut/KassuK and OLEPOSSU: `b17e1bfec963bcac04b61c2394f0ad1fb9b9bcf6`,
+  https://github.com/KassuK1/BlackOut/tree/b17e1bfec963bcac04b61c2394f0ad1fb9b9bcf6
+  — short collision-stopped prediction; GPLv3.
+- FDPClient/SkidderMC and LiquidBounce contributors: `07d03078b3fe12ac7278c678f56d0e7f607fbec2`,
+  https://github.com/SkidderMC/FDPClient/tree/07d03078b3fe12ac7278c678f56d0e7f607fbec2
+  — support-face search/scoring; GPLv3.
+- ThunderHack-Recode/Pan4ur: `49c76bcc5a5e4fbd12b06305c09f0c8fb76c510b`,
+  https://github.com/Pan4ur/ThunderHack-Recode/tree/49c76bcc5a5e4fbd12b06305c09f0c8fb76c510b
+  — inventory/height policy requirements; GPLv3.
+- HIGTools/RedCarlos26: `cd83cfbf1ed65bb647de16749b4197f78f341642`,
+  https://github.com/RedCarlos26/HIGTools/tree/cd83cfbf1ed65bb647de16749b4197f78f341642
+  — configured-height requirements; GPLv3.
+
+Trouser-Streak's `c6fb1dda9d7beb9f06066e5676848fac0d8faac0` was an ideas-only
+reference for height and expansion. No grant for its modifications was verified,
+and none of its source is copied. RusherHack and Future documentation supplied
+feature/geometry checklists only; no proprietary implementation or assets are used.
 
 ## Speedmine — THM Addons
 
@@ -159,9 +190,9 @@ https://github.com/MeteorDevelopment/meteor-client
 Licence: GNU GPL version 3 only (GPL-3.0-only).
 Meteor is a runtime dependency and is not bundled in Comet's mod JAR. The 1.21.11
 source archive does carry a build-time copy of Meteor 1.21.11 build 82 under
-`vendor/`, because upstream pruned that build (see `vendor/README.md`). Anyone
-redistributing that archive must also convey Meteor's corresponding source for
-that build. Comet uses Meteor's public addon API, settings, events and mixin
+`vendor/`, because upstream pruned that build (see `vendor/README.md`). The matching Meteor source at the recorded upstream commit is included as
+`vendor/meteor-client-1.21.11-82-source.tar.gz`; see `vendor/README.md` for its
+provenance and checksum. Comet uses Meteor's public addon API, settings, events and mixin
 targets. The Auto Wasp code that
 originated in Meteor is covered by the DEVILS section above. Any Meteor code
 copied or adapted elsewhere remains under GPL-3.0-only and the combined work is
