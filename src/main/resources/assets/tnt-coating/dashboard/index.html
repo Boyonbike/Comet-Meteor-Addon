@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Comet Highway Fly — live dashboard</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">HF</span>
+      <div>
+        <h1>Highway Fly</h1>
+        <p class="sub">live dashboard · Comet addon</p>
+      </div>
+    </div>
+    <div class="status" role="status" aria-live="polite">
+      <span id="conn-dot" class="dot" aria-hidden="true"></span>
+      <span id="conn-text">Connecting…</span>
+    </div>
+  </header>
+
+  <main>
+    <p id="error-banner" class="banner" hidden></p>
+
+    <section class="grid">
+      <article class="card hero span-2">
+        <p class="eyebrow">Flight state</p>
+        <h2 id="flight-state">—</h2>
+        <p id="flight-action" class="action">—</p>
+        <p id="flight-detail" class="detail">—</p>
+        <div class="hero-meta">
+          <div><span class="label">Trip</span><span id="trip-time" class="mono">—</span></div>
+          <div><span class="label">Active</span><span id="active-time" class="mono">—</span></div>
+          <div><span class="label">Updated</span><span id="generated-at" class="mono">—</span></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Route</p>
+        <div class="progress" role="progressbar" aria-label="Route progress">
+          <div id="progress-bar" class="progress-fill"></div>
+        </div>
+        <div class="stat-row">
+          <span id="progress-percent">—</span>
+          <span id="progress-remaining">—</span>
+        </div>
+        <dl class="kv">
+          <div><dt>Destination</dt><dd id="route-destination">—</dd></div>
+          <div><dt>Route length</dt><dd id="route-length">—</dd></div>
+          <div><dt>To destination</dt><dd id="route-distance">—</dd></div>
+          <div><dt>Target altitude</dt><dd id="route-target-y">—</dd></div>
+          <div><dt>Active altitude</dt><dd id="route-active-y">—</dd></div>
+          <div><dt>Heading</dt><dd id="route-yaw">—</dd></div>
+        </dl>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Player</p>
+        <h3 id="player-name">—</h3>
+        <p id="player-server" class="sub">—</p>
+        <dl class="kv">
+          <div><dt>Dimension</dt><dd id="player-dimension">—</dd></div>
+          <div><dt>Coords</dt><dd id="player-coords" class="mono">—</dd></div>
+          <div><dt>Ping</dt><dd id="player-ping">—</dd></div>
+          <div><dt>Speed</dt><dd id="player-speed">—</dd></div>
+          <div><dt>Vertical</dt><dd id="player-vspeed">—</dd></div>
+        </dl>
+        <div class="bar-line">
+          <span>Health</span>
+          <div class="bar"><div id="player-health-bar" class="bar-fill health"></div></div>
+          <span id="player-health-text" class="mono">—</span>
+        </div>
+        <div class="bar-line">
+          <span>Air</span>
+          <div class="bar"><div id="player-air-bar" class="bar-fill air"></div></div>
+          <span id="player-air-text" class="mono">—</span>
+        </div>
+        <div id="player-flags" class="chips"></div>
+        <p id="player-extra" class="sub">—</p>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Flight internals</p>
+        <dl class="kv compact">
+          <div><dt>State</dt><dd id="counter-state" class="mono">—</dd></div>
+          <div><dt>Detour ticks</dt><dd id="counter-detour" class="mono">—</dd></div>
+          <div><dt>Blocked attempts</dt><dd id="counter-blocked" class="mono">—</dd></div>
+          <div><dt>Takeoff attempts</dt><dd id="counter-takeoff" class="mono">—</dd></div>
+          <div><dt>Rubberbands</dt><dd id="counter-rubberbands" class="mono">—</dd></div>
+          <div><dt>Walk failures</dt><dd id="counter-walk-failures" class="mono">—</dd></div>
+          <div><dt>Failed swaps</dt><dd id="counter-failed-swaps" class="mono">—</dd></div>
+          <div><dt>Walk blocks</dt><dd id="counter-walk-blocks" class="mono">—</dd></div>
+          <div><dt>Walk ticks</dt><dd id="counter-walk-ticks" class="mono">—</dd></div>
+          <div><dt>Retry ticks</dt><dd id="counter-retry" class="mono">—</dd></div>
+          <div><dt>Climb ticks</dt><dd id="counter-climb" class="mono">—</dd></div>
+        </dl>
+        <p id="path-summary" class="sub">Path: —</p>
+        <p id="path-points" class="mono small">—</p>
+        <p id="walk-summary" class="sub">Walk: —</p>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Safety &amp; equipment</p>
+        <div class="bar-line">
+          <span>Damage</span>
+          <div class="bar"><div id="safety-damage-bar" class="bar-fill damage"></div></div>
+          <span id="safety-damage-text" class="mono">—</span>
+        </div>
+        <dl class="kv compact">
+          <div><dt>No-progress limit</dt><dd id="safety-noprogress">—</dd></div>
+          <div><dt>Elytra</dt><dd id="elytra-state">—</dd></div>
+          <div><dt>Durability left</dt><dd id="elytra-durability" class="mono">—</dd></div>
+          <div><dt>Min durability</dt><dd id="elytra-min" class="mono">—</dd></div>
+          <div><dt>Portal mode</dt><dd id="portal-mode">—</dd></div>
+          <div><dt>Portal</dt><dd id="portal-state">—</dd></div>
+          <div><dt>Portal ahead</dt><dd id="portal-hit">—</dd></div>
+        </dl>
+        <div id="safety-flags" class="chips"></div>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Recovery &amp; automation</p>
+        <dl class="kv compact">
+          <div><dt>Recovery</dt><dd id="recovery-state">—</dd></div>
+          <div><dt>Recovery allowed</dt><dd id="recovery-allowed">—</dd></div>
+          <div><dt>Lobby</dt><dd id="lobby-info">—</dd></div>
+          <div><dt>Auto set home</dt><dd id="home-state">—</dd></div>
+          <div><dt>Home timer</dt><dd id="home-waiting">—</dd></div>
+          <div><dt>Webhook</dt><dd id="webhook-state">—</dd></div>
+        </dl>
+        <p class="label">Paused modules</p>
+        <p id="paused-modules" class="chips-value">—</p>
+      </article>
+
+      <article class="card span-2">
+        <div class="card-head">
+          <p class="eyebrow">Event feed</p>
+          <span class="sub">trip events and phase changes</span>
+        </div>
+        <ul id="events-list" class="events"></ul>
+        <p id="events-empty" class="sub">No events recorded yet.</p>
+      </article>
+
+      <article class="card span-2">
+        <div class="card-head">
+          <p class="eyebrow">Highway Fly settings</p>
+          <input id="settings-filter" type="search" placeholder="Filter settings…" autocomplete="off">
+        </div>
+        <div id="settings-list" class="settings-list"></div>
+        <p id="settings-empty" class="sub">Settings appear while Highway Fly is loaded.</p>
+      </article>
+
+      <article class="card span-2">
+        <p class="eyebrow">Dashboard server</p>
+        <dl class="kv">
+          <div><dt>Open on this network</dt><dd id="server-urls" class="mono">—</dd></div>
+          <div><dt>Listening on</dt><dd id="server-listen" class="mono">—</dd></div>
+          <div><dt>Browsers connected</dt><dd id="server-clients" class="mono">—</dd></div>
+          <div><dt>Addon version</dt><dd id="server-version" class="mono">—</dd></div>
+          <div><dt>Server uptime</dt><dd id="server-uptime" class="mono">—</dd></div>
+        </dl>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    Read-only view · updates live over your local network · no controls are exposed.
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

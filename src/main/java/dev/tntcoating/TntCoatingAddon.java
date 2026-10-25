@@ -8,6 +8,8 @@ import dev.tntcoating.modules.AutoWasp;
 import dev.tntcoating.modules.AllayFarm;
 import dev.tntcoating.modules.AllayShulkerKiller;
 import dev.tntcoating.modules.AngleCalculator;
+import dev.tntcoating.modules.HighwayFly;
+import dev.tntcoating.modules.HighwayDashboard;
 import dev.tntcoating.modules.AntiCoords;
 import dev.tntcoating.modules.AntiSpawnSet;
 import dev.tntcoating.modules.NoHurtCam;
@@ -69,6 +71,8 @@ public final class TntCoatingAddon extends MeteorAddon {
         List<Module> ordered = new ArrayList<>();
         // Flight and flight safety.
         ordered.add(new AdaptiveElytraFly());
+        ordered.add(new HighwayFly());
+        ordered.add(new HighwayDashboard());
         ordered.add(new AutoWasp());
         ordered.add(new BaritoneElytra());
         ordered.add(new ElytraLog());

@@ -31,11 +31,19 @@ public record ChatHomeEdit(String oldName, String newName) {
         return old == null || rename && replacement == null ? null : new ChatHomeEdit(old, replacement);
     }
 
+    /** Whether the line confirms a sethome command, whatever the home is called. */
+    public static boolean setSuccess(String message) {
+        String text = ChatSender.plain(message).toLowerCase(Locale.ROOT);
+        return text.contains("home") && !FAILURE.matcher(text).find()
+            && !text.contains("can't") && !text.contains("couldn't")
+            && CREATED.matcher(text).find();
+    }
+
     public boolean confirmedBy(String message) {
+        if (oldName == null) return setSuccess(message);
         String text = ChatSender.plain(message).toLowerCase(Locale.ROOT);
         if (!text.contains("home") || FAILURE.matcher(text).find()
             || text.contains("can't") || text.contains("couldn't")) return false;
-        if (oldName == null) return CREATED.matcher(text).find();
         return newName == null ? text.contains("deleted") || text.contains("removed") : text.contains("renamed");
     }
 

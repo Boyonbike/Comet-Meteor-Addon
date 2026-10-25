@@ -5,11 +5,10 @@ import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.NativeImage;
 import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.core.DiscordWebhook;
+import dev.tntcoating.core.WebhookDelivery;
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -18,7 +17,6 @@ import java.util.EnumSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletionException;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
@@ -44,7 +42,6 @@ import net.minecraft.world.level.chunk.LevelChunk;
  * again. Call to Arms and Stash Report differ only in what they check, ask and post.
  */
 abstract class DiscordWebhookModule extends Module {
-    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     /** Long enough to upload a screenshot on a slow connection. */
     private static final Duration UPLOAD_TIMEOUT = Duration.ofSeconds(30);
     /** How long the screenshot waits for an open menu to close before the message goes without it. */
@@ -180,7 +177,7 @@ abstract class DiscordWebhookModule extends Module {
         shown.forEach((part, setting) -> {
             if (setting.get()) parts.add(part);
         });
-        Upload upload = new Upload(URI.create(webhookUrl.get().strip()), payload(parts), sentMessage());
+        Upload upload = new Upload(DiscordWebhook.confirmedUri(webhookUrl.get()), payload(parts), sentMessage());
         sending = true;
         sentAt = System.currentTimeMillis();
         if (parts.contains(DiscordWebhook.Part.SCREENSHOT)) MeteorClient.EVENT_BUS.subscribe(new Capture(upload));
@@ -200,8 +197,8 @@ abstract class DiscordWebhookModule extends Module {
             request.header("Content-Type", "multipart/form-data; boundary=" + boundary)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(DiscordWebhook.multipart(boundary, DiscordWebhook.withScreenshot(upload.payload()), screenshot)));
         }
-        HTTP.sendAsync(request.build(), HttpResponse.BodyHandlers.ofString())
-            .whenComplete((response, failure) -> mc.execute(() -> finished(upload, response, failure)));
+        WebhookDelivery.send(request.build())
+            .thenAccept(result -> mc.execute(() -> finished(upload, result)));
     }
 
     /**
@@ -302,27 +299,24 @@ abstract class DiscordWebhookModule extends Module {
         }
     }
 
-    private void finished(Upload upload, HttpResponse<String> response, Throwable failure) {
+    private void finished(Upload upload, WebhookDelivery.Result result) {
         sending = false;
-        if (failure == null && response.statusCode() / 100 == 2) {
+        if (result.outcome() == WebhookDelivery.Outcome.DELIVERED) {
             info(upload.sentMessage());
             return;
         }
-        // Nothing was posted, so a retry shouldn't wait out the cooldown.
+        // A failed/discarded delivery does not consume the manual sender's cooldown.
         sentAt = 0;
-        if (failure != null) {
-            Throwable cause = failure instanceof CompletionException && failure.getCause() != null ? failure.getCause() : failure;
-            MeteorClient.LOG.warn("Posting the {} to Discord failed", noun, cause);
-            error("Couldn't reach Discord (%s).", cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName());
-            return;
-        }
-        int status = response.statusCode();
-        if (status == 429) warning("Discord is rate limiting this webhook; try again in a few seconds.");
+        int status = result.status();
+        if (result.outcome() == WebhookDelivery.Outcome.SUPPRESSED || status == 401 || status == 403 || status == 404) {
+            error("Discord doesn't recognise this webhook (HTTP %d). It may have been deleted; copy its URL again.", status);
+        } else if (status == 429) warning("Discord is still rate limiting this webhook; the queued %s expired. Try again later.", noun);
         else if (status == 413) error("The screenshot was too big for Discord (HTTP 413). Turn show-screenshot off or lower your resolution.");
-        else if (status == 401 || status == 403 || status == 404) error("Discord doesn't recognise this webhook (HTTP %d). It may have been deleted; copy its URL again.", status);
-        else {
-            MeteorClient.LOG.warn("Discord refused the {} with HTTP {}: {}", noun, status, response.body());
-            error("Discord refused the %s (HTTP %d). See the log.", noun, status);
+        else if (result.outcome() == WebhookDelivery.Outcome.DISCARDED) {
+            error("Couldn't deliver the %s within the queue's size, time or retry limit. Try again later.", noun);
+        } else {
+            MeteorClient.LOG.warn("Discord refused the {} with HTTP {}", noun, status);
+            error("Discord refused the %s (HTTP %d).", noun, status);
         }
     }
 }

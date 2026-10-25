@@ -12,6 +12,9 @@ public final class CometHud {
     public static void register() {
         Hud hud = Hud.get();
         hud.register(EngineHud.ADAPTIVE_ELYTRA_FLY);
+        hud.register(AutoSetHomeHud.INFO);
+        hud.register(HighwayFlyStatusHud.INFO);
+        hud.register(HighwayFlyRuntimeHud.INFO);
         hud.register(PlayerSpeedHud.INFO);
         hud.register(Speed3dHud.INFO);
         hud.register(TeleportCountdownHud.INFO);
