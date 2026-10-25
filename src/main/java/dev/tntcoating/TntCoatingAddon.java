@@ -8,6 +8,8 @@ import dev.tntcoating.modules.AutoWasp;
 import dev.tntcoating.modules.AllayFarm;
 import dev.tntcoating.modules.AllayShulkerKiller;
 import dev.tntcoating.modules.AngleCalculator;
+import dev.tntcoating.modules.HighwayFly;
+import dev.tntcoating.modules.HighwayDashboard;
 import dev.tntcoating.modules.AntiCoords;
 import dev.tntcoating.modules.AntiSpawnSet;
 import dev.tntcoating.modules.NoHurtCam;
@@ -50,7 +52,6 @@ import net.minecraft.world.item.Items;
 
 public final class TntCoatingAddon extends MeteorAddon {
     public static final Category CATEGORY = new Category("Comet", () -> Items.TNT.getDefaultInstance());
-
     private static List<Module> orderedModules = List.of();
 
     @Override
@@ -69,6 +70,8 @@ public final class TntCoatingAddon extends MeteorAddon {
         List<Module> ordered = new ArrayList<>();
         // Flight and flight safety.
         ordered.add(new AdaptiveElytraFly());
+        ordered.add(new HighwayFly());
+        ordered.add(new HighwayDashboard());
         ordered.add(new AutoWasp());
         ordered.add(new BaritoneElytra());
         ordered.add(new ElytraLog());
@@ -138,10 +141,12 @@ public final class TntCoatingAddon extends MeteorAddon {
 
     /** Restore Comet's functional grouping after Meteor alphabetizes every category. */
     public static void sortModuleGroup() {
-        Modules.get().getGroup(CATEGORY).sort(Comparator.comparingInt(module -> {
+        Comparator<Module> order = Comparator.comparingInt(module -> {
             int index = orderedModules.indexOf(module);
             return index >= 0 ? index : orderedModules.size();
-        }));
+        });
+        Modules modules = Modules.get();
+        modules.getGroup(CATEGORY).sort(order);
     }
 
     @Override

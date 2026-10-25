@@ -8,7 +8,10 @@ import baritone.api.event.events.WorldEvent;
 import baritone.api.event.listener.AbstractGameEventListener;
 import baritone.api.pathing.calc.IPathingControlManager;
 import baritone.api.pathing.goals.Goal;
+import baritone.api.pathing.goals.GoalBlock;
+import baritone.api.pathing.goals.GoalNear;
 import baritone.api.pathing.goals.GoalXZ;
+import baritone.api.pathing.path.IPathExecutor;
 import baritone.api.process.ICustomGoalProcess;
 import baritone.api.process.IElytraProcess;
 import baritone.api.process.PathingCommandType;
@@ -19,6 +22,47 @@ import net.minecraft.core.BlockPos;
 
 /** Uses only Baritone's public API: the rest of Baritone is obfuscated in release builds. */
 final class BaritoneElytraBridge implements BaritoneBridge {
+    /** Kept separate from Baritone's singleton so acquisition and rollback can be checked without a game. */
+    static final class LavaAvoidance {
+        private final SettingOverride<Boolean> walkOnLava;
+        private final SettingOverride<Boolean> liquidCheck;
+        private final SettingOverride<Boolean> parkour;
+
+        LavaAvoidance(SettingOverride<Boolean> walkOnLava, SettingOverride<Boolean> liquidCheck,
+                      SettingOverride<Boolean> parkour) {
+            this.walkOnLava = walkOnLava;
+            this.liquidCheck = liquidCheck;
+            this.parkour = parkour;
+        }
+
+        void set(boolean enabled) {
+            if (!enabled) {
+                try {
+                    parkour.release();
+                } finally {
+                    try {
+                        liquidCheck.release();
+                    } finally {
+                        walkOnLava.release();
+                    }
+                }
+                return;
+            }
+            try {
+                walkOnLava.acquire();
+                liquidCheck.acquire();
+                parkour.acquire();
+            } catch (RuntimeException | Error failure) {
+                try {
+                    set(false);
+                } catch (RuntimeException | Error cleanup) {
+                    failure.addSuppressed(cleanup);
+                }
+                throw failure;
+            }
+        }
+    }
+
     /** The height Baritone's own #elytra gives a goal without one; its pathfinder works out the real height. */
     private static final int XZ_GOAL_Y = 64;
 
@@ -31,6 +75,13 @@ final class BaritoneElytraBridge implements BaritoneBridge {
     private final SettingOverride<Double> rocketlessSpeed = new SettingOverride<>(
         () -> BaritoneAPI.getSettings().elytraFireworkSpeed.value,
         value -> BaritoneAPI.getSettings().elytraFireworkSpeed.value = value, 0.0);
+    private final LavaAvoidance lavaAvoidance = new LavaAvoidance(
+        new SettingOverride<>(() -> BaritoneAPI.getSettings().assumeWalkOnLava.value,
+            value -> BaritoneAPI.getSettings().assumeWalkOnLava.value = value, false),
+        new SettingOverride<>(() -> BaritoneAPI.getSettings().strictLiquidCheck.value,
+            value -> BaritoneAPI.getSettings().strictLiquidCheck.value = value, true),
+        new SettingOverride<>(() -> BaritoneAPI.getSettings().allowParkour.value,
+            value -> BaritoneAPI.getSettings().allowParkour.value = value, false));
     private Steering latestSteering;
     private LocalPlayer steeringPlayer;
     private BlockPos steeringDestination;
@@ -97,7 +148,7 @@ final class BaritoneElytraBridge implements BaritoneBridge {
         IElytraProcess elytra = baritone.getElytraProcess();
         if (!elytra.isLoaded() || !elytra.isActive()
             || baritone.getPathingControlManager().mostRecentInControl().orElse(null) != elytra) return false;
-        // In Baritone 26.2 a successful takeoff retains START_FLYING while airborne. FLYING is also used after a
+        // In Baritone 26.1 a successful takeoff retains START_FLYING while airborne. FLYING is also used after a
         // rejected landing. Accept the known cruise and landing states, leaving every unknown state to Baritone.
         String status = elytra.displayName();
         return "Elytra - Begin flying".equals(status) || "Elytra - Flying".equals(status)
@@ -139,6 +190,11 @@ final class BaritoneElytraBridge implements BaritoneBridge {
     }
 
     @Override
+    public void avoidLava(boolean enabled) {
+        lavaAvoidance.set(enabled);
+    }
+
+    @Override
     public boolean elytraSupported() {
         return baritone().getElytraProcess().isLoaded();
     }
@@ -155,6 +211,19 @@ final class BaritoneElytraBridge implements BaritoneBridge {
                 || command.commandType == PathingCommandType.FORCE_REVALIDATE_GOAL_AND_PATH)
             .orElse(false);
         return walking ? trip(process.getGoal()) : null;
+    }
+
+    @Override
+    public WalkingProgress walkingProgress() {
+        IPathExecutor current = baritone().getPathingBehavior().getCurrent();
+        return current == null ? null : new WalkingProgress(current.getPath(), current.getPosition());
+    }
+
+    @Override
+    public boolean atWalkingTarget(int x, int y, int z) {
+        var context = baritone().getPlayerContext();
+        LocalPlayer player = context.player();
+        return player != null && player.onGround() && new GoalBlock(x, y, z).isInGoal(context.playerFeet());
     }
 
     @Override
@@ -176,9 +245,11 @@ final class BaritoneElytraBridge implements BaritoneBridge {
     @Override
     public boolean readyForTakeoff() {
         IBaritone baritone = baritone();
-        // Baritone 26.2 exposes the calculated elytra path directly, so wait for it instead of
-        // inferring readiness from the process's display name.
-        return !baritone.getElytraProcess().getPath().isEmpty() && !baritone.getPathingBehavior().isPathing();
+        IElytraProcess elytra = baritone.getElytraProcess();
+        // Baritone 26.1 does not expose its calculated path. Its public status remains in PAUSE until
+        // the pathfinder has produced one, after which the process advances to a takeoff state.
+        return !elytra.displayName().contains("Waiting for elytra path")
+            && !baritone.getPathingBehavior().isPathing();
     }
 
     @Override
@@ -188,12 +259,39 @@ final class BaritoneElytraBridge implements BaritoneBridge {
 
     @Override
     public void stop() {
-        baritone().getPathingBehavior().cancelEverything();
+        try {
+            baritone().getPathingBehavior().cancelEverything();
+        } finally {
+            avoidLava(false);
+        }
     }
 
     @Override
     public void walk(Trip trip) {
-        baritone().getCustomGoalProcess().setGoalAndPath((Goal) trip.goal());
+        pathWalkingGoal((Goal) trip.goal());
+    }
+
+    @Override
+    public void walkTo(int x, int y, int z) {
+        pathWalkingGoal(new GoalNear(new BlockPos(x, y, z), 1));
+    }
+
+    @Override
+    public void walkToExact(int x, int y, int z) {
+        pathWalkingGoal(new GoalBlock(x, y, z));
+    }
+
+    private void pathWalkingGoal(Goal goal) {
+        try {
+            baritone().getCustomGoalProcess().setGoalAndPath(goal);
+        } catch (RuntimeException | Error failure) {
+            try {
+                avoidLava(false);
+            } catch (RuntimeException | Error cleanup) {
+                failure.addSuppressed(cleanup);
+            }
+            throw failure;
+        }
     }
 
     @Override

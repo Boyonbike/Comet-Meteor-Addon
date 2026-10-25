@@ -15,6 +15,9 @@ public final class CometHud {
         hud.register(PlayerSpeedHud.INFO);
         hud.register(Speed3dHud.INFO);
         hud.register(TeleportCountdownHud.INFO);
+        hud.register(AutoSetHomeHud.INFO);
+        hud.register(HighwayFlyStatusHud.INFO);
+        hud.register(HighwayFlyRuntimeHud.INFO);
         hud.register(DubCounterHud.INFO);
     }
 }

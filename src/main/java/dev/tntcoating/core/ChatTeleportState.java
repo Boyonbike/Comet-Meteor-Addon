@@ -46,7 +46,9 @@ public final class ChatTeleportState {
     }
     private record Operation(String target, long refreshedAt) {}
     private record Completed(String target, long at) {}
-    private record Duration(long millis, int start) {}
+
+    /** One duration stated in a line, and where in that line its number starts. */
+    public record Duration(long millis, int start) {}
 
     private static final Pattern DURATION = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])");
     /** What may separate the parts of one compound duration, as in "9m 35s" or "1 minute and 5 seconds". */
@@ -199,7 +201,8 @@ public final class ChatTeleportState {
         else timers.remove(kind);
     }
 
-    private static List<Duration> durations(String text) {
+    /** Every duration stated in a lower-case line, with compound forms such as "9m 35s" merged. */
+    public static List<Duration> durations(String text) {
         List<Duration> result = new ArrayList<>();
         var match = DURATION.matcher(text);
         int previousEnd = -1, previousUnit = 0;

@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import java.io.ByteArrayOutputStream;
 import java.net.URLEncoder;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Locale;
@@ -48,6 +49,12 @@ public final class DiscordWebhook {
     /** Only Discord webhook URLs are accepted, so a typo can't post your coordinates to another site. */
     public static boolean isWebhookUrl(String url) {
         return WEBHOOK.matcher(url.strip()).matches();
+    }
+
+    /** Ask Discord to confirm message creation, including validation errors, before reporting success. */
+    public static URI confirmedUri(String url) {
+        if (url == null || !isWebhookUrl(url)) throw new IllegalArgumentException("Invalid Discord webhook URL");
+        return URI.create(url.strip() + "?wait=true");
     }
 
     /** The mention for the ping setting: @everyone, @here or a role from its ID or pasted mention; "" when blank for no ping, null when it is none of these. */

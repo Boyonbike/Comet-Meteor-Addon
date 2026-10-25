@@ -23,6 +23,16 @@ public interface BaritoneBridge {
      */
     Trip walking();
 
+    /** Current walking path and completed movement index, or null while no path is available. */
+    default WalkingProgress walkingProgress() {
+        return null;
+    }
+
+    /** Grounded arrival using Baritone's own feet and exact block-goal rules. */
+    default boolean atWalkingTarget(int x, int y, int z) {
+        return false;
+    }
+
     /**
      * Where Baritone's elytra process is flying, or null when it isn't. The goal is the one most recently given to Baritone
      * when the flight is headed for it (#goto and #goal redirect a flight in progress), otherwise null, as while Baritone
@@ -48,14 +58,25 @@ public interface BaritoneBridge {
     /** Temporarily removes native firework requirements and ordinary boosts; false restores the user's settings. */
     default void rocketless(boolean enabled) {}
 
+    /** Temporarily prevents lava walking, risky gap jumps and mining beside liquids; false restores preferences. */
+    default void avoidLava(boolean enabled) {}
+
     /** Hands the trip to Baritone's elytra process. Throws {@link IllegalArgumentException} with Baritone's reason when it refuses. */
     void fly(Trip trip);
 
-    /** Cancels everything Baritone is doing, as #stop does. */
+    /** Cancels everything Baritone is doing, as #stop does, and releases walking lava avoidance. */
     void stop();
 
     /** Gives the trip to Baritone's walking pathfinder, as #goto does. The trip must have a goal. */
     void walk(Trip trip);
+
+    /** Gives Baritone a walking goal 20 blocks ahead without requiring a Goal object. */
+    void walkTo(int x, int y, int z);
+
+    /** Walks to this exact standing block, so recovery cannot finish in an adjacent lane. */
+    default void walkToExact(int x, int y, int z) {
+        walkTo(x, y, z);
+    }
 
     /** Baritone's elytraAutoJump: Baritone walks to a drop and takes off by itself. */
     boolean autoJump();
@@ -75,6 +96,8 @@ public interface BaritoneBridge {
      * @param x    the destination given to the elytra process
      */
     record Trip(Object goal, int x, int y, int z) {}
+
+    record WalkingProgress(Object path, int position) {}
 
     record Steering(float yaw, float pitch, Trip landing) {
         public Steering(float yaw, float pitch) {
