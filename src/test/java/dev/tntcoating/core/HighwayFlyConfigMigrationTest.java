@@ -7,6 +7,23 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class HighwayFlyConfigMigrationTest {
+    private static CompoundTag boolSetting(String name, boolean value) {
+        var tag = new CompoundTag(); tag.putString("name", name); tag.putBoolean("value", value); return tag;
+    }
+
+    @Test void migratesPeriodicWebhookPreferenceAndExplicitNewValueWins() {
+        CompoundTag root = root(module("highway-fly", false, "Webhook Events", boolSetting("periodic-status", false)));
+        HighwayFlyConfigMigration.regroupHighwaySettings(root, Map.of("home-replaced-events", "Webhook Events"));
+        assertFalse(value(find(root, "highway-fly"), "Webhook Events", "home-replaced-events").getBooleanOr("value", true));
+        CompoundTag both = root(module("highway-fly", false, "Webhook Events",
+            boolSetting("periodic-status", false), boolSetting("home-replaced-events", true)));
+        HighwayFlyConfigMigration.regroupHighwaySettings(both, Map.of("home-replaced-events", "Webhook Events"));
+        assertTrue(value(find(both, "highway-fly"), "Webhook Events", "home-replaced-events").getBooleanOr("value", false));
+        var once = both.copy();
+        HighwayFlyConfigMigration.regroupHighwaySettings(both, Map.of("home-replaced-events", "Webhook Events"));
+        assertEquals(once, both);
+    }
+
     @Test void retainsDestinationHomeKeybindAndHelperSwitchesWithoutChangingScaffold() {
         CompoundTag destination = new CompoundTag();
         destination.putString("name", "destination");
@@ -183,6 +200,100 @@ class HighwayFlyConfigMigrationTest {
         assertEquals(before, root);
     }
 
+    @Test void legacyDamageLimitBecomesMinimumHealthBeforeRegrouping() {
+        CompoundTag legacy = setting("damage-limit", "unused");
+        legacy.putDouble("value", 12.5);
+        legacy.putString("future-metadata", "keep");
+        CompoundTag highway = module("highway-fly", false, "Old Safety", legacy);
+        CompoundTag root = root(highway);
+
+        HighwayFlyConfigMigration.regroupHighwaySettings(root, Map.of("minimum-health", "Safety & Lava"));
+
+        CompoundTag migrated = value(highway, "Safety & Lava", "minimum-health");
+        assertEquals(12.5, migrated.getDoubleOr("value", -1));
+        assertEquals("keep", migrated.getStringOr("future-metadata", ""));
+        assertTrue(group(highway, "Old Safety").getListOrEmpty("settings").isEmpty());
+        assertEquals(1, group(highway, "Safety & Lava").getListOrEmpty("settings").size());
+        CompoundTag once = root.copy();
+        HighwayFlyConfigMigration.regroupHighwaySettings(root, Map.of("minimum-health", "Safety & Lava"));
+        assertEquals(once, root);
+    }
+
+    @Test void disabledLegacyDamageLimitKeepsMinimumHealthDisabledInItsCurrentGroup() {
+        CompoundTag legacy = setting("damage-limit", "unused");
+        legacy.putDouble("value", 0);
+        CompoundTag highway = module("highway-fly", false, "Safety & Lava", legacy);
+
+        HighwayFlyConfigMigration.regroupHighwaySettings(root(highway), Map.of("minimum-health", "Safety & Lava"));
+
+        assertEquals(0, value(highway, "Safety & Lava", "minimum-health").getDoubleOr("value", -1));
+        assertEquals(1, group(highway, "Safety & Lava").getListOrEmpty("settings").size());
+    }
+
+    @Test void explicitMinimumHealthInAnotherGroupOverridesALegacyValueAlreadyInTheDestination() {
+        CompoundTag legacy = setting("damage-limit", "unused");
+        legacy.putDouble("value", 18);
+        CompoundTag highway = module("highway-fly", false, "Safety & Lava", legacy);
+        CompoundTag current = setting("minimum-health", "unused");
+        current.putDouble("value", 6);
+        highway.getCompoundOrEmpty("settings").getListOrEmpty("groups")
+            .add(group(module("unused", false, "Old Safety", current), "Old Safety"));
+        CompoundTag root = root(highway);
+
+        HighwayFlyConfigMigration.regroupHighwaySettings(root, Map.of("minimum-health", "Safety & Lava"));
+
+        assertEquals(6, value(highway, "Safety & Lava", "minimum-health").getDoubleOr("value", -1));
+        assertEquals(1, group(highway, "Safety & Lava").getListOrEmpty("settings").size());
+        assertTrue(group(highway, "Old Safety").getListOrEmpty("settings").isEmpty());
+        CompoundTag once = root.copy();
+        HighwayFlyConfigMigration.regroupHighwaySettings(root, Map.of("minimum-health", "Safety & Lava"));
+        assertEquals(once, root);
+    }
+
+    @Test void explicitDisabledMinimumHealthInTheDestinationIsNotReplacedByALegacyValue() {
+        CompoundTag legacy = setting("damage-limit", "unused");
+        legacy.putDouble("value", 8);
+        CompoundTag highway = module("highway-fly", false, "Old Safety", legacy);
+        CompoundTag current = setting("minimum-health", "unused");
+        current.putDouble("value", 0);
+        highway.getCompoundOrEmpty("settings").getListOrEmpty("groups")
+            .add(group(module("unused", false, "Safety & Lava", current), "Safety & Lava"));
+
+        HighwayFlyConfigMigration.regroupHighwaySettings(root(highway), Map.of("minimum-health", "Safety & Lava"));
+
+        assertEquals(0, value(highway, "Safety & Lava", "minimum-health").getDoubleOr("value", -1));
+        assertTrue(group(highway, "Old Safety").getListOrEmpty("settings").isEmpty());
+        assertEquals(1, group(highway, "Safety & Lava").getListOrEmpty("settings").size());
+    }
+
+    @Test void legacyValuesThatWouldMakeTheHealthGuardUnsafeUseItsDefault() {
+        for (double saved : new double[] {20, 100, -1, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            CompoundTag legacy = setting("damage-limit", "unused");
+            legacy.putDouble("value", saved);
+            CompoundTag highway = module("highway-fly", false, "Safety & Lava", legacy);
+
+            HighwayFlyConfigMigration.regroupHighwaySettings(root(highway), Map.of("minimum-health", "Safety & Lava"));
+
+            assertEquals(8, value(highway, "Safety & Lava", "minimum-health").getDoubleOr("value", -1),
+                "Legacy damage limit " + saved + " must not become an unsafe health threshold");
+        }
+    }
+
+    @Test void explicitlyChosenFullHealthThresholdIsNotNormalizedAsALegacyDamageLimit() {
+        CompoundTag legacy = setting("damage-limit", "unused");
+        legacy.putDouble("value", 100);
+        CompoundTag highway = module("highway-fly", false, "Old Safety", legacy);
+        CompoundTag current = setting("minimum-health", "unused");
+        current.putDouble("value", 20);
+        highway.getCompoundOrEmpty("settings").getListOrEmpty("groups")
+            .add(group(module("unused", false, "Safety & Lava", current), "Safety & Lava"));
+
+        HighwayFlyConfigMigration.regroupHighwaySettings(root(highway), Map.of("minimum-health", "Safety & Lava"));
+
+        assertEquals(20, value(highway, "Safety & Lava", "minimum-health").getDoubleOr("value", -1));
+        assertTrue(group(highway, "Old Safety").getListOrEmpty("settings").isEmpty());
+    }
+
     private static CompoundTag setting(String name, String text) {
         CompoundTag tag = new CompoundTag();
         tag.putString("name", name);
@@ -190,11 +301,11 @@ class HighwayFlyConfigMigrationTest {
         return tag;
     }
 
-    private static CompoundTag module(String name, boolean active, String group, CompoundTag value) {
+    private static CompoundTag module(String name, boolean active, String group, CompoundTag... value) {
         CompoundTag module = new CompoundTag();
         module.putString("name", name);
         module.putBoolean("active", active);
-        ListTag values = new ListTag(); values.add(value);
+        ListTag values = new ListTag(); for (CompoundTag entry : value) values.add(entry);
         CompoundTag groupTag = new CompoundTag();
         groupTag.putString("name", group); groupTag.put("settings", values);
         ListTag groups = new ListTag(); groups.add(groupTag);

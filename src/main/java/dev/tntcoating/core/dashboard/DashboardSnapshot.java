@@ -11,13 +11,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * One published dashboard frame. Schema 1 is frozen for the served frontend; new fields may be added, but existing
+ * One published dashboard frame. Schema 2 is frozen for the served frontend; new fields may be added, but existing
  * names and meanings must not change without a schema bump.
  */
 public record DashboardSnapshot(int schema, long sequence, long generatedAt, Server server, Client client,
                                 HighwayTelemetry flight, Map<String, List<SettingValue>> settings,
                                 int settingsSignature, List<EventEntry> events, String error) {
-    public static final int SCHEMA = 1;
+    public static final int SCHEMA = 2;
 
     public DashboardSnapshot {
         schema = SCHEMA;

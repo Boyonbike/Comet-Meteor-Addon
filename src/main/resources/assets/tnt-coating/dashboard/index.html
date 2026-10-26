@@ -13,7 +13,7 @@
       <span class="logo" aria-hidden="true">HF</span>
       <div>
         <h1>Highway Fly</h1>
-        <p class="sub">live dashboard · Comet addon</p>
+        <p class="sub">Comet addon · Live flight dashboard</p>
       </div>
     </div>
     <div class="status" role="status" aria-live="polite">
@@ -23,14 +23,18 @@
   </header>
 
   <main>
-    <p id="error-banner" class="banner" hidden></p>
+    <p id="error-banner" class="banner" role="alert" hidden></p>
 
-    <section class="grid">
-      <article class="card hero span-2">
-        <p class="eyebrow">Flight state</p>
-        <h2 id="flight-state">—</h2>
+    <section class="grid" aria-label="Highway Fly dashboard">
+      <article class="card flight-panel">
+        <h2 class="panel-title">Current flight</h2>
+        <h3 id="flight-state">—</h3>
         <p id="flight-action" class="action">—</p>
         <p id="flight-detail" class="detail">—</p>
+        <div class="hero-position">
+          <span class="label">Current coordinates · X / Y / Z</span>
+          <span id="flight-coords" class="mono">—</span>
+        </div>
         <div class="hero-meta">
           <div><span class="label">Trip</span><span id="trip-time" class="mono">—</span></div>
           <div><span class="label">Active</span><span id="active-time" class="mono">—</span></div>
@@ -38,9 +42,9 @@
         </div>
       </article>
 
-      <article class="card">
-        <p class="eyebrow">Route</p>
-        <div class="progress" role="progressbar" aria-label="Route progress">
+      <article class="card route-panel">
+        <h2 class="panel-title">Route</h2>
+        <div class="progress" role="progressbar" aria-label="Route progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div id="progress-bar" class="progress-fill"></div>
         </div>
         <div class="stat-row">
@@ -57,9 +61,9 @@
         </dl>
       </article>
 
-      <article class="card">
-        <p class="eyebrow">Player</p>
-        <h3 id="player-name">—</h3>
+      <article class="card player-panel">
+        <h2 class="panel-title">Player</h2>
+        <h3 id="player-name" class="player-heading">—</h3>
         <p id="player-server" class="sub">—</p>
         <dl class="kv">
           <div><dt>Dimension</dt><dd id="player-dimension">—</dd></div>
@@ -82,8 +86,67 @@
         <p id="player-extra" class="sub">—</p>
       </article>
 
-      <article class="card">
-        <p class="eyebrow">Flight internals</p>
+      <article class="card safety-panel">
+        <h2 class="panel-title">Safety &amp; equipment</h2>
+        <dl class="kv compact">
+          <div><dt>Min health (logout)</dt><dd id="safety-minimum-health" class="mono">—</dd></div>
+          <div><dt>Trip damage</dt><dd id="safety-trip-damage" class="mono">—</dd></div>
+          <div><dt>No-progress limit</dt><dd id="safety-noprogress">—</dd></div>
+          <div><dt>Elytra</dt><dd id="elytra-state">—</dd></div>
+          <div><dt>Durability left</dt><dd id="elytra-durability" class="mono">—</dd></div>
+          <div><dt title="Worn, inventory and offhand elytra with durability above the configured swap threshold">Usable elytra</dt><dd id="elytra-usable" class="mono">—</dd></div>
+          <div><dt>Min durability</dt><dd id="elytra-min" class="mono">—</dd></div>
+          <div><dt>Portal mode</dt><dd id="portal-mode">—</dd></div>
+          <div><dt>Portal</dt><dd id="portal-state">—</dd></div>
+          <div><dt>Portal ahead</dt><dd id="portal-hit">—</dd></div>
+        </dl>
+        <div id="safety-flags" class="chips"></div>
+      </article>
+
+      <article class="card automation-panel">
+        <h2 class="panel-title">Recovery &amp; automation</h2>
+        <dl class="kv compact">
+          <div><dt>Recovery</dt><dd id="recovery-state">—</dd></div>
+          <div><dt>Recovery allowed</dt><dd id="recovery-allowed">—</dd></div>
+          <div><dt>Lobby</dt><dd id="lobby-info">—</dd></div>
+          <div><dt>Auto set home</dt><dd id="home-state">—</dd></div>
+          <div><dt>Home timer</dt><dd id="home-waiting">—</dd></div>
+          <div><dt>Cooldown</dt><dd id="home-cooldown" class="mono">—</dd></div>
+          <div><dt>Buffer</dt><dd id="home-buffer" class="mono">—</dd></div>
+          <div><dt>Interval</dt><dd id="home-interval" class="mono">—</dd></div>
+          <div><dt>Retry</dt><dd id="home-retry" class="mono">—</dd></div>
+          <div><dt>Webhook</dt><dd id="webhook-state">—</dd></div>
+        </dl>
+        <p class="label">Paused modules</p>
+        <p id="paused-modules" class="chips-value">—</p>
+      </article>
+
+      <article class="card events-panel">
+        <div class="card-head">
+          <h2 class="panel-title">Event feed</h2>
+          <span class="sub">trip events and phase changes</span>
+        </div>
+        <ul id="events-list" class="events"></ul>
+        <p id="events-empty" class="sub">No events recorded yet.</p>
+      </article>
+
+      <article class="card history-panel">
+        <div class="card-head">
+          <h2 class="panel-title">Home replacement history</h2>
+          <span id="home-history-zone" class="sub"></span>
+        </div>
+        <p id="home-history-context" class="sub">Join a server to load its saved homes.</p>
+        <div class="home-history-scroll">
+          <table class="home-history">
+            <thead><tr><th scope="col">Confirmed</th><th scope="col">Home</th><th scope="col">X / Y / Z</th><th scope="col">Dimension</th></tr></thead>
+            <tbody id="home-history-body"></tbody>
+          </table>
+        </div>
+        <p id="home-history-empty" class="sub">No confirmed replacements yet. Homes appear after the server confirms a replacement.</p>
+      </article>
+
+      <details class="card diagnostics-panel">
+        <summary>Flight diagnostics <span class="sub">Path, obstacles and retry counters</span></summary>
         <dl class="kv compact">
           <div><dt>State</dt><dd id="counter-state" class="mono">—</dd></div>
           <div><dt>Detour ticks</dt><dd id="counter-detour" class="mono">—</dd></div>
@@ -100,61 +163,19 @@
         <p id="path-summary" class="sub">Path: —</p>
         <p id="path-points" class="mono small">—</p>
         <p id="walk-summary" class="sub">Walk: —</p>
-      </article>
+      </details>
 
-      <article class="card">
-        <p class="eyebrow">Safety &amp; equipment</p>
-        <div class="bar-line">
-          <span>Damage</span>
-          <div class="bar"><div id="safety-damage-bar" class="bar-fill damage"></div></div>
-          <span id="safety-damage-text" class="mono">—</span>
-        </div>
-        <dl class="kv compact">
-          <div><dt>No-progress limit</dt><dd id="safety-noprogress">—</dd></div>
-          <div><dt>Elytra</dt><dd id="elytra-state">—</dd></div>
-          <div><dt>Durability left</dt><dd id="elytra-durability" class="mono">—</dd></div>
-          <div><dt>Min durability</dt><dd id="elytra-min" class="mono">—</dd></div>
-          <div><dt>Portal mode</dt><dd id="portal-mode">—</dd></div>
-          <div><dt>Portal</dt><dd id="portal-state">—</dd></div>
-          <div><dt>Portal ahead</dt><dd id="portal-hit">—</dd></div>
-        </dl>
-        <div id="safety-flags" class="chips"></div>
-      </article>
-
-      <article class="card">
-        <p class="eyebrow">Recovery &amp; automation</p>
-        <dl class="kv compact">
-          <div><dt>Recovery</dt><dd id="recovery-state">—</dd></div>
-          <div><dt>Recovery allowed</dt><dd id="recovery-allowed">—</dd></div>
-          <div><dt>Lobby</dt><dd id="lobby-info">—</dd></div>
-          <div><dt>Auto set home</dt><dd id="home-state">—</dd></div>
-          <div><dt>Home timer</dt><dd id="home-waiting">—</dd></div>
-          <div><dt>Webhook</dt><dd id="webhook-state">—</dd></div>
-        </dl>
-        <p class="label">Paused modules</p>
-        <p id="paused-modules" class="chips-value">—</p>
-      </article>
-
-      <article class="card span-2">
+      <article class="card settings-panel">
         <div class="card-head">
-          <p class="eyebrow">Event feed</p>
-          <span class="sub">trip events and phase changes</span>
-        </div>
-        <ul id="events-list" class="events"></ul>
-        <p id="events-empty" class="sub">No events recorded yet.</p>
-      </article>
-
-      <article class="card span-2">
-        <div class="card-head">
-          <p class="eyebrow">Highway Fly settings</p>
-          <input id="settings-filter" type="search" placeholder="Filter settings…" autocomplete="off">
+          <h2 class="panel-title">Highway Fly settings</h2>
+          <input aria-label="Filter Highway Fly settings" id="settings-filter" type="search" placeholder="Filter settings…" autocomplete="off">
         </div>
         <div id="settings-list" class="settings-list"></div>
         <p id="settings-empty" class="sub">Settings appear while Highway Fly is loaded.</p>
       </article>
 
-      <article class="card span-2">
-        <p class="eyebrow">Dashboard server</p>
+      <article class="card server-panel">
+        <h2 class="panel-title">Dashboard server</h2>
         <dl class="kv">
           <div><dt>Open on this network</dt><dd id="server-urls" class="mono">—</dd></div>
           <div><dt>Listening on</dt><dd id="server-listen" class="mono">—</dd></div>
@@ -167,7 +188,7 @@
   </main>
 
   <footer>
-    Read-only view · updates live over your local network · no controls are exposed.
+    Highway Fly <span>Read-only · Live on your local network</span>
   </footer>
 
   <script src="app.js" defer></script>

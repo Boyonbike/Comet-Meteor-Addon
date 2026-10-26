@@ -6,6 +6,7 @@
 package dev.tntcoating.core.dashboard;
 
 import java.util.List;
+import dev.tntcoating.core.SetHomeScheduler;
 
 /**
  * Immutable snapshot of everything Highway Fly knows about its current trip. Built on the game thread from private
@@ -38,18 +39,28 @@ public record HighwayTelemetry(
     List<String> pausedModules
 ) {
     /** The snapshot shown while Highway Fly is off. */
-    public static HighwayTelemetry idle() {
+    public static HighwayTelemetry idle() { return idle(null); }
+
+    public static HighwayTelemetry idle(Home home) {
+        return idle(home, new Elytra(false, null, 0, 0));
+    }
+
+    public static HighwayTelemetry idle(Home home, Elytra elytra) {
         return new HighwayTelemetry(false, null, null, null, null, false, 0, 0, null, null, false, false, null,
-            null, null, new Altitude(null, null, null, false), new Counters(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            home, null, new Altitude(null, null, null, false), new Counters(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
             new Path(false, List.of()), new Walk(false, false, null, null, null, 0, 0),
             new Portal(null, false, false, 0, false, false, null),
-            new Safety(0, 0, 0, false, false), new Elytra(false, null, 0), new Webhook(false, false, false),
+            new Safety(0, 0, 0, false, false), elytra, new Webhook(false, false, false),
             List.of());
     }
 
-    /** Auto set home state; null when the helper is off or cannot act on this server. */
+    /** Home schedule and persistent history remain available while the helper is paused. */
     public record Home(String mode, String home, boolean waiting, long waitMillis, long intervalMillis,
-                       boolean fixedTimer, String cooldownLabel, boolean cooldownKnown) {}
+                       boolean fixedTimer, String cooldownLabel, boolean cooldownKnown,
+                       SetHomeScheduler.Status schedule, boolean paused, String account, String server,
+                       List<SetHomeScheduler.Entry> history) {
+        public Home { history = List.copyOf(history); }
+    }
 
     /** The active course, in the same units Highway Fly uses. */
     public record Route(double originX, double originZ, double destinationX, double destinationZ, double length,
@@ -77,10 +88,12 @@ public record HighwayTelemetry(
         public record Hit(double distance, double x, double y, double z) {}
     }
 
-    public record Safety(double damageTaken, double damageLimit, int noProgressLimitSeconds,
+    /** Trip damage is informational; minimumHealth is the remaining-health logout threshold (0 disables it). */
+    public record Safety(double damageTaken, double minimumHealth, int noProgressLimitSeconds,
                          boolean safetyDisconnect, boolean deathNotified) {}
 
-    public record Elytra(boolean equipped, Integer remaining, int minDurability) {}
+    /** Usable count includes worn, main inventory, hotbar and offhand elytra above minDurability. */
+    public record Elytra(boolean equipped, Integer remaining, int minDurability, int usableCount) {}
 
     public record Webhook(boolean enabled, boolean configured, boolean terminal) {}
 }

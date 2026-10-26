@@ -95,10 +95,110 @@ class HighwayWalkingProgressTest {
         assertTrue(progress.stalled(path, 1, 2));
     }
 
+    @Test void normalEatingPreservesThePreviousStallDebt() {
+        HighwayWalkingProgress progress = new HighwayWalkingProgress();
+        Object path = new Object();
+        assertFalse(progress.stalled(path, 0, 3));
+        assertFalse(progress.stalled(path, 0, 3));
+
+        // One normal apple takes about 32 ticks, even if eating starts near the deadline.
+        for (int tick = 0; tick < 32; tick++) {
+            assertFalse(progress.stalled(path, 0, 3, true));
+        }
+
+        assertTrue(progress.stalled(path, 0, 3, false));
+    }
+
+    @Test void continuousEatingOnlyDelaysTheWatchdogByFiveSeconds() {
+        HighwayWalkingProgress progress = new HighwayWalkingProgress();
+        Object path = new Object();
+
+        for (int tick = 0; tick < 100; tick++) {
+            assertFalse(progress.stalled(path, 0, 3, true));
+        }
+        assertFalse(progress.stalled(path, 0, 3, true));
+        assertFalse(progress.stalled(path, 0, 3, true));
+        assertTrue(progress.stalled(path, 0, 3, true));
+    }
+
+    @Test void stoppingAndRestartingEatingDoesNotRefreshTheGrace() {
+        HighwayWalkingProgress progress = new HighwayWalkingProgress();
+        Object path = new Object();
+
+        for (int tick = 0; tick < 60; tick++) {
+            assertFalse(progress.stalled(path, 0, 3, true));
+        }
+        assertFalse(progress.stalled(path, 0, 3, false));
+        for (int tick = 0; tick < 40; tick++) {
+            assertFalse(progress.stalled(path, 0, 3, true));
+        }
+        assertFalse(progress.stalled(path, 0, 3, true));
+        assertTrue(progress.stalled(path, 0, 3, true));
+    }
+
+    @Test void recalculatingPathsCannotRefreshTheEatingGrace() {
+        HighwayWalkingProgress progress = new HighwayWalkingProgress();
+        Object path = new Object();
+
+        for (int tick = 0; tick < 100; tick++) {
+            assertFalse(progress.stalled(path, 0, 3, true));
+        }
+        assertFalse(progress.stalled(new Object(), 20, 3, true));
+        assertFalse(progress.stalled(new Object(), 40, 3, true));
+        assertTrue(progress.stalled(new Object(), 60, 3, true));
+    }
+
+    @Test void completingANewMovementRefreshesBothTheStallBudgetAndEatingGrace() {
+        HighwayWalkingProgress progress = new HighwayWalkingProgress();
+        Object path = new Object();
+
+        for (int tick = 0; tick < 100; tick++) {
+            assertFalse(progress.stalled(path, 0, 3, true));
+        }
+        assertFalse(progress.stalled(path, 0, 3, false));
+        assertFalse(progress.stalled(path, 0, 3, false));
+        assertFalse(progress.stalled(path, 1, 3, false));
+
+        for (int tick = 0; tick < 100; tick++) {
+            assertFalse(progress.stalled(path, 1, 3, true));
+        }
+        assertFalse(progress.stalled(path, 1, 3, false));
+        assertFalse(progress.stalled(path, 1, 3, false));
+        assertTrue(progress.stalled(path, 1, 3, false));
+    }
+
+    @Test void missingPathsStillHaveOnlyAFiniteEatingGrace() {
+        HighwayWalkingProgress progress = new HighwayWalkingProgress();
+
+        for (int tick = 0; tick < 100; tick++) {
+            assertFalse(progress.stalled(null, 0, 2, true));
+        }
+        assertFalse(progress.stalled(null, 0, 2, true));
+        assertTrue(progress.stalled(null, 0, 2, true));
+    }
+
+    @Test void resettingStartsAFreshEatingGrace() {
+        HighwayWalkingProgress progress = new HighwayWalkingProgress();
+        Object path = new Object();
+        for (int tick = 0; tick < 100; tick++) {
+            assertFalse(progress.stalled(path, 0, 1, true));
+        }
+        assertTrue(progress.stalled(path, 0, 1, true));
+
+        progress.reset();
+
+        for (int tick = 0; tick < 100; tick++) {
+            assertFalse(progress.stalled(path, 0, 1, true));
+        }
+        assertTrue(progress.stalled(path, 0, 1, true));
+    }
+
     @Test void nonpositiveTimeoutIsRejected() {
         HighwayWalkingProgress progress = new HighwayWalkingProgress();
 
         assertThrows(IllegalArgumentException.class, () -> progress.stalled(null, 0, 0));
         assertThrows(IllegalArgumentException.class, () -> progress.stalled(null, 0, -1));
+        assertThrows(IllegalArgumentException.class, () -> progress.stalled(null, 0, 0, true));
+        assertThrows(IllegalArgumentException.class, () -> progress.stalled(null, 0, -1, true));
     }
 }

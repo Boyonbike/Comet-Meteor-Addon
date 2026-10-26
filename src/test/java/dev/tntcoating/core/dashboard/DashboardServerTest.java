@@ -30,7 +30,7 @@ class DashboardServerTest {
 
             HttpResponse<String> health = get(port, "/api/health");
             assertEquals(200, health.statusCode());
-            assertTrue(health.body().contains("\"schema\":1"));
+            assertTrue(health.body().contains("\"schema\":2"));
             assertTrue(health.body().contains("\"ok\":true"));
             assertTrue(server.info().urls().contains("http://127.0.0.1:" + port));
 
