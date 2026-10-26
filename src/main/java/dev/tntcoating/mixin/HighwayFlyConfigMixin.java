@@ -20,7 +20,7 @@ public abstract class HighwayFlyConfigMixin {
         if (highway != null) highway.beginProfileLoad();
         boolean pendingTrip = new LobbyRecoveryStore(MeteorClient.FOLDER.toPath()
             .resolve("auto-lobby-recovery.json")).load().isPresent();
-        HighwayFlyConfigMigration.migrate(tag, pendingTrip);
+        HighwayFlyConfigMigration.migrateIndependent(tag, pendingTrip);
         if (highway != null) HighwayFlyConfigMigration.regroupHighwaySettings(tag, highway.settingGroups());
     }
 

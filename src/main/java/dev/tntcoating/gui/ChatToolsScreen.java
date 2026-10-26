@@ -1,6 +1,10 @@
 package dev.tntcoating.gui;
 
 import dev.tntcoating.core.ChatClan;
+import dev.tntcoating.core.AutoTpyWhitelistImport;
+import dev.tntcoating.core.AutoTpyQueue;
+import java.util.Set;
+import java.io.IOException;
 import dev.tntcoating.core.ChatCountdowns;
 import dev.tntcoating.core.ChatMessages;
 import dev.tntcoating.core.ChatPlayerSearch;
@@ -35,7 +39,7 @@ import static dev.tntcoating.gui.ChatToolsStyle.*;
  * the body in place. Every page is built from the same parts: a toolbar, captions, grouped lists, tiles and buttons.
  */
 public final class ChatToolsScreen extends Screen {
-    private enum Page { Home, Players, Clan, Homes, Hotspot, Settings, Conversation }
+    private enum Page { Home, Players, Clan, Homes, Hotspot, Settings, AutoTpy, Conversation }
     private enum Tone { Primary, Secondary, Ghost, Danger }
     /** A pending bubble is a whisper still queued or not yet echoed by the server. */
     private record Bubble(boolean incoming, boolean pending, List<FormattedCharSequence> lines, int width, int height) {}
@@ -55,7 +59,7 @@ public final class ChatToolsScreen extends Screen {
     private Page page = Page.Home;
     private Page conversationBack = Page.Players;
     private String recipient, selectedPlayer;
-    private EditBox input, homeSearch, playerSearch, clanField, visibleSearch;
+    private EditBox input, homeSearch, playerSearch, clanField, autoListField, visibleSearch;
     private int x = -1, y, w, h, bodyTop, bodyBottom, cursor, scroll, maxScroll;
     private int cx, cw;
     private ChatToolsLayout.Frame layout;
@@ -71,6 +75,8 @@ public final class ChatToolsScreen extends Screen {
     private List<String> cachedPending = List.of();
     private final List<Bubble> bubbles = new ArrayList<>();
     private boolean conversationVisible;
+    private boolean autoBlocklistEditing, autoImportBusy;
+    private long autoImportRevision;
     private String cachedRecipient;
     private int cachedWidth, conversationScroll;
     private float cachedScale;
@@ -84,6 +90,8 @@ public final class ChatToolsScreen extends Screen {
             homeSearch = field("Search players", 16);
             playerSearch = field("Search players", 16);
             clanField = field("Search or add members", 256);
+            autoListField = field("Search or add usernames", 1024);
+            autoListField.setResponder(ignored -> { scroll=0;hits.clear(); });
             homeSearch.setResponder(ignored -> hits.clear());
             playerSearch.setResponder(ignored -> { scroll = 0; hits.clear(); selectedPlayer = null; });
             clanField.setResponder(ignored -> { scroll = 0; hits.clear(); });
@@ -129,6 +137,7 @@ public final class ChatToolsScreen extends Screen {
     private void navigate(Page next) {
         saveDraft();
         page = next;
+        autoImportRevision++;
         scroll = maxScroll = 0;
         settingsPath.clear();
         notice = "";
@@ -228,6 +237,7 @@ public final class ChatToolsScreen extends Screen {
             case Home -> overview(delta);
             case Players -> players(delta);
             case Clan -> clan(delta);
+            case AutoTpy -> autoTpy(delta);
             case Homes -> homes();
             case Hotspot -> hotspot();
             case Settings -> settings();
@@ -325,6 +335,9 @@ public final class ChatToolsScreen extends Screen {
         search(homeSearch, delta, cx, cursor, actions.left() - GAP - cx);
         cursor += CONTROL + PAD;
         timerList();
+        menuRow("Auto TPY", tools.autoTpyEnabled() ? "Enabled · " + tools.autoTpyStats().live() + " buffered" : "Off",
+            "Buffered automatic acceptance, timing, whitelist and blocklist", true,true,true,() -> navigate(Page.AutoTpy));
+        cursor += PAD;
 
         caption("Favourite homes", null, "Manage", "Open Homes", () -> navigate(Page.Homes));
         var favorites = tools.favoriteHomes();
@@ -438,6 +451,95 @@ public final class ChatToolsScreen extends Screen {
         if (imported == null) return;
         int added = tools.addToClan(imported.names());
         notice(ChatClan.summary(added, imported.names().size() - added, imported.invalid()));
+    }
+
+    private void autoTpy(float delta) {
+        caption("Auto TPY", tools.autoTpyIntervalMs() + " ms between commands", null,null,null);
+        toggleRow("Automatic acceptance", "Capture eligible requests and send from the buffer",tools.autoTpyEnabled(),
+            () -> tools.autoTpyEnabled(!tools.autoTpyEnabled()),true,false);
+        toggleRow("Adaptive timing", "Learn from confirmed replies; rate limits pause sending",tools.autoTpyAdaptive(),tools::toggleAutoTpyAdaptive,false,false);
+        toggleRow("Whitelist only", "Off allows other players unless blocklisted",tools.autoTpyWhitelistOnly(),tools::toggleAutoTpyWhitelistOnly,false,false);
+        toggleRow("Allow Meteor friends", "Friends may bypass the whitelist; the blocklist always wins",tools.autoTpyAllowsFriends(),tools::toggleAutoTpyFriends,false,true);
+        cursor += PAD;
+        caption("Buffer",null,"Clear","Cancel all buffered generations",tools::clearAutoTpy);
+        var stats=tools.autoTpyStats();
+        emptyRow(stats.queued()+" queued · "+stats.awaiting()+" awaiting · "+stats.retries()+" retries",
+            stats.overflow()+" overflow · "+stats.latest());
+        menuRow("Reset learned speed", "Timing and limits are in Chat Tools module settings", "Restore the configured starting interval",
+            true,true,false,tools::resetAutoTpyLearning);
+        var entries=tools.autoTpyEntries();
+        int shown=0;
+        for(var entry:entries) {
+            if(entry.state()!=AutoTpyQueue.State.Queued && entry.state()!=AutoTpyQueue.State.AwaitingReply && entry.state()!=AutoTpyQueue.State.RetryWaiting) continue;
+            if(shown++>=64) break;
+            menuRow(entry.player()+(entry.friend()?" · Friend":""),entry.state()+" · attempt "+entry.attempts(),
+                entry.reason()+". Click to cancel this request.",shown==1,false,false,() -> tools.cancelAutoTpy(entry.player()));
+        }
+        if(stats.live()>64) emptyRow("Showing the first 64 live requests",stats.live()+" requests remain tracked in the buffer.");
+        cursor += PAD;
+        caption(autoBlocklistEditing?"Blocklist":"Whitelist",null,autoBlocklistEditing?"Whitelist":"Blocklist","Switch the list being edited",() -> {
+            autoBlocklistEditing=!autoBlocklistEditing;autoImportRevision++;autoListField.setValue("");scroll=0;
+        });
+        String typed=autoListField.getValue().strip();
+        var selected=autoBlocklistEditing?tools.autoTpyBlocklist():tools.autoTpyWhitelist();
+        var actions=new Actions(cx+cw,cursor).add("Add","Add typed usernames",Tone.Primary,
+            !ChatClan.typed(typed).names().isEmpty(),this::addAutoTpyNames);
+        if(!autoBlocklistEditing) actions.add("Import CSV",autoImportBusy?"Import in progress":"Append names from CSV; dropping files also works",
+            Tone.Secondary,!autoImportBusy,() -> importAutoTpy(null));
+        search(autoListField,delta,cx,cursor,Math.max(24,actions.left()-GAP-cx));cursor+=CONTROL+PAD;
+        var matches=selected.stream().filter(n -> n.toLowerCase(Locale.ROOT).contains(typed.toLowerCase(Locale.ROOT))).limit(100).toList();
+        if(matches.isEmpty()) emptyRow(selected.isEmpty()?"This list is empty":"No matching names","Type usernames to add. Click an existing name to remove it.");
+        for(int i=0;i<matches.size();i++) {
+            String name=matches.get(i);
+            menuRow(name,"Remove", "Remove "+name+" from this list",i==0,i==matches.size()-1,false,() -> {
+                if(autoBlocklistEditing) tools.setAutoTpyBlocklist(ChatClan.remove(tools.autoTpyBlocklist(),name));
+                else tools.setAutoTpyWhitelist(ChatClan.remove(tools.autoTpyWhitelist(),name));
+                autoImportRevision++;
+            });
+        }
+        if(selected.size()>100) emptyRow(selected.size()+" names saved","Search to find names beyond the first 100 matches.");
+    }
+
+    private void addAutoTpyNames() {
+        var typed=ChatClan.typed(autoListField.getValue());
+        var old=autoBlocklistEditing?tools.autoTpyBlocklist():tools.autoTpyWhitelist();
+        var updated=ChatClan.add(old,typed.names());
+        if(autoBlocklistEditing) tools.setAutoTpyBlocklist(updated);else tools.setAutoTpyWhitelist(updated);
+        autoImportRevision++;autoListField.setValue("");focus(autoListField);
+        notice("Added "+(updated.size()-old.size())+" names; skipped "+typed.invalid()+" invalid names.");
+    }
+
+    /** The ticket prevents a late picker/worker callback from overwriting list edits or another server's UI. */
+    private void importAutoTpy(List<Path> paths) {
+        if(autoImportBusy||autoBlocklistEditing) return;
+        autoImportBusy=true;
+        var client=Minecraft.getInstance();
+        var ticket=new AutoTpyWhitelistImport.Ticket(++autoImportRevision,tools.autoTpySessionKey(),tools.autoTpyWhitelist());
+        Set<String> blocked=Set.copyOf(tools.autoTpyBlocklist());
+        Thread worker=new Thread(() -> {
+            AutoTpyWhitelistImport.Result result=null;
+            String error=null;
+            try {
+                var chosen=paths==null?AutoTpyFiles.choose():List.copyOf(paths);
+                if(!chosen.isEmpty()) result=AutoTpyWhitelistImport.parse(ticket.original(),blocked,AutoTpyFiles.read(chosen));
+            } catch(IOException|RuntimeException|LinkageError e) {
+                error=e.getMessage()==null?"Could not import the whitelist file.":e.getMessage();
+            }
+            var imported=result;String problem=error;
+            client.execute(() -> {
+                autoImportBusy=false;
+                if(client.gui.screen()!=this||page!=Page.AutoTpy||autoBlocklistEditing) return;
+                if(!ticket.canApply(autoImportRevision,tools.autoTpySessionKey(),tools.autoTpyWhitelist())) {
+                    notice("Import discarded because the list, page or session changed.");return;
+                }
+                if(problem!=null) {notice(problem);return;}
+                if(imported==null) return;
+                tools.setAutoTpyWhitelist(imported.merged());
+                long overlaps=imported.merged().stream().filter(n->ChatClan.contains(tools.autoTpyBlocklist(),n)).count();
+                notice("Whitelist: added "+imported.added()+", "+imported.duplicates()+" duplicates, "+imported.invalid()+" invalid; "+overlaps+" saved names remain blocked.");
+            });
+        },"Comet Auto TPY whitelist import");
+        worker.setDaemon(true);worker.start();
     }
 
     private void homes() {
@@ -1004,6 +1106,7 @@ public final class ChatToolsScreen extends Screen {
     private void focus(EditBox box) {
         input.setFocused(box == input); homeSearch.setFocused(box == homeSearch); playerSearch.setFocused(box == playerSearch);
         clanField.setFocused(box == clanField);
+        autoListField.setFocused(box == autoListField);
     }
     @Override public boolean mouseClicked(MouseButtonEvent event, boolean doubled) {
         if (event.button() != 0) return true;
@@ -1042,7 +1145,8 @@ public final class ChatToolsScreen extends Screen {
         }
         if (event.key() == GLFW.GLFW_KEY_TAB) { focus(input.isFocused() && visibleSearch != null ? visibleSearch : input); return true; }
         if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
-            if (visibleSearch == clanField && clanField.isFocused()) addTyped();
+            if (visibleSearch == autoListField && autoListField.isFocused()) addAutoTpyNames();
+            else if (visibleSearch == clanField && clanField.isFocused()) addTyped();
             else if (visibleSearch != null && visibleSearch.isFocused()) findPlayer(visibleSearch.getValue());
             else sendInput();
             return true;
@@ -1054,9 +1158,12 @@ public final class ChatToolsScreen extends Screen {
         if (input.isFocused()) return input.charTyped(event);
         return visibleSearch != null && visibleSearch.isFocused() && visibleSearch.charTyped(event);
     }
-    @Override public void onFilesDrop(List<Path> files) { importFiles(files); }
+    @Override public void onFilesDrop(List<Path> files) {
+        if(page==Page.AutoTpy) { if(autoBlocklistEditing) notice("Switch to Whitelist to import CSV.");else importAutoTpy(files); }
+        else importFiles(files);
+    }
     @Override public void tick() { if (!tools.isActive() || Minecraft.getInstance().getConnection() == null) Minecraft.getInstance().gui.setScreen(null); }
-    @Override public void removed() { saveDraft(); dragging = resizing = false; if (input != null) focus(null); }
+    @Override public void removed() { autoImportRevision++;saveDraft(); dragging = resizing = false; if (input != null) focus(null); }
     @Override public void onClose() { Minecraft.getInstance().gui.setScreen(Minecraft.getInstance().level == null ? null : parent); }
     @Override public boolean isPauseScreen() { return false; }
 }

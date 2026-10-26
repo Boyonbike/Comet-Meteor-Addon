@@ -2,6 +2,7 @@ package dev.tntcoating.hud;
 
 import dev.tntcoating.core.ChatTeleportState;
 import dev.tntcoating.modules.HighwayFly;
+import dev.tntcoating.modules.AutoSetHome;
 import java.util.ArrayList;
 import java.util.List;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
@@ -12,7 +13,7 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 /** The next auto-set-home attempt, its timing mode and the server cooldown the helper is tracking. */
 public final class AutoSetHomeHud extends HudElement {
     public static final HudElementInfo<AutoSetHomeHud> INFO = new HudElementInfo<>(CometHud.GROUP,
-        "auto-set-home-timer", "Highway Fly auto set home: timing mode, next attempt and server cooldown.",
+        "auto-set-home-timer", "Auto Set Home: timing mode, next attempt and server cooldown.",
         AutoSetHomeHud::new);
 
     private final MeteorTextStyle style = new MeteorTextStyle(settings);
@@ -23,8 +24,8 @@ public final class AutoSetHomeHud extends HudElement {
 
     @Override
     public void render(HudRenderer renderer) {
-        HighwayFly fly = Modules.get().get(HighwayFly.class);
-        HighwayFly.AutoSetHomeStatus status = fly == null ? null : fly.autoSetHomeStatus();
+        AutoSetHome fly = Modules.get().get(AutoSetHome.class);
+        HighwayFly.AutoSetHomeStatus status = fly == null ? null : fly.status();
         List<String> lines = status == null ? editorLines() : lines(status);
         if (lines.isEmpty()) setSize(0, 0);
         else style.render(this, renderer, "Auto set home", lines);

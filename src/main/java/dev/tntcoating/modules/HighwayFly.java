@@ -12,7 +12,6 @@ import dev.tntcoating.core.AdaptiveFlightController.Motion;
 import dev.tntcoating.core.AdaptiveFlightEngine;
 import dev.tntcoating.core.AltitudeHold;
 import dev.tntcoating.core.BaritoneFlight;
-import dev.tntcoating.core.ChatSender;
 import dev.tntcoating.core.ElytraReplacement;
 import dev.tntcoating.core.ElytraTakeoff;
 import dev.tntcoating.core.FlightCorridor;
@@ -40,25 +39,15 @@ import dev.tntcoating.core.TemporaryModulePause;
 import dev.tntcoating.core.TripEventLog;
 import dev.tntcoating.core.dashboard.HighwayTelemetry;
 import dev.tntcoating.core.HighwayProbeCache;
-import dev.tntcoating.core.HomeOverride;
-import dev.tntcoating.core.LobbyLogin;
-import dev.tntcoating.core.LobbyPortalFinder;
-import dev.tntcoating.core.LobbyRecoveryStore;
-import dev.tntcoating.core.PortalGuard;
 import dev.tntcoating.core.PortalLookahead;
 import dev.tntcoating.core.ServerGlide;
 import dev.tntcoating.core.SetHomeScheduler;
-import dev.tntcoating.core.SetHomeStore;
-import dev.tntcoating.core.ChatHomeNames;
-import dev.tntcoating.core.SetHomePacer;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.HashMap;
 import java.util.Map;
-import java.nio.file.Files;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -69,15 +58,12 @@ import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
-import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.world.ServerConnectBeginEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.mixininterface.IVec3;
-import meteordevelopment.meteorclient.pathing.NopPathManager;
-import meteordevelopment.meteorclient.pathing.PathManagers;
 import meteordevelopment.meteorclient.settings.BlockPosSetting;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
@@ -103,18 +89,10 @@ import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
-import net.minecraft.client.gui.components.AbstractButton;
-import net.minecraft.client.gui.components.AbstractWidget;
-import net.minecraft.client.gui.components.events.GuiEventListener;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
-import net.minecraft.client.gui.screens.dialog.DialogScreen;
-import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.Connection;
@@ -126,12 +104,10 @@ import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerCombatKillPacket;
 import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
 import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
-import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
-import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
@@ -141,18 +117,13 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.EnchantmentEffectComponents;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.NetherPortalBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
@@ -212,22 +183,24 @@ public final class HighwayFly extends Module {
 
     // Keep group creation in the order people configure a trip; saved names migrate before loading.
     private final SettingGroup general = settings.createGroup("Route", false);
-    private final SettingGroup altitude = settings.createGroup("Altitude", false);
-    private final SettingGroup flight = settings.createGroup("Flight", false);
-    private final SettingGroup camera = settings.createGroup("Camera", false);
-    private final SettingGroup detour = settings.createGroup("Pathfinding & Detours", false);
-    private final SettingGroup walking = settings.createGroup("Baritone Recovery", false);
-    private final SettingGroup elytra = settings.createGroup("Elytra & Durability", false);
-    private final SettingGroup safety = settings.createGroup("Safety & Lava", false);
-    private final SettingGroup portals = settings.createGroup("Portals", false);
-    private final SettingGroup homeGroup = settings.createGroup("Auto Set Home", false);
-    private final SettingGroup lobbyGroup = settings.createGroup("Lobby Recovery", false);
-    private final SettingGroup compatibility = settings.createGroup("Module Compatibility", false);
-    private final SettingGroup webhookGroup = settings.createGroup("Webhook", false);
-    private final SettingGroup webhookEvents = settings.createGroup("Webhook Events", false);
-    private final SettingGroup webhookTiming = settings.createGroup("Webhook Timing", false);
+    private final SettingGroup flight = settings.createGroup("Flight & Altitude", false);
+    private final SettingGroup altitude = flight;
+    private final SettingGroup detour = settings.createGroup("Navigation & Recovery", false);
+    private final SettingGroup walking = detour;
+    private final SettingGroup portals = detour;
+    private final SettingGroup elytra = settings.createGroup("Elytra & Safety", false);
+    private final SettingGroup safety = elytra;
+    private final SettingGroup integrations = settings.createGroup("Integrations", false);
+    private final SettingGroup homeGroup = integrations;
+    private final SettingGroup lobbyGroup = integrations;
+    private final SettingGroup camera = settings.createGroup("Camera & Controls", false);
+    private final SettingGroup compatibility = camera;
+    final SettingGroup dashboardGroup = settings.createGroup("Dashboard", false);
+    private final SettingGroup webhookGroup = settings.createGroup("Webhooks", false);
+    private final SettingGroup webhookEvents = webhookGroup;
+    private final SettingGroup webhookTiming = webhookGroup;
     private final SettingGroup diagnostics = settings.createGroup("Diagnostics", false);
-    private final Setting<BlockPos> destination = general.add(new BlockPosSetting.Builder()
+    final Setting<BlockPos> destination = general.add(new BlockPosSetting.Builder()
         .name("destination")
         .description("The block to fly to. Its Y is ignored for the line; target-y sets the altitude.")
         .defaultValue(new BlockPos(0, 120, 1000))
@@ -252,12 +225,12 @@ public final class HighwayFly extends Module {
         .description("Ignore mouse look while the elytra is flying, so the controller owns the camera. Mouse buttons, scroll and GUI mouse use still work.")
         .defaultValue(true)
         .build());
-    private final Setting<Boolean> lockAltitude = altitude.add(new BoolSetting.Builder()
+    final Setting<Boolean> lockAltitude = altitude.add(new BoolSetting.Builder()
         .name("lock-altitude")
         .description("Hold target-y instead of following the destination block's Y.")
         .defaultValue(true)
         .build());
-    private final Setting<Integer> targetY = altitude.add(new IntSetting.Builder()
+    final Setting<Integer> targetY = altitude.add(new IntSetting.Builder()
         .name("target-y")
         .description("Preferred flight altitude. The controller holds this Y unless a detour needs another one.")
         .defaultValue(120).min(0).max(255).sliderRange(5, 125)
@@ -540,36 +513,27 @@ public final class HighwayFly extends Module {
     private boolean safetyDisconnect;
     private boolean leavingWorld;
     private HighwayWebhook.Context lastWebhookContext;
-    private boolean profileLoading;
-    private boolean durableTripAvailable;
-    private BlockPos tripDestination;
-    private int tripTargetY;
+    boolean profileLoading;
+    private boolean stoppingTrip;
+    private boolean resumingRecovery;
+    boolean durableTripAvailable;
+    BlockPos tripDestination;
+    int tripTargetY;
     private long connectedSince;
     private long tripStartedAtNanos;
     private long activeStartedAtNanos;
     private long activeNanos;
 
-
-    private final HighwayFlySession session = new HighwayFlySession();
+    final HighwayFlySession session = new HighwayFlySession();
     private final Setting<Boolean> lobbyRecovery = lobbyGroup.add(new BoolSetting.Builder()
         .name("lobby-recovery").description("Resume this trip after reconnecting, entering a lobby portal when needed.")
         .defaultValue(true).onChanged(this::onLobbyRecoveryChanged).build());
-    private final Setting<Boolean> reconnect = lobbyGroup.add(new BoolSetting.Builder()
-        .name("auto-reconnect")
-        .description("Reconnect after an unexpected connection loss. Safety logouts stay disconnected; manually leaving does not open a reconnect screen.")
-        .defaultValue(true).visible(lobbyRecovery::get)
-        .onChanged(value -> { if (!value) releaseReconnect(); else prepareReconnectDelay(); }).build());
-    private final Setting<Double> reconnectDelay = lobbyGroup.add(new DoubleSetting.Builder()
-        .name("reconnect-delay").description("Seconds to wait before retrying an unexpectedly lost connection.")
-        .defaultValue(3.5).range(1, 300).sliderRange(1, 30)
-        .visible(() -> lobbyRecovery.get() && reconnect.get())
-        .onChanged(value -> prepareReconnectDelay()).build());
     private final Setting<Boolean> autoSetHome = homeGroup.add(new BoolSetting.Builder()
-        .name("auto-set-home").description("Update the configured home during the trip. The Auto Set Home group chooses detected-cooldown or fixed-timer scheduling.")
-        .defaultValue(true).build());
-    private final Setting<Boolean> antiPortal = portals.add(new BoolSetting.Builder()
+        .name("auto-set-home").description("Use Auto Set Home during this trip. Configure its timing and home in the independent module.")
+        .defaultValue(true).onChanged(value -> syncHelpers()).build());
+    private final Setting<Boolean> antiPortal = integrations.add(new BoolSetting.Builder()
         .name("anti-portal").description("Block portal travel during flight; allow the lobby recovery portal.")
-        .defaultValue(true).build());
+        .defaultValue(true).onChanged(value -> syncHelpers()).build());
     private final Setting<Boolean> webhook = webhookGroup.add(new BoolSetting.Builder()
         .name("webhook")
         .description("Post trip events to Discord. Set webhook-url, then enable this.")
@@ -585,7 +549,7 @@ public final class HighwayFly extends Module {
     private final Setting<Boolean> pauseOtherModules = compatibility.add(new BoolSetting.Builder()
         .name("pause-incompatible-modules")
         .description("Temporarily disable conflicting movement, packet and scaffold modules. Previously active modules are restored when Highway Fly stops.")
-        .defaultValue(true).build());
+        .defaultValue(true).onChanged(value -> syncHelpers()).build());
     private final Setting<Boolean> webhookTrip = webhookEvents.add(new BoolSetting.Builder()
         .name("trip-events").description("Flight start/resume, arrival and manual trip stops.")
         .defaultValue(true).visible(webhook::get).build());
@@ -614,14 +578,14 @@ public final class HighwayFly extends Module {
         .name("event-cooldown-seconds").description("Minimum seconds between repeats of the same event; 0 disables. Home replacements, death and safety logout are not delayed.")
         .defaultValue(30).range(0, 3600).sliderRange(0, 300)
         .visible(webhook::get).onChanged(value -> webhookPolicy.reset()).build());
-    private final HomeAutomation homeAutomation = new HomeAutomation();
-    private final PortalProtection portalProtection = new PortalProtection();
-    private final LobbyRecovery lobby = new LobbyRecovery();
     private boolean reconnectLeased;
     private boolean reconnectWasEnabled;
     private double reconnectPreviousDelay;
 
     @Override public void onActivate() {
+        stoppingTrip = false;
+        if (profileLoading) return;
+        syncHelpers();
         cancelPendingModuleRestore();
         leavingWorld = false;
         safetyDisconnect = false;
@@ -633,13 +597,12 @@ public final class HighwayFly extends Module {
         deathPending.set(false);
         healthUpdates.reset(mc.player == null ? 20 : mc.player.getHealth());
         if (!ensureCompatibleModules()) return;
-        if (lobbyRecovery.get() && lobby.resumePending()) {
-            prepareReconnectDelay();
+        if (resumingRecovery) {
+            startFlight(true);
             return;
         }
-        if (profileLoading) {
-            warning("No saved trip identity; enable Highway Fly in the intended world to start a new trip.");
-            disable();
+        if (lobbyEnabled() && lobby().resumePending()) {
+            prepareReconnectDelay();
             return;
         }
         session.stop();
@@ -647,6 +610,7 @@ public final class HighwayFly extends Module {
     }
 
     @Override public void onDeactivate() {
+        stoppingTrip = true;
         if (!profileLoading && (session.flying() || session.recovering())) {
             notifyWebhook(HighwayWebhook.Event.STOPPED,"Highway Fly was turned off; the trip has ended.",routeFields());
         }
@@ -658,10 +622,9 @@ public final class HighwayFly extends Module {
         session.stop();
         releaseReconnect();
         pauseFlight();
-        homeAutomation.onDeactivate();
-        portalProtection.onDeactivate();
-        if (profileLoading) lobby.stopWalking();
-        else lobby.cancelRecovery();
+        if (profileLoading) lobby().stopWalking();
+        else lobby().cancelRecovery();
+        syncHelpers();
         restorePausedModulesWhenSafe();
     }
 
@@ -692,7 +655,7 @@ public final class HighwayFly extends Module {
     }
 
     /** The destination and remaining distance, for events that belong to a route. */
-    private List<HighwayWebhook.Field> routeFields() {
+    List<HighwayWebhook.Field> routeFields() {
         if (course == null) {
             return tripDestination == null ? List.of() : List.of(new HighwayWebhook.Field("🎯 Destination",
                 tripDestination.getX() + " " + tripDestination.getZ(), true, true));
@@ -705,11 +668,11 @@ public final class HighwayFly extends Module {
             new HighwayWebhook.Field("📏 Remaining", remaining + " blocks", true));
     }
 
-    private void notifyWebhook(HighwayWebhook.Event event, String description, HighwayWebhook.Field... fields) {
+    void notifyWebhook(HighwayWebhook.Event event, String description, HighwayWebhook.Field... fields) {
         notifyWebhook(event, description, List.of(fields));
     }
 
-    private void notifyWebhook(HighwayWebhook.Event event, String description, List<HighwayWebhook.Field> fields) {
+    void notifyWebhook(HighwayWebhook.Event event, String description, List<HighwayWebhook.Field> fields) {
         TripEventLog.INSTANCE.record(event, description);
         if ((event == HighwayWebhook.Event.STOPPED || event == HighwayWebhook.Event.FINISHED
             || event == HighwayWebhook.Event.SAFETY_LOGOUT) && !webhookLifecycle.terminal()) return;
@@ -729,6 +692,10 @@ public final class HighwayFly extends Module {
 
     /** Called only for Minecraft's disconnect, not a live configuration/world transfer. */
     public void onClientDisconnect(boolean transferring, boolean unexpected) {
+        if (!isActive()) {
+            if (lobby().isActive()) lobby().onClientDisconnect(transferring, unexpected);
+            return;
+        }
         if (isActive() && !transferring) leavingWorld = true;
         if (!isActive() || !session.flying() && !session.recovering()) return;
         HighwayWebhookLifecycle.Disconnect kind = webhookLifecycle.disconnected(transferring,unexpected);
@@ -736,26 +703,24 @@ public final class HighwayFly extends Module {
         String reason = kind == HighwayWebhookLifecycle.Disconnect.MANUAL
             ? "Left the server manually. Auto-reconnect will not start."
             : "Connection lost.";
-        reason += lobbyRecovery.get() ? " The trip is paused until the next join." : " The trip has stopped.";
-        if (kind == HighwayWebhookLifecycle.Disconnect.UNEXPECTED && lobbyRecovery.get() && reconnect.get()) {
+        reason += lobbyEnabled() ? " The trip is paused until the next join." : " The trip has stopped.";
+        if (kind == HighwayWebhookLifecycle.Disconnect.UNEXPECTED && lobbyEnabled() && lobby().reconnect.get()) {
             reason += " Auto-reconnect is preparing another attempt.";
         }
         notifyWebhook(HighwayWebhook.Event.DISCONNECTED,reason,routeFields());
-        if (!lobbyRecovery.get()) webhookLifecycle.terminal();
+        if (!lobbyEnabled()) webhookLifecycle.terminal();
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     private void onGameLeft(GameLeftEvent event) {
         if (!isActive()) return;
         boolean hadTrip = session.flying() || session.recovering();
-        if (session.disconnected(lobbyRecovery.get())) {
+        if (session.disconnected(lobbyEnabled())) {
             reconnectBackoff.failed();
             pauseRuntime();
-            lobby.pauseForDisconnect();
+            lobby().pauseForDisconnect();
             armReconnect();
             pauseFlight();
-            homeAutomation.onDeactivate();
-            portalProtection.onDeactivate();
         } else {
             if (hadTrip) notifyWebhook(HighwayWebhook.Event.STOPPED,
                 "Left the world; the trip ended because lobby recovery is off.",routeFields());
@@ -773,12 +738,12 @@ public final class HighwayFly extends Module {
         deathNotified = false;
         releaseReconnect();
         connectedSince = System.nanoTime();
-        if (session.recovering() && !lobbyRecovery.get()) {
+        if (session.recovering() && !lobbyEnabled()) {
             disable();
             return;
         }
         if (session.flying() && !java.util.Objects.equals(session.dimension(), dimensionId())) {
-            if (!session.disconnected(lobbyRecovery.get())) {
+            if (!session.disconnected(lobbyEnabled())) {
                 notifyWebhook(HighwayWebhook.Event.DIMENSION,
                     "The server moved you from " + dimensionName(session.dimension()) + " to "
                         + dimensionName(dimensionId()) + "; Highway Fly stopped.");
@@ -788,7 +753,7 @@ public final class HighwayFly extends Module {
             pauseRuntime();
             pauseFlight();
         }
-        if (lobbyRecovery.get() && lobby.resumePending()) {
+        if (lobbyEnabled() && lobby().resumePending()) {
             prepareReconnectDelay();
             return;
         }
@@ -796,14 +761,9 @@ public final class HighwayFly extends Module {
     }
 
     @EventHandler
-    private void onReceiveMessage(ReceiveMessageEvent event) {
-        if (!isActive() || !lobbyRecovery.get() || !session.recovering()) return;
-        lobby.onMessage(event.getMessage().getString());
-    }
-
-    @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (!isActive() || mc.player == null || mc.level == null || !Utils.canUpdate()) return;
+        if (!isActive() || profileLoading || mc.player == null || mc.level == null || !Utils.canUpdate()) return;
+        syncHelpers();
         if (!ensureCompatibleModules()) return;
         boolean tripWorld = session.flying() || session.recoveryAllowed(serverAddress());
         if (reconnectBackoff.failures() > 0 && connectedSince != 0
@@ -835,40 +795,28 @@ public final class HighwayFly extends Module {
         }
         if (session.recovering()) {
             pauseRuntime();
-            homeAutomation.onDeactivate();
-            portalProtection.onDeactivate();
-            if (!lobbyRecovery.get()) {
+            if (!lobbyEnabled()) {
                 disable();
                 return;
             }
             if (session.recoveryAllowed(serverAddress())) {
                 equipRecoveryChestplate();
-                lobby.onTick(event);
             }
             return;
         }
         if (!session.flying()) {
-            if (lobby.waitingForTripRecord && mc.player.tickCount % 100 == 0) lobby.resumePending();
+            if (lobby().waitingForTripRecord && mc.player.tickCount % 100 == 0) lobby().resumePending();
             return;
         }
         tickFlight(event);
         if (!isActive()) return;
-        if (session.setHomeAllowed(autoSetHome.get(), dimensionId(), serverAddress())) {
-            homeAutomation.onTick(event);
-        } else homeAutomation.onDeactivate();
-    }
-
-    @EventHandler
-    private void onSend(PacketEvent.Send event) {
-        if (!isActive()) return;
-        if (session.portalProtectionAllowed(antiPortal.get())) portalProtection.onSend(event);
-        else portalProtection.onDeactivate();
     }
 
     private void onLobbyRecoveryChanged(boolean enabled) {
-        if (!enabled) {
+        syncHelpers();
+        if (!lobbyEnabled()) {
             releaseReconnect();
-            if (isActive() && session.recovering()) disable();
+            if (isActive() && !stoppingTrip && session.recovering()) disable();
         } else prepareReconnectDelay();
     }
 
@@ -1020,8 +968,8 @@ public final class HighwayFly extends Module {
     }
 
     /** The disconnect screen captures its timer before GameLeft, so prepare the delay during the trip. */
-    private void prepareReconnectDelay() {
-        if (profileLoading || !isActive() || !lobbyRecovery.get() || !reconnect.get() || session.server() == null
+    void prepareReconnectDelay() {
+        if (profileLoading || !lobby().isActive() || !lobby().reconnect.get() || session.server() == null
             || !session.flying() && !session.recoveryAllowed(serverAddress())) return;
         AutoReconnect module = Modules.get().get(AutoReconnect.class);
         if (module == null) return;
@@ -1030,40 +978,39 @@ public final class HighwayFly extends Module {
             reconnectPreviousDelay = module.time.get();
             reconnectLeased = true;
         }
-        module.time.set(reconnectBackoff.delay(reconnectDelay.get(), ThreadLocalRandom.current().nextDouble()));
+        module.time.set(reconnectBackoff.delay(lobby().reconnectDelay.get(), ThreadLocalRandom.current().nextDouble()));
     }
 
     /** Enable the prepared reconnect screen only when this trip can be recovered on that server. */
-    private void armReconnect() {
+    void armReconnect() {
         if (!reconnectLeased) return;
         AutoReconnect module = Modules.get().get(AutoReconnect.class);
         if (module == null || module.lastServerConnection == null || module.lastServerConnection.right() == null
-            || !session.reconnectAllowed(reconnect.get(), module.lastServerConnection.right().ip)) return;
+            || !session.reconnectAllowed(lobby().reconnect.get(), module.lastServerConnection.right().ip)) return;
         module.enable();
-        module.time.set(reconnectBackoff.delay(reconnectDelay.get(), ThreadLocalRandom.current().nextDouble()));
+        module.time.set(reconnectBackoff.delay(lobby().reconnectDelay.get(), ThreadLocalRandom.current().nextDouble()));
     }
 
     @EventHandler
-    private void onServerConnect(ServerConnectBeginEvent event) {
-        if (!isActive()) return;
+    void onServerConnect(ServerConnectBeginEvent event) {
+        if (!isActive() && !lobby().isActive()) return;
         if (event.info == null || !session.recoveryAllowed(event.info.ip)) releaseReconnect();
         else if (reconnectLeased) {
             reconnectBackoff.failed();
             AutoReconnect module = Modules.get().get(AutoReconnect.class);
-            module.time.set(reconnectBackoff.delay(reconnectDelay.get(), ThreadLocalRandom.current().nextDouble()));
+            module.time.set(reconnectBackoff.delay(lobby().reconnectDelay.get(), ThreadLocalRandom.current().nextDouble()));
         }
     }
 
     @EventHandler
-    private void onOpenScreen(OpenScreenEvent event) {
-        homeAutomation.onScreen(event.screen);
+    void onOpenScreen(OpenScreenEvent event) {
         // A manual Disconnect or leaving the retry screen must not leave our global reconnect enabled.
         if (session.recovering() && (event.screen instanceof TitleScreen
             || event.screen instanceof JoinMultiplayerScreen)) releaseReconnect();
     }
 
     /** Restore the user's preference when the join finishes, the trip stops, or the helper is disabled. */
-    private void releaseReconnect() {
+    void releaseReconnect() {
         if (!reconnectLeased) return;
         reconnectLeased = false;
         AutoReconnect module = Modules.get().get(AutoReconnect.class);
@@ -1081,15 +1028,42 @@ public final class HighwayFly extends Module {
             if (!(entry instanceof CompoundTag module)) continue;
             String savedName = module.getStringOr("name", "");
             if (pausedModules.snapshot().stream().anyMatch(paused -> paused.name.equals(savedName))) module.putBoolean("active", true);
-            if (savedName.equals(name) && (!durableTripAvailable || !lobbyRecovery.get())) module.putBoolean("active", false);
+            if (savedName.equals(name) && (!durableTripAvailable || !lobbyEnabled())) module.putBoolean("active", false);
         }
     }
 
-    public void beginProfileLoad() { profileLoading = true; }
+    public void beginProfileLoad() {
+        profileLoading = true;
+        releaseReconnect();
+        if (isActive()) pauseFlight();
+        session.stop();
+        lobby().resetRecovery();
+        syncHelpers();
+        homes().beginProfileLoad();
+        portalGuard().beginProfileLoad();
+        lobby().beginProfileLoad();
+    }
     public void endProfileLoad() {
         profileLoading = false;
-        if (isActive()) ensureCompatibleModules();
+        homes().endProfileLoad();
+        portalGuard().endProfileLoad();
+        lobby().endProfileLoad();
+        // Requests are temporary and absent from saved helper active flags.
+        syncHelpers();
+        if (isActive()) {
+            if (!lobbyEnabled() || !lobby().resumePending()) {
+                warning("No saved trip identity; enable Highway Fly in the intended world to start a new trip.");
+                // Still loading: disabling must not erase a recovery file from another server.
+                profileLoading = true;
+                disable();
+                profileLoading = false;
+            } else {
+                onActivate();
+            }
+        }
+        syncHelpers();
         prepareReconnectDelay();
+        dashboard.sync();
     }
 
     /** Current setting locations let old profiles follow settings moved between sections. */
@@ -1103,6 +1077,7 @@ public final class HighwayFly extends Module {
         super(TntCoatingAddon.CATEGORY, "highway-fly",
             "Highway elytra flight with lobby recovery, automatic homes and portal protection.");
         runInMainMenu = true;
+        MeteorClient.EVENT_BUS.subscribe(dashboard);
     }
 
     /** True while the autopilot should handle mouse look. */
@@ -1141,6 +1116,13 @@ public final class HighwayFly extends Module {
     @Override
     public WWidget getWidget(GuiTheme theme) {
         var list = theme.verticalList();
+        for (Class<? extends HighwayHelper> type : List.of(AntiPortal.class, AutoSetHome.class, AutoLobby.class)) {
+            HighwayHelper helper = Modules.get().get(type);
+            list.add(theme.label(helper.title + ": " + helper.activationLabel()));
+            list.add(theme.button("Open " + helper.title + " settings")).widget().action =
+                () -> mc.gui.setScreen(theme.moduleScreen(helper));
+        }
+        list.add(dashboard.getWidget(theme));
         list.add(theme.button("Send test webhook")).widget().action = this::sendTestWebhook;
         list.add(theme.label("Posts one test message with the URL above; trip events are unchanged."))
             .widget().color = theme.textSecondaryColor();
@@ -1175,7 +1157,7 @@ public final class HighwayFly extends Module {
 
         if (session.recovering()) {
             boolean allowed = session.recoveryAllowed(serverAddress());
-            String lobbyState = lobby.getInfoString();
+            String lobbyState = lobby().getInfoString();
             String action = allowed ? (lobbyState == null ? "Waiting in the lobby" : lobbyState)
                 : "Waiting to reconnect";
             return new TripStatus(allowed ? "Lobby recovery" : "Waiting for server", action,
@@ -1257,13 +1239,13 @@ public final class HighwayFly extends Module {
 
     /** Shared home status remains available while paused or disconnected. */
     public AutoSetHomeStatus autoSetHomeStatus() {
-        return homeAutomation.status();
+        return homes().status();
     }
 
     @Override
     public String getInfoString() {
         if (session.recovering() && !session.recoveryAllowed(serverAddress())) return "Waiting for server";
-        if (session.recovering()) return lobby.getInfoString();
+        if (session.recovering()) return lobby().getInfoString();
         if (course == null || mc.player == null || state == null) return null;
         return switch (state) {
             case TAKING_OFF -> "Taking off";
@@ -1281,7 +1263,7 @@ public final class HighwayFly extends Module {
 
     /** Immutable telemetry for the local dashboard. Read-only; safe to call every few ticks on the game thread. */
     public HighwayTelemetry dashboardTelemetry() {
-        if (mc.player == null) return HighwayTelemetry.idle(homeAutomation.telemetry());
+        if (mc.player == null) return HighwayTelemetry.idle(homes().telemetry());
         ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
         int remainingDurability = elytraRemaining(chest);
         // Main storage excludes armour and offhand; add both explicitly so worn wings count once.
@@ -1295,7 +1277,7 @@ public final class HighwayFly extends Module {
         HighwayTelemetry.Elytra elytra = new HighwayTelemetry.Elytra(usableElytra(chest),
             remainingDurability < 0 || remainingDurability == Integer.MAX_VALUE ? null : remainingDurability,
             minDurability.get(), ElytraReplacement.countUsable(durability, minDurability.get()));
-        if (!isActive()) return HighwayTelemetry.idle(homeAutomation.telemetry(), elytra);
+        if (!isActive()) return HighwayTelemetry.idle(homes().telemetry(), elytra);
         TripStatus status = tripStatus();
         HighwayTelemetry.Route route = null;
         HighwayTelemetry.Altitude altitude;
@@ -1318,7 +1300,7 @@ public final class HighwayFly extends Module {
                 round(lockAltitude.get() ? targetY.get() : destination.get().getY()), null, null, altitudeBlocked);
         }
 
-        HighwayTelemetry.Home home = homeAutomation.telemetry();
+        HighwayTelemetry.Home home = homes().telemetry();
         List<Vec3> sourcePath = path == null ? List.of() : path;
         int firstPoint = Math.max(0, sourcePath.size() - DASHBOARD_PATH_LIMIT);
         List<HighwayTelemetry.Point> renderedPath = new ArrayList<>(sourcePath.size() - firstPoint);
@@ -1343,7 +1325,7 @@ public final class HighwayFly extends Module {
             serverAddress(),
             session.recovering(),
             session.recoveryAllowed(serverAddress()),
-            lobby.getInfoString(),
+            lobby().getInfoString(),
             home,
             route,
             altitude,
@@ -1371,11 +1353,11 @@ public final class HighwayFly extends Module {
         return Math.round(scaled) / 1000.0;
     }
 
-    private void startFlight() {
+    void startFlight() {
         startFlight(false);
     }
 
-    private void startFlight(boolean resuming) {
+    void startFlight(boolean resuming) {
         PendingSwapBack.cancel();
         reset();
         if (mc.player == null || mc.level == null) {
@@ -1468,10 +1450,8 @@ public final class HighwayFly extends Module {
         tripDestination = target.immutable();
         tripTargetY = (int) Math.round(desiredY);
         connectedSince = System.nanoTime();
-        if (lobbyRecovery.get()) lobby.saveRecovery();
+        if (lobbyEnabled()) lobby().saveRecovery();
         prepareReconnectDelay();
-        homeAutomation.onActivate();
-        portalProtection.onActivate();
         info("Flying %d blocks to %d, %d.", (int) course.length(), target.getX(), target.getZ());
         notifyWebhook(resuming ? HighwayWebhook.Event.RESUMED : HighwayWebhook.Event.STARTED,
             resuming
@@ -1503,8 +1483,6 @@ public final class HighwayFly extends Module {
             && (session.flying() || session.recoveryAllowed(serverAddress()))) deathPending.set(true);
         if (event.packet instanceof ClientboundSetHealthPacket health
             && session.healthTrackingAllowed(serverAddress())) healthUpdates.accept(health.getHealth());
-        homeAutomation.onReceive(event);
-        portalProtection.onReceive(event);
         if (event.packet instanceof ClientboundBlockUpdatePacket || event.packet instanceof ClientboundSectionBlocksUpdatePacket
             || event.packet instanceof ClientboundLevelChunkWithLightPacket || event.packet instanceof ClientboundForgetLevelChunkPacket
             || event.packet instanceof ClientboundRespawnPacket || event.packet instanceof ClientboundLoginPacket) {
@@ -2172,7 +2150,7 @@ public final class HighwayFly extends Module {
         }
     }
 
-    private boolean loaded(AABB box) {
+    boolean loaded(AABB box) {
         for (int x=Mth.floor(box.minX/16);x<=Mth.floor(Math.nextDown(box.maxX/16));x++) {
             for (int z=Mth.floor(box.minZ/16);z<=Mth.floor(Math.nextDown(box.maxZ/16));z++) {
                 if (!mc.level.hasChunk(x,z)) return false;
@@ -2504,7 +2482,7 @@ public final class HighwayFly extends Module {
     }
 
     /** Wear armour only after landing; the walking controller may then jump without demanding wings again. */
-    private void equipRecoveryChestplate() {
+    void equipRecoveryChestplate() {
         if (!swapElytra.get() || !swapBack.get() || mc.player == null || !mc.player.onGround()
             || mc.player.isFallFlying() || !canUseInventory()
             || dev.tntcoating.core.InventorySlotLoan.INSTANCE.isBorrowing()
@@ -2655,1166 +2633,42 @@ public final class HighwayFly extends Module {
         takeoff.reset(false);
     }
 
-    private final class HomeAutomation {
-        private final SettingGroup sgGeneral = homeGroup;
-        private SetHomeStore store;
-        private SetHomeScheduler scheduler;
-        private String account;
-        private String accountLabel;
-        private String homeServer;
-        private boolean storeWarning;
-        private boolean invalidHomeWarning;
-        private Connection connectionSession;
-        private Screen confirmationScreen;
+    private final HighwayDashboard dashboard = new HighwayDashboard(this);
+    AutoSetHome homes() { return Modules.get().get(AutoSetHome.class); }
+    AntiPortal portalGuard() { return Modules.get().get(AntiPortal.class); }
+    AutoLobby lobby() { return Modules.get().get(AutoLobby.class); }
 
-        private final Setting<String> home = sgGeneral.add(new StringSetting.Builder()
-            .name("home")
-            .description("The home name to move. It must already exist if the server asks to override it.")
-            .defaultValue("test")
-            .build());
+    private boolean lobbyEnabled() { return lobby().isActive(); }
 
-        private final Setting<HomeTiming> timing = sgGeneral.add(new EnumSetting.Builder<HomeTiming>()
-            .name("timing")
-            .description("Auto detect reads the server's sethome cooldown from chat. Fixed timer sends at a steady interval instead.")
-            .defaultValue(HomeTiming.AUTO)
-            .build());
-
-        private final Setting<Integer> intervalSeconds = sgGeneral.add(new IntSetting.Builder()
-            .name("interval-seconds")
-            .description("Fixed timer: real seconds between attempts, even during a server cooldown. Auto detect: discovery/fallback delay until the server cooldown is learned.")
-            .defaultValue(60)
-            .range(5, 3600)
-            .sliderRange(5, 300)
-            .build());
-
-        private final Setting<Integer> cooldownBufferSeconds = sgGeneral.add(new IntSetting.Builder()
-            .name("cooldown-buffer-seconds")
-            .description("Auto detect only: extra seconds to wait after the server's cooldown ends, so the next command is not sent on the exact boundary.")
-            .defaultValue((int) (SetHomePacer.DEFAULT_BUFFER_MILLIS / 1000))
-            .range(0, 120)
-            .sliderRange(0, 60)
-            .visible(() -> timing.get() == HomeTiming.AUTO)
-            .build());
-
-        private final Setting<Integer> retryDelaySeconds = sgGeneral.add(new IntSetting.Builder()
-            .name("retry-delay-seconds")
-            .description("Auto detect only: seconds to wait after the server refuses a command without a usable countdown (for example \"wait 0m 0sec\") before trying again.")
-            .defaultValue(60)
-            .range(0, 3600)
-            .sliderRange(0, 120)
-            .visible(() -> timing.get() == HomeTiming.AUTO)
-            .build());
-
-        private final Setting<Boolean> override = sgGeneral.add(new BoolSetting.Builder()
-            .name("override")
-            .description("Click Override when the server asks to replace the existing home.")
-            .defaultValue(true)
-            .build());
-
-        private final Setting<String> dialogMatch = sgGeneral.add(new StringSetting.Builder()
-            .name("dialog-match")
-            .description("Text that must appear in the confirmation dialog's title or body. Blank disables clicking.")
-            .defaultValue("home")
-            .visible(override::get)
-            .build());
-
-        private final Setting<String> buttonMatch = sgGeneral.add(new StringSetting.Builder()
-            .name("button-match")
-            .description("Text on the confirmation button to click. Cancel is left alone.")
-            .defaultValue("override")
-            .visible(override::get)
-            .build());
-
-        private final Setting<Integer> timeoutSeconds = sgGeneral.add(new IntSetting.Builder()
-            .name("timeout-seconds")
-            .description("How long to wait for the override dialog after sending the command.")
-            .defaultValue(10)
-            .range(1, 60)
-            .sliderRange(1, 30)
-            .visible(override::get)
-            .build());
-
-        public void onActivate() {
-            confirmationScreen = null;
-            if (scheduler != null) scheduler.cancel();
-        }
-
-        public void onDeactivate() {
-            confirmationScreen = null;
-            connectionSession = null;
-            if (scheduler != null) scheduler.cancel();
-        }
-
-        private void onTick(TickEvent.Pre event) {
-            if (mc.player == null || mc.level == null || mc.getConnection() == null) {
-                onDeactivate();
-                return;
-            }
-            checkSession();
-            scheduler.expire();
-            if (scheduler.waiting()) {
-                if (!home.get().strip().equals(scheduler.requestedHome())) {
-                    scheduler.cancel();
-                    confirmationScreen = null;
-                    return;
-                }
-                if (scheduler.waitingForDialog() && override.get() && tryOverride()) {
-                    scheduler.clicked(location());
-                    confirmationScreen = null;
-                }
-                return;
-            }
-            confirmationScreen = null;
-            if (mc.gui.screen() != null || !scheduler.ready(timing.get() == HomeTiming.FIXED, intervalMillis(), bufferMillis())) return;
-            String name = ChatHomeNames.valid(home.get());
-            if (name == null) {
-                if (!invalidHomeWarning) warning("Auto set home: choose a valid single home name.");
-                invalidHomeWarning = true;
-                return;
-            }
-            invalidHomeWarning = false;
-            // Record and persist before dispatch so even a crash after sending retains the attempt timestamp.
-            scheduler.sent(name, location(), override.get(), timeoutSeconds.get() * 1_000L);
-            save();
-            mc.getConnection().sendCommand(HomeOverride.command(name));
-        }
-
-        private void onReceive(PacketEvent.Receive event) {
-            if (!(event.packet instanceof ClientboundSystemChatPacket packet)) return;
-            mc.execute(() -> {
-                if (!isActive() || !session.setHomeAllowed(autoSetHome.get(), dimensionId(), serverAddress())
-                    || mc.player == null || mc.level == null || mc.getConnection() == null
-                    || event.connection != mc.getConnection().getConnection()) return;
-                checkSession();
-                String text = packet.content().getString();
-                if (ChatSender.fromPlayer(text, this::online)) return;
-                SetHomeScheduler.Reply reply = scheduler.message(text, retryMillis());
-                if (reply == SetHomeScheduler.Reply.IGNORED) return;
-                confirmationScreen = null;
-                save();
-                if (reply == SetHomeScheduler.Reply.SUCCESS) {
-                    SetHomeScheduler.Entry entry = scheduler.state().history().getFirst();
-                    List<HighwayWebhook.Field> fields = new ArrayList<>(routeFields());
-                    fields.add(new HighwayWebhook.Field("Home", entry.home(), true, true));
-                    fields.add(new HighwayWebhook.Field("Confirmed", java.time.Instant.ofEpochMilli(entry.confirmedAt()).toString(), true));
-                    fields.add(new HighwayWebhook.Field("Home position", entry.location().x() + ", " + entry.location().y() + ", " + entry.location().z(), true));
-                    fields.add(new HighwayWebhook.Field("Home dimension", entry.location().dimension(), true));
-                    fields.add(new HighwayWebhook.Field("Health", String.valueOf(mc.player.getHealth()), true));
-                    notifyWebhook(HighwayWebhook.Event.HOME_REPLACED, "Successfully replaced home " + entry.home() + ".", fields);
-                }
-            });
-        }
-
-        private void checkSession() {
-            if (store == null) {
-                store = new SetHomeStore(MeteorClient.FOLDER.toPath().resolve("auto-set-home-state.json"));
-                if (store.loadError() != null) warning("Auto set home: saved state could not be loaded; learning again.");
-            }
-            String currentAccount = mc.player == null ? mc.getUser().getProfileId().toString() : mc.player.getUUID().toString();
-            boolean connected = mc.player != null && mc.getConnection() != null;
-            String currentServer = connected ? SetHomeStore.normaliseServer(serverAddress())
-                : currentAccount.equals(account) ? homeServer : store.latestServer(currentAccount);
-            if (currentServer == null) {
-                scheduler = null;
-                account = null;
-                accountLabel = null;
-                homeServer = null;
-                connectionSession = null;
-                confirmationScreen = null;
-                return;
-            }
-            if (scheduler == null || !currentAccount.equals(account) || !currentServer.equals(homeServer)) {
-                account = currentAccount;
-                accountLabel = (mc.player == null ? mc.getUser().getName() : mc.player.getName().getString()) + " (" + account + ")";
-                homeServer = currentServer;
-                scheduler = new SetHomeScheduler(System::currentTimeMillis, store.load(account, homeServer));
-                confirmationScreen = null;
-            }
-            Connection current = connected ? mc.getConnection().getConnection() : null;
-            if (current != connectionSession) {
-                connectionSession = current;
-                scheduler.cancel();
-                confirmationScreen = null;
-            }
-        }
-
-        private void save() {
-            try {
-                store.save(account, homeServer, scheduler.state());
-                storeWarning = false;
-            } catch (IOException | RuntimeException e) {
-                if (!storeWarning) warning("Auto set home: saving failed; timing may be lost after restart.");
-                storeWarning = true;
-                MeteorClient.LOG.warn("Saving auto set home state failed", e);
-            }
-        }
-
-        private SetHomeScheduler.Location location() {
-            return new SetHomeScheduler.Location(mc.player.getX(), mc.player.getY(), mc.player.getZ(), dimensionId());
-        }
-
-        private boolean tryOverride() {
-            Screen screen = mc.gui.screen();
-            if (!(screen instanceof DialogScreen<?>) || screen != confirmationScreen) return false;
-
-            String phrase = dialogMatch.get();
-            String buttonPhrase = buttonMatch.get();
-            if (phrase.isBlank() || buttonPhrase.isBlank()) return false;
-
-            List<String> labels = new ArrayList<>();
-            for (GuiEventListener child : screen.children()) {
-                if (child instanceof AbstractWidget widget) labels.add(widget.getMessage().getString());
-            }
-            if (!HomeOverride.isHomeDialog(screen.getTitle().getString(), labels, phrase)) return false;
-
-            for (GuiEventListener child : screen.children()) {
-                if (child instanceof AbstractButton button
-                    && button.active && button.visible
-                    && HomeOverride.isOverrideButton(button.getMessage().getString(), buttonPhrase)) {
-                    button.onClick(new MouseButtonEvent(
-                        button.getX() + button.getWidth() / 2.0,
-                        button.getY() + button.getHeight() / 2.0,
-                        new MouseButtonInfo(0, 0)
-                    ), false);
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private void onScreen(Screen screen) {
-            if (scheduler != null && scheduler.waitingForDialog() && confirmationScreen == null && screen instanceof DialogScreen<?>) confirmationScreen = screen;
-        }
-
-        private long intervalMillis() {
-            return Math.max(1, intervalSeconds.get() * 1_000L);
-        }
-
-        private long bufferMillis() {
-            return Math.max(0, cooldownBufferSeconds.get() * 1_000L);
-        }
-
-        private long retryMillis() { return Math.max(0, retryDelaySeconds.get() * 1_000L); }
-
-        private AutoSetHomeStatus status() {
-            checkSession();
-            if (scheduler == null) return null;
-            boolean fixed = timing.get() == HomeTiming.FIXED;
-            SetHomeScheduler.Status schedule = scheduler.snapshot(fixed, intervalMillis(), bufferMillis());
-            boolean paused = !isActive() || mc.player == null || mc.level == null
-                || !session.setHomeAllowed(autoSetHome.get(), dimensionId(), serverAddress());
-            String label = schedule.cooldownMillis() > 0
-                ? dev.tntcoating.core.ChatTeleportState.remaining(schedule.cooldownMillis())
-                : schedule.bufferMillis() > 0 ? "Buffer " + dev.tntcoating.core.ChatTeleportState.remaining(schedule.bufferMillis()) : "";
-            return new AutoSetHomeStatus(timing.get().toString(), home.get().strip(), schedule.waiting(),
-                schedule.waitMillis(), intervalMillis(), fixed, label, scheduler.state().cooldownEnd() != 0,
-                schedule, paused, accountLabel, homeServer, scheduler.state().history());
-        }
-
-        private HighwayTelemetry.Home telemetry() {
-            AutoSetHomeStatus status = status();
-            return status == null ? null : new HighwayTelemetry.Home(status.mode(), status.home(), status.waiting(),
-                status.waitMillis(), status.intervalMillis(), status.fixedTimer(), status.cooldownLabel(),
-                status.cooldownKnown(), status.schedule(), status.paused(), status.account(), status.server(), status.history());
-        }
-
-        private boolean online(String name) {
-            return mc.getConnection() != null && mc.getConnection().getPlayerInfoIgnoreCase(name) != null;
-        }
-
+    /** Preserve the saved trip's arrival checks, including destinations closer than a new trip permits. */
+    void resumeRecoveredFlight() {
+        if (isActive()) { startFlight(true); return; }
+        resumingRecovery = true;
+        try { enable(); }
+        finally { resumingRecovery = false; }
     }
 
-
-    private final class PortalProtection {
-        /** One tick of ordinary movement is well under this; a farther target means the anchor is stale. */
-        private static final double MAX_ANCHOR_DISTANCE = 16.0;
-
-        private final SettingGroup general = portals;
-        private final Setting<Boolean> blockNether = general.add(new BoolSetting.Builder()
-            .name("nether-portals")
-            .description("Stop the server from seeing you enter Nether portals.")
-            .defaultValue(true)
-            .build());
-        private final Setting<Boolean> blockEnd = general.add(new BoolSetting.Builder()
-            .name("end-portals")
-            .description("Also stop the server from seeing you enter End portals, including the exit portal.")
-            .defaultValue(false)
-            .build());
-        private final Setting<Boolean> notify = general.add(new BoolSetting.Builder()
-            .name("notify")
-            .description("Show a chat message the first time an entry is blocked.")
-            .defaultValue(true)
-            .build());
-
-        /** Last outbound position outside a blocked portal that the server was allowed to see. */
-        private Vec3 anchor;
-        private boolean warned;
-
-
-
-        public void onActivate() {
-            warned = false;
-            anchor = mc.player != null && !blockedAt(mc.player.getBoundingBox()) ? mc.player.position() : null;
-        }
-
-        public void onDeactivate() {
-            anchor = null;
-            warned = false;
-        }
-
-        private void onSend(PacketEvent.Send event) {
-            if (mc.player == null || mc.level == null || event.isCancelled()) return;
-            if (!blockNether.get() && !blockEnd.get()) return;
-            if (mc.player.isSpectator() || mc.player.isPassenger()) return;
-            if (!(event.packet instanceof ServerboundMovePlayerPacket packet) || !packet.hasPosition()) return;
-
-            Vec3 target = new Vec3(packet.getX(0.0), packet.getY(0.0), packet.getZ(0.0));
-            AABB targetBox = mc.player.getBoundingBox().move(target.subtract(mc.player.position()));
-            if (!blockedAt(targetBox)) {
-                anchor = target;
-                warned = false;
-                return;
-            }
-
-            Vec3 safe = anchor;
-            event.cancel();
-            if (safe == null || !PortalGuard.anchorUsable(safe.distanceToSqr(target), MAX_ANCHOR_DISTANCE)) {
-                // No safe position is known after a correction/join. Never transmit an entry packet.
-                return;
-            }
-            if (packet instanceof ServerboundMovePlayerPacket.PosRot) {
-                event.sendSilently(new ServerboundMovePlayerPacket.PosRot(
-                    safe.x, safe.y, safe.z,
-                    packet.getYRot(0.0F), packet.getXRot(0.0F),
-                    packet.isOnGround(), packet.horizontalCollision()));
-            } else {
-                event.sendSilently(new ServerboundMovePlayerPacket.Pos(
-                    safe.x, safe.y, safe.z,
-                    packet.isOnGround(), packet.horizontalCollision()));
-            }
-
-            if (notify.get() && !warned) {
-                warned = true;
-                info("Blocked portal travel; the server still sees you outside the portal.");
-            }
-        }
-
-        private void onReceive(PacketEvent.Receive event) {
-            if (event.packet instanceof ClientboundLoginPacket
-                || event.packet instanceof ClientboundPlayerPositionPacket
-                || event.packet instanceof ClientboundRespawnPacket) {
-                anchor = null;
-                warned = false;
-            }
-        }
-
-        /** Whether the player box at a target position would be seen inside a portal the module blocks. */
-        private boolean blockedAt(AABB box) {
-            AABB query = box.deflate(1.0E-5);
-            BlockPos min = BlockPos.containing(query.minX, query.minY, query.minZ);
-            BlockPos max = BlockPos.containing(query.maxX, query.maxY, query.maxZ);
-            boolean nether = false;
-            boolean end = false;
-
-            for (BlockPos pos : BlockPos.betweenClosed(min, max)) {
-                BlockState state = mc.level.getBlockState(pos);
-                if (state.is(Blocks.NETHER_PORTAL)) nether = true;
-                else if (state.is(Blocks.END_PORTAL)) end = true;
-                if (PortalGuard.shouldBlock(nether, end, blockNether.get(), blockEnd.get())) return true;
-            }
-
-            return false;
-        }
+    private void syncHelpers() {
+        boolean running = isActive() && !profileLoading && !stoppingTrip;
+        homes().managed(running && autoSetHome.get());
+        portalGuard().managed(running && antiPortal.get());
+        lobby().managed(running && lobbyRecovery.get());
     }
 
-    private final class LobbyRecovery {
-        private static final int RESUME_DELAY_TICKS = 20;
-        private static final int PATH_START_GRACE_TICKS = 20;
-        private static final int PATH_TIMEOUT_TICKS = 400;
-        private static final int PATH_CLOSE_DISTANCE_SQ = 16;
-        private static final int WALK_STUCK_TICKS = 100;
-        private static final int PORTAL_WAIT_WARNING_TICKS = 200;
-        private static final double MOVEMENT_EPSILON_SQ = .0025;
-
-        private final SettingGroup sgGeneral = lobbyGroup;
-
-        private final Setting<Boolean> resumeFlight = sgGeneral.add(new BoolSetting.Builder()
-            .name("resume-flight")
-            .description("Turn Highway Fly back on after reaching the target dimension.")
-            .defaultValue(true)
-            .build());
-
-        private final Setting<Boolean> crackedAccount = sgGeneral.add(new BoolSetting.Builder()
-            .name("cracked-account")
-            .description("Log in with /login before walking to the recovery portal.")
-            .defaultValue(false)
-            .build());
-
-        private final Setting<String> loginPassword = sgGeneral.add(new StringSetting.Builder()
-            .name("login-password")
-            .description("Password sent with /login. It is stored in plain text in the Meteor config.")
-            .defaultValue("")
-            .visible(crackedAccount::get)
-            .wide()
-            .build());
-
-        private final Setting<Integer> loginTimeout = sgGeneral.add(new IntSetting.Builder()
-            .name("login-timeout")
-            .description("Ticks to wait for the server's login confirmation before recovery continues. A rejected password waits for a manual login.")
-            .defaultValue(200)
-            .range(20, 1200)
-            .sliderRange(20, 400)
-            .visible(crackedAccount::get)
-            .build());
-
-        private final Setting<Boolean> enterPortal = sgGeneral.add(new BoolSetting.Builder()
-            .name("enter-portal")
-            .description("Walk into a nearby Nether portal when the rejoin is not in the target dimension.")
-            .defaultValue(true)
-            .build());
-
-        private final Setting<Boolean> useBaritone = sgGeneral.add(new BoolSetting.Builder()
-            .name("use-baritone")
-            .description("Use Baritone's path manager to reach the portal when one is installed, then walk in directly.")
-            .defaultValue(true)
-            .visible(enterPortal::get)
-            .build());
-
-        private final Setting<Integer> searchRadius = sgGeneral.add(new IntSetting.Builder()
-            .name("search-radius")
-            .description("Horizontal radius in blocks to search for a Nether portal.")
-            .defaultValue(64)
-            .range(8, 128)
-            .sliderRange(8, 96)
-            .visible(enterPortal::get)
-            .build());
-
-        private final Setting<Integer> searchHeight = sgGeneral.add(new IntSetting.Builder()
-            .name("search-height")
-            .description("Vertical distance above and below the player to search for a Nether portal.")
-            .defaultValue(32)
-            .range(4, 128)
-            .sliderRange(4, 64)
-            .visible(enterPortal::get)
-            .build());
-
-        private final Setting<Integer> joinDelay = sgGeneral.add(new IntSetting.Builder()
-            .name("join-delay")
-            .description("Ticks to wait after joining before scanning, so the server can place the player.")
-            .defaultValue(40)
-            .range(0, 200)
-            .sliderRange(0, 100)
-            .build());
-
-        private final Setting<Integer> rescanDelay = sgGeneral.add(new IntSetting.Builder()
-            .name("rescan-delay")
-            .description("Ticks between portal scans while no portal is in range.")
-            .defaultValue(100)
-            .range(20, 600)
-            .sliderRange(20, 300)
-            .visible(enterPortal::get)
-            .build());
-
-        private final Setting<Boolean> debug = diagnostics.add(new BoolSetting.Builder()
-            .name("lobby-debug")
-            .description("Log extra recovery details.")
-            .defaultValue(false)
-            .build());
-
-        private final LobbyRecoveryStore recoveryStore =
-            new LobbyRecoveryStore(MeteorClient.FOLDER.toPath().resolve("auto-lobby-recovery.json"));
-
-        private enum Stage {
-            IDLE,
-            AWAITING_JOIN,
-            SETTLING,
-            LOGIN,
-            SEARCHING,
-            WALKING,
-            ENTERING,
-            WAITING,
-            RESUMING,
-            EXITING,
-            DONE
-        }
-
-        private final LobbyPortalFinder.Probe finderProbe = new LobbyPortalFinder.Probe() {
-            @Override public boolean loaded(int chunkX, int chunkZ) {
-                return mc.level != null && mc.level.hasChunk(chunkX, chunkZ);
-            }
-
-            @Override public boolean maybePortal(int chunkX, int sectionY, int chunkZ) {
-                if (mc.level == null) return false;
-                LevelChunk chunk = mc.level.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
-                if (chunk == null) return false;
-                int index = chunk.getSectionIndexFromSectionY(sectionY);
-                LevelChunkSection[] sections = chunk.getSections();
-                if (index < 0 || index >= sections.length) return false;
-                LevelChunkSection section = sections[index];
-                return !section.hasOnlyAir()
-                    && section.maybeHas(state -> state.is(Blocks.NETHER_PORTAL));
-            }
-
-            @Override public boolean portal(BlockPos pos) {
-                if (mc.level == null || !mc.level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) return false;
-                return mc.level.getBlockState(pos).is(Blocks.NETHER_PORTAL);
-            }
-        };
-
-        private final PortalLookahead.Probe bodyProbe = new PortalLookahead.Probe() {
-            @Override public boolean loaded(int chunkX, int chunkZ) {
-                return finderProbe.loaded(chunkX, chunkZ);
-            }
-
-            @Override public boolean portal(BlockPos pos) {
-                return finderProbe.portal(pos);
-            }
-        };
-
-        private Stage stage = Stage.IDLE;
-        private boolean armed;
-        private boolean loginStarted;
-        private boolean loginSent;
-        private boolean loginConfirmed;
-        private boolean loginRejected;
-        private boolean warnedLoginRejected;
-        private int loginTicks;
-            private String resumeDimension;
-        private String resumeServer;
-        private BlockPos portal;
-        private int stageTicks;
-        private int pathTicks;
-        private int stuckTicks;
-        private boolean pathing;
-        private boolean inputActive;
-        private Vec3 lastWalkPosition = Vec3.ZERO;
-        private boolean warnedNoPortal;
-        private boolean warnedStuck;
-        private boolean warnedAirborne;
-        private boolean warnedCantResume;
-        private boolean waitingForTripRecord;
-        private Vec3 portalExitTarget;
-        private int portalExitTicks;
-        private final Map<BlockPos,Long> failedPortals = new HashMap<>();
-
-
-
-        /** A saved marker can be retained while another server is open, without moving there. */
-        private boolean resumePending() {
-            stopWalking();
-            resetTransientState();
-            Optional<LobbyRecoveryStore.Recovery> saved = recoveryStore.load();
-            waitingForTripRecord = saved.isEmpty()
-                && Files.exists(MeteorClient.FOLDER.toPath().resolve("auto-lobby-recovery.json"));
-            if (waitingForTripRecord) {
-                warning("Saved trip cannot be read yet; waiting instead of starting on an unknown server.");
-                return true;
-            }
-            if (!session.recovering() && saved.isPresent()) {
-                LobbyRecoveryStore.Recovery recovery = saved.get();
-                session.recover(recovery.dimension(), recovery.server());
-                durableTripAvailable = true;
-                if (recovery.destination() != null) {
-                    tripDestination = recovery.destination();
-                    tripTargetY = recovery.targetY();
-                    destination.set(tripDestination);
-                    lockAltitude.set(true);
-                    targetY.set(tripTargetY);
-                }
-            }
-            if (!session.recovering()) return false;
-            resumeDimension = session.dimension();
-            resumeServer = session.server();
-            armed = true;
-            stage = Stage.SETTLING;
-            if (session.recoveryAllowed(serverAddress())) {
-                info("Recovering the interrupted Highway Fly trip.");
-                notifyWebhook(HighwayWebhook.Event.RECOVERY,
-                    "Found the saved trip and is recovering it before resuming flight.");
-            }
-            beginLogin();
-            return true;
-        }
-
-        private void pauseForDisconnect() {
-            resumeDimension = session.dimension();
-            resumeServer = session.server();
-            armed = true;
-            resetLogin();
-            saveRecovery();
-            stopWalking();
-            stage = Stage.AWAITING_JOIN;
-            stageTicks = 0;
-            info("Highway Fly trip paused; it will resume on the next join.");
-        }
-
-        private void beginLogin() {
-            if (!crackedAccount.get() || loginStarted) return;
-            if (LobbyLogin.command(loginPassword.get()) == null) {
-                warning("Cracked account is on but login-password is blank; skipping the login.");
-                notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                    "Cracked account is on, but login-password is blank; portal recovery cannot log in.");
-                return;
-            }
-            loginStarted = true;
-            loginSent = false;
-            loginConfirmed = false;
-            loginRejected = false;
-            warnedLoginRejected = false;
-            loginTicks = 0;
-            stage = Stage.LOGIN;
-            stageTicks = 0;
-            info("Waiting to log in before lobby recovery.");
-        }
-
-        /** Waits for the join delay, sends the password once, then waits for a reply or the timeout. */
-        private void tickLogin() {
-            if (loginConfirmed) {
-                finishLogin();
-                return;
-            }
-            if (!crackedAccount.get()) {
-                finishLogin();
-                return;
-            }
-            if (mc.getConnection() == null) return;
-            if (!loginSent) {
-                if (++loginTicks < joinDelay.get()) return;
-                String command = LobbyLogin.command(loginPassword.get());
-                if (command == null) {
-                    warning("Cracked account is on but login-password is blank; skipping the login.");
-                    notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                        "Cracked account is on, but login-password is blank; portal recovery cannot log in.");
-                    finishLogin();
-                    return;
-                }
-                mc.getConnection().sendCommand(command);
-                loginSent = true;
-                loginTicks = 0;
-                if (debug.get()) info("Sent /login before lobby recovery.");
-                return;
-            }
-            if (++loginTicks < loginTimeout.get()) return;
-            if (loginRejected) {
-                if (!warnedLoginRejected) {
-                    warning("The server rejected the login password; waiting for a manual login before recovery.");
-                    warnedLoginRejected = true;
-                }
-                return;
-            }
-            warning("No login confirmation arrived; continuing with lobby recovery.");
-            finishLogin();
-        }
-
-        private void finishLogin() {
-            loginTicks = 0;
-            stage = Stage.SETTLING;
-            stageTicks = 0;
-            if (debug.get()) info("Login finished; continuing lobby recovery.");
-        }
-
-        private void resetLogin() {
-            loginStarted = false;
-            loginSent = false;
-            loginConfirmed = false;
-            loginRejected = false;
-            warnedLoginRejected = false;
-            loginTicks = 0;
-        }
-
-        /** Remembers a confirmation, or a rejection of the password this module sent. */
-        private void onMessage(String raw) {
-            if (stage != Stage.LOGIN || loginConfirmed) return;
-            if (ChatSender.fromPlayer(raw, this::online)) return;
-            LobbyLogin.Result result = LobbyLogin.classify(raw);
-            if (result == LobbyLogin.Result.SUCCESS) {
-                loginConfirmed = true;
-                if (debug.get()) info("The server confirmed the login.");
-            } else if (result == LobbyLogin.Result.FAILURE && loginSent && !loginRejected) {
-                loginRejected = true;
-                if (!warnedLoginRejected) {
-                    warning("The server rejected /login: %s",
-                        LobbyLogin.redact(ChatSender.plain(raw).strip(), loginPassword.get()));
-                    notifyWebhook(HighwayWebhook.Event.LOGIN_FAILED,
-                        "The server rejected the login password; portal recovery is waiting for a manual login.");
-                    warnedLoginRejected = true;
-                }
-            }
-        }
-
-        private boolean online(String name) {
-            return mc.getConnection() != null && mc.getConnection().getPlayerInfoIgnoreCase(name) != null;
-        }
-
-        private void onTick(TickEvent.Pre event) {
-            if (!session.recoveryAllowed(serverAddress()) || !armed) return;
-            if (stage == Stage.LOGIN) {
-                tickLogin();
-                return;
-            }
-            if (isResumeDimension()) {
-                if (stage != Stage.RESUMING && stage != Stage.EXITING) {
-                    stopWalking();
-                    stage = Stage.RESUMING;
-                    stageTicks = 0;
-                    info("Back in %s; resuming Highway Fly.", dimensionLabel());
-                    notifyWebhook(HighwayWebhook.Event.DIMENSION,
-                        "Back in " + dimensionLabel() + "; resuming the route.");
-                }
-                tickResuming();
-                return;
-            }
-            if (stage == Stage.RESUMING || stage == Stage.EXITING) {
-                stopWalking();
-                portalExitTarget = null;
-                portalExitTicks = 0;
-                stage = Stage.SETTLING;
-                stageTicks = 0;
-                return;
-            }
-            switch (stage) {
-                case SETTLING -> {
-                    if (++stageTicks < joinDelay.get()) return;
-                    if (enterPortal.get()) searchForPortal();
-                    else waitForReconnect("Waiting for a reconnect into " + dimensionLabel() + ".");
-                }
-                case WAITING -> {
-                    if (++stageTicks < rescanDelay.get()) return;
-                    stageTicks = 0;
-                    if (enterPortal.get()) searchForPortal();
-                }
-                case SEARCHING -> {
-                    if (enterPortal.get()) searchForPortal();
-                    else waitForReconnect("Waiting for a reconnect into " + dimensionLabel() + ".");
-                }
-                case WALKING -> tickWalking();
-                case ENTERING -> tickEntering();
-                default -> {}
-            }
-        }
-
-        private void tickResuming() {
-            if (++stageTicks < RESUME_DELAY_TICKS || mc.gui.screen() != null) {
-                releaseMovement();
-                return;
-            }
-            if (insidePortal()) {
-                tickPortalExit();
-                return;
-            }
-            releaseMovement();
-            portalExitTarget = null;
-            if (mc.player.isPassenger() || mc.player.isInWater() || mc.player.isInLava()
-                || mc.player.isDeadOrDying()) {
-                if (!warnedCantResume) {
-                    warning("Cannot resume Highway Fly here; waiting.");
-                    notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                        "Cannot resume Highway Fly here; waiting for a safe, supported position.");
-                    warnedCantResume = true;
-                }
-                return;
-            }
-            if (!resumeFlight.get()) {
-                info("Back in %s; resume-flight is off, ending the trip.", dimensionLabel());
-                notifyWebhook(HighwayWebhook.Event.STOPPED,
-                    "Back in " + dimensionLabel() + ", but resume-flight is off; the trip was ended.");
-                disable();
-                return;
-            }
-            // Clear only this server's marker, then hand movement back to the flight controller.
-            finishRecovery();
-            startFlight(true);
-        }
-
-        private void tickPortalExit() {
-            stage = Stage.EXITING;
-            if (portalExitTarget == null) {
-                if (portalExitTicks++ % 100 != 0) return;
-                BlockPos target = destination.get();
-                Vec3 desired = new Vec3(target.getX()-mc.player.getX(),0,target.getZ()-mc.player.getZ());
-                portalExitTarget = HighwayRecoveryTargets.portalExit(mc.player.getBoundingBox(), mc.player.position(),
-                    desired, new HighwayRecoveryTargets.ExitProbe() {
-                        public boolean clear(AABB box) { return safeExitSweep(box); }
-                        public boolean portal(AABB box) { return PortalLookahead.contains(box,bodyProbe); }
-                        public boolean supported(AABB box) {
-                            return loaded(box.expandTowards(0,-.25,0))
-                                && mc.level.getBlockCollisions(mc.player,box.move(0,-.2,0)).iterator().hasNext();
-                        }
-                    }).orElse(null);
-                if (portalExitTarget == null) {
-                    releaseMovement();
-                    if (!warnedCantResume) {
-                        warning("Waiting for a loaded, supported exit from the destination portal.");
-                        notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                            "Waiting for a loaded, supported exit from the destination portal.");
-                        warnedCantResume = true;
-                    }
-                    return;
-                }
-                portalExitTicks = 0;
-            }
-            AABB swept = mc.player.getBoundingBox().minmax(mc.player.getBoundingBox()
-                .move(portalExitTarget.subtract(mc.player.position())));
-            if (++portalExitTicks > 100 || !safeExitSweep(swept) || !supportedExitRoute(portalExitTarget)) {
-                releaseMovement();
-                portalExitTarget = null;
-                portalExitTicks = 0;
-                return;
-            }
-            mc.player.setYRot(HighwayCourse.yaw(mc.player.position(),portalExitTarget));
-            mc.options.keyUp.setDown(true);
-            mc.options.keyJump.setDown(false);
-            inputActive = true;
-        }
-
-        private boolean safeExitSweep(AABB box) {
-            if (!loaded(box) || !mc.level.noCollision(mc.player,box)) return false;
-            for (BlockPos pos : BlockPos.betweenClosed(BlockPos.containing(box.minX,box.minY,box.minZ),
-                BlockPos.containing(box.maxX,box.maxY,box.maxZ))) {
-                if (!mc.level.getFluidState(pos).isEmpty()) return false;
-            }
-            return true;
-        }
-
-        private boolean supportedExitRoute(Vec3 target) {
-            Vec3 delta = target.subtract(mc.player.position());
-            int steps = Math.max(1,(int)Math.ceil(delta.length()/.25));
-            if (steps > 20) return false;
-            for (int step=1;step<=steps;step++) {
-                AABB box=mc.player.getBoundingBox().move(delta.scale((double)step/steps));
-                if (!loaded(box.expandTowards(0,-.25,0))
-                    || !mc.level.getBlockCollisions(mc.player,box.move(0,-.2,0)).iterator().hasNext()) return false;
-            }
-            return true;
-        }
-
-        private void searchForPortal() {
-            stage = Stage.SEARCHING;
-            Optional<LobbyPortalFinder.Result> found = findPortal();
-            if (found.isEmpty()) {
-                waitForReconnect("No Nether portal within " + searchRadius.get()
-                    + " blocks; waiting for a reconnect into " + dimensionLabel() + ".", true);
-                return;
-            }
-
-            warnedNoPortal = false;
-            warnedStuck = false;
-            warnedAirborne = false;
-            BlockPos target = found.get().pos();
-            startWalking(target);
-            info("Walking to the Nether portal at %d, %d, %d.", target.getX(), target.getY(), target.getZ());
-            notifyWebhook(HighwayWebhook.Event.PORTAL,
-                "Found the Nether portal; walking to it.",
-                new HighwayWebhook.Field("🌀 Portal", target.getX() + " " + target.getY() + " "
-                    + target.getZ(), true, true));
-        }
-
-        private Optional<LobbyPortalFinder.Result> findPortal() {
-            if (mc.level == null || mc.player == null) return Optional.empty();
-            failedPortals.entrySet().removeIf(entry -> System.nanoTime() - entry.getValue() >= 0);
-            return LobbyPortalFinder.nearest(mc.player.position(), searchRadius.get(), searchHeight.get(),
-                mc.level.getMinY(), mc.level.getMaxY() - 1, new LobbyPortalFinder.Probe() {
-                    public boolean loaded(int x,int z) { return finderProbe.loaded(x,z); }
-                    public boolean maybePortal(int x,int y,int z) { return finderProbe.maybePortal(x,y,z); }
-                    public boolean portal(BlockPos pos) {
-                        return finderProbe.portal(pos) && failedPortals.keySet().stream()
-                            .noneMatch(failed -> failed.distSqr(pos) <= 64);
-                    }
-                });
-        }
-
-        private void waitForReconnect(String message) {
-            waitForReconnect(message, false);
-        }
-
-        private void waitForReconnect(String message, boolean needsHelp) {
-            stopWalking();
-            stage = Stage.WAITING;
-            stageTicks = 0;
-            if (!warnedNoPortal) {
-                warning(message);
-                notifyWebhook(needsHelp ? HighwayWebhook.Event.NEEDS_HELP : HighwayWebhook.Event.RECOVERY,
-                    message);
-                warnedNoPortal = true;
-            } else if (debug.get()) {
-                info("Still waiting for %s.", dimensionLabel());
-            }
-        }
-
-        private void startWalking(BlockPos target) {
-            portal = target;
-            stage = Stage.WALKING;
-            stageTicks = 0;
-            pathTicks = 0;
-            stuckTicks = 0;
-            pathing = false;
-            lastWalkPosition = mc.player.position();
-
-            if (!useBaritone.get() || PathManagers.get() instanceof NopPathManager) return;
-            try {
-                PathManagers.get().moveTo(target);
-                pathing = true;
-            } catch (RuntimeException | LinkageError e) {
-                if (debug.get()) warning("Baritone could not path to the portal; walking directly.");
-            }
-        }
-
-        private void tickWalking() {
-            if (portal == null) {
-                stage = Stage.SEARCHING;
-                return;
-            }
-            if (mc.gui.screen() != null) {
-                releaseMovement();
-                return;
-            }
-            if (insidePortal()) {
-                enterPortal();
-                return;
-            }
-            if (!finderProbe.portal(portal)) {
-                stopWalking();
-                stage = Stage.SEARCHING;
-                stageTicks = 0;
-                return;
-            }
-            if (mc.player.isFallFlying()) {
-                releaseMovement();
-                if (!warnedAirborne) {
-                    warning("Land before walking into the portal.");
-                    notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                        "Land before walking into the Nether portal; recovery is waiting.");
-                    warnedAirborne = true;
-                }
-                return;
-            }
-            if (mc.player.isPassenger()) {
-                releaseMovement();
-                if (!warnedCantResume) {
-                    warning("Get out of the vehicle first.");
-                    notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                        "Get out of the vehicle so portal recovery can walk to the Nether portal.");
-                    warnedCantResume = true;
-                }
-                return;
-            }
-
-            if (pathing) {
-                pathTicks++;
-                boolean close = horizontalDistanceSq(portal) <= PATH_CLOSE_DISTANCE_SQ;
-                boolean stopped;
-                try {
-                    stopped = pathTicks > PATH_START_GRACE_TICKS && !PathManagers.get().isPathing();
-                } catch (RuntimeException | LinkageError e) {
-                    stopped = true;
-                }
-                boolean timedOut = pathTicks > PATH_TIMEOUT_TICKS;
-                if (!close && !stopped && !timedOut) return;
-                if (!close && (stopped || timedOut)) {
-                    failPortalCandidate();
-                    return;
-                }
-                stopPathing();
-            }
-
-            walkDirectly();
-        }
-
-        private void walkDirectly() {
-            BlockPos target = portal;
-            if (target == null) return;
-            Vec3 center = Vec3.atCenterOf(target);
-            mc.player.setYRot(HighwayCourse.yaw(mc.player.position(), center));
-            mc.options.keyUp.setDown(true);
-            inputActive = true;
-
-            boolean jump = mc.player.onGround()
-                && (mc.player.horizontalCollision || center.y > mc.player.getY() + 1.1);
-            mc.options.keyJump.setDown(jump);
-
-            Vec3 position = mc.player.position();
-            if (position.distanceToSqr(lastWalkPosition) >= MOVEMENT_EPSILON_SQ) {
-                lastWalkPosition = position;
-                stuckTicks = 0;
-            } else if (++stuckTicks > WALK_STUCK_TICKS) {
-                if (!warnedStuck) {
-                    warning("Cannot reach the portal; move closer or turn on use-baritone.");
-                    notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                        "Cannot reach the portal; move closer or turn on use-baritone.");
-                    warnedStuck = true;
-                }
-                failPortalCandidate();
-            }
-        }
-
-        private void failPortalCandidate() {
-            if (portal != null) {
-                if (failedPortals.size() >= 16) failedPortals.clear();
-                failedPortals.put(portal.immutable(),System.nanoTime()+120_000_000_000L);
-            }
-            stopWalking();
-            stage = Stage.WAITING;
-            stageTicks = 0;
-        }
-
-        private void enterPortal() {
-            stopPathing();
-            releaseMovement();
-            stage = Stage.ENTERING;
-            stageTicks = 0;
-        }
-
-        private void tickEntering() {
-            stageTicks++;
-            releaseMovement();
-            if (!insidePortal()) {
-                if (stageTicks > 20) {
-                    stage = Stage.WALKING;
-                    stageTicks = 0;
-                }
-                return;
-            }
-            if (stageTicks == 1) {
-                info("In the portal; waiting for the Nether.");
-                notifyWebhook(HighwayWebhook.Event.PORTAL, "In the Nether portal; waiting for the dimension change.");
-            } else if (stageTicks == PORTAL_WAIT_WARNING_TICKS) {
-                warning("The portal has not transported us yet; still waiting.");
-                notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                    "The portal has not transported us after ten seconds; recovery is still waiting.");
-            }
-        }
-
-        private boolean insidePortal() {
-            return mc.player != null && PortalLookahead.contains(mc.player.getBoundingBox(), bodyProbe);
-        }
-
-        private double horizontalDistanceSq(BlockPos target) {
-            double dx = target.getX() + .5 - mc.player.getX();
-            double dz = target.getZ() + .5 - mc.player.getZ();
-            return dx * dx + dz * dz;
-        }
-
-        private boolean isResumeDimension() {
-            return mc.level != null && resumeDimension != null && resumeDimension.equals(dimensionId());
-        }
-
-        private String dimensionId() {
-            return mc.level == null ? null : mc.level.dimension().identifier().toString();
-        }
-
-        private String dimensionLabel() {
-            if (resumeDimension == null) return "the target dimension";
-            int colon = resumeDimension.indexOf(':');
-            return colon < 0 ? resumeDimension : resumeDimension.substring(colon + 1);
-        }
-
-        private void stopWalking() {
-            stopPathing();
-            releaseMovement();
-            portal = null;
-        }
-
-        private void stopPathing() {
-            if (!pathing) return;
-            pathing = false;
-            try {
-                if (!(PathManagers.get() instanceof NopPathManager)) PathManagers.get().stop();
-            } catch (RuntimeException | LinkageError ignored) {
-            }
-        }
-
-        private void releaseMovement() {
-            if (!inputActive) return;
-            mc.options.keyUp.setDown(false);
-            mc.options.keyJump.setDown(false);
-            inputActive = false;
-        }
-
-        private void saveRecovery() {
-            try {
-                String tripDimension = session.dimension() == null ? resumeDimension : session.dimension();
-                String tripServer = session.dimension() == null ? resumeServer : session.server();
-                if (tripDimension == null) return;
-                if (tripDestination != null) recoveryStore.save(tripDimension,tripServer,tripDestination,tripTargetY);
-                else recoveryStore.save(tripDimension,tripServer);
-                durableTripAvailable = true;
-            } catch (IOException | RuntimeException e) {
-                warning("Could not save the Highway Fly lobby recovery state: %s", e.getMessage());
-            }
-        }
-
-        private String serverAddress() {
-            return mc.getCurrentServer() == null ? null : mc.getCurrentServer().ip;
-        }
-
-        private boolean sameServer(String first, String second) {
-            if (first == null || second == null) return first == second;
-            return first.equalsIgnoreCase(second);
-        }
-
-        private void clearRecoveryFile() {
-            try {
-                recoveryStore.clear();
-            } catch (IOException e) {
-                if (debug.get()) warning("Could not clear the Highway Fly lobby recovery state: %s", e.getMessage());
-            }
-        }
-
-        private void cancelRecovery() {
-            Optional<LobbyRecoveryStore.Recovery> saved = recoveryStore.load();
-            if (mc.level == null || saved.isEmpty() || saved.get().isForServer(serverAddress())) clearRecoveryFile();
-            resetRecovery();
-            durableTripAvailable = false;
-            tripDestination = null;
-        }
-
-        private void finishRecovery() {
-            armed = false;
-            stage = Stage.DONE;
-            resetLogin();
-            stopWalking();
-        }
-
-        private void resetTransientState() {
-            stageTicks = 0;
-            pathTicks = 0;
-            stuckTicks = 0;
-            pathing = false;
-            warnedNoPortal = false;
-            warnedStuck = false;
-            warnedAirborne = false;
-            warnedCantResume = false;
-            portalExitTarget = null;
-            portalExitTicks = 0;
-        }
-
-        private void resetRecovery() {
-            stopWalking();
-            armed = false;
-            stage = Stage.IDLE;
-            resumeDimension = null;
-            resumeServer = null;
-            portal = null;
-            resetLogin();
-            resetTransientState();
-            releaseMovement();
-        }
-
-        public String getInfoString() {
-            return switch (stage) {
-                case AWAITING_JOIN -> "Waiting for join";
-                case SETTLING -> "Settling";
-                case LOGIN -> "Logging in";
-                case SEARCHING -> "Finding portal";
-                case WALKING -> "Walking to portal";
-                case ENTERING -> "Entering portal";
-                case WAITING -> "Waiting for Nether";
-                case RESUMING -> "Resuming flight";
-                case EXITING -> "Leaving portal";
-                case DONE -> "Done";
-                case IDLE -> null;
-            };
-        }
+    void helperDisabled(HighwayHelper helper) {
+        if (profileLoading) return;
+        if (helper instanceof AutoSetHome) autoSetHome.set(false);
+        if (helper instanceof AntiPortal) antiPortal.set(false);
+        if (helper instanceof AutoLobby) lobbyRecovery.set(false);
+    }
+
+    boolean homesAllowed() {
+        return !profileLoading && !session.recovering() && (!isActive()
+            || session.setHomeAllowed(true, dimensionId(), serverAddress()));
+    }
+
+    boolean portalsAllowed() {
+        return !profileLoading && !session.recovering() && (!isActive() || session.portalProtectionAllowed(true));
     }
 
 }

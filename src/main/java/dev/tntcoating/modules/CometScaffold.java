@@ -489,7 +489,7 @@ public final class CometScaffold extends Module {
         diagnostics = new ScaffoldDiagnostics(directory, System::nanoTime);
         JsonObject metadata = settingsSnapshot();
         metadata.addProperty("minecraft", SharedConstants.getCurrentVersion().name());
-        metadata.addProperty("version", FabricLoader.getInstance().getModContainer("tnt-coating").map(m -> m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));
+        metadata.addProperty("version", FabricLoader.getInstance().getModContainer("comet").map(m -> m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));
         Properties build = new Properties();
         try (InputStream source = getClass().getResourceAsStream("/comet-scaffold-build.properties")) { if (source != null) build.load(source); }
         catch (Exception error) { metadata.addProperty("buildMetadataError", error.getClass().getSimpleName()); }

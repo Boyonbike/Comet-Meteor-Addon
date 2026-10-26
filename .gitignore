@@ -13,3 +13,7 @@ extracted/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Python documentation checks
+__pycache__/
+*.pyc
