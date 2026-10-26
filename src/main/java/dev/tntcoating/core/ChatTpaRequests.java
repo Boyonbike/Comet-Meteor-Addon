@@ -21,6 +21,22 @@ public final class ChatTpaRequests {
         public boolean verbsKnown() { return yesVerb != null && noVerb != null; }
         public String description() { return toThem ? "Teleport to " + player : player + " wants to teleport to you"; }
     }
+    public enum ChangeKind { Upsert, Cancelled, Expired, Accepted }
+    public record Change(ChangeKind kind, Request request, boolean named) {
+        public Change(ChangeKind kind,Request request) { this(kind,request,true); }
+    }
+    private final List<Change> changes = new ArrayList<>();
+    private int maximum = 64, rejected;
+    public void capacity(int value) { if(value<1||value>16384) throw new IllegalArgumentException("Invalid request capacity"); maximum=value; }
+    public int rejected() { return rejected; }
+    public List<Change> drainChanges() { var result=List.copyOf(changes);changes.clear();return result; }
+    private void changed(ChangeKind kind,Request request) { changed(kind,request,true); }
+    private void changed(ChangeKind kind,Request request,boolean named) {
+        if(changes.size()>=32768) changes.removeFirst();
+        changes.add(new Change(kind,request,named));
+    }
+    private void remove(Request request,ChangeKind kind) { remove(request,kind,true); }
+    private void remove(Request request,ChangeKind kind,boolean named) { if(requests.remove(key(request.player()))!=null) changed(kind,request,named); }
     private record Decision(String player, boolean yes, String verb) {}
     private static final String NAME = "([A-Za-z0-9_]{1,16})";
     private static final String PREFIX = "^(?:\\[[^]\\r\\n]{1,40}]\\s*)*";
@@ -41,10 +57,11 @@ public final class ChatTpaRequests {
     private String mostRecent;
     private long mostRecentAt;
 
-    public void clear() { requests.clear(); mostRecent = null; }
+    public void clear() { requests.clear(); changes.clear(); rejected=0; mostRecent = null; }
 
     public List<Request> pending(long now) {
-        requests.values().removeIf(request -> now >= request.expires());
+        var expired = requests.values().stream().filter(request -> now >= request.expires()).toList();
+        expired.forEach(request -> remove(request,ChangeKind.Expired));
         return new ArrayList<>(requests.values());
     }
 
@@ -60,8 +77,9 @@ public final class ChatTpaRequests {
             // An acknowledgement of an outgoing request does not consume an incoming request from that player.
             if (lower.contains("your teleport request") && !lower.startsWith("you ")) return;
             var named = requests.values().stream().filter(request -> Pattern.compile("\\b" + Pattern.quote(request.player()) + "\\b", Pattern.CASE_INSENSITIVE).matcher(text).find()).toList();
-            if (!named.isEmpty()) named.forEach(request -> requests.remove(key(request.player())));
-            else if (requests.size() == 1 && !NAME_COLON.matcher(text).matches()) requests.clear();
+            ChangeKind kind=lower.contains("accepted")?ChangeKind.Accepted:lower.contains("expired")?ChangeKind.Expired:ChangeKind.Cancelled;
+            if (!named.isEmpty()) named.forEach(request -> remove(request,kind));
+            else if (requests.size() == 1 && !NAME_COLON.matcher(text).matches()) remove(requests.values().iterator().next(),kind,false);
             return;
         }
 
@@ -91,8 +109,10 @@ public final class ChatTpaRequests {
         // Many servers put the request lifetime on a separate line immediately after the invitation.
         if (!added && requestText && mostRecent != null && now - mostRecentAt < 5_000 && EXPIRY.matcher(text).find()) {
             Request previous = requests.get(mostRecent);
-            if (previous != null) requests.put(mostRecent, new Request(previous.player(), previous.toThem(), expires,
-                previous.yesVerb(), previous.noVerb()));
+            if (previous != null) {
+                var updated=new Request(previous.player(),previous.toThem(),expires,previous.yesVerb(),previous.noVerb());
+                requests.put(mostRecent,updated);changed(ChangeKind.Upsert,updated);
+            }
         }
     }
 
@@ -110,9 +130,10 @@ public final class ChatTpaRequests {
     private void add(String player, String self, boolean toThem, long expires, long now, String yesVerb, String noVerb) {
         if (self != null && player.equalsIgnoreCase(self)) return;
         String key = key(player);
+        if(!requests.containsKey(key)&&requests.size()>=maximum) { rejected++;return; }
         requests.remove(key);
-        requests.put(key, new Request(player, toThem, expires, yesVerb, noVerb));
-        if (requests.size() > 64) requests.remove(requests.keySet().iterator().next());
+        var request=new Request(player,toThem,expires,yesVerb,noVerb);
+        requests.put(key,request);changed(ChangeKind.Upsert,request);
         mostRecent = key;
         mostRecentAt = now;
     }

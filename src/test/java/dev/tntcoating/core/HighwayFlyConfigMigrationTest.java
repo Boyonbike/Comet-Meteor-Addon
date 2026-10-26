@@ -11,6 +11,78 @@ class HighwayFlyConfigMigrationTest {
         var tag = new CompoundTag(); tag.putString("name", name); tag.putBoolean("value", value); return tag;
     }
 
+    @Test void independentMigrationRetainsLegacyHelperPreferencesAndFlightDestination() {
+        var root = root(module("smart-auto-fly", false, "General", setting("destination", "legacy")),
+            module("auto-set-home", true, "General", setting("home", "travel")),
+            module("auto-lobby", true, "General", setting("debug", "yes")),
+            module("anti-portal", true, "General", boolSetting("end-portals", true)));
+        HighwayFlyConfigMigration.migrateIndependent(root, false);
+        assertFalse(find(root, "highway-fly").getBooleanOr("active", true));
+        assertEquals("legacy", value(find(root, "highway-fly"), "General", "destination").getStringOr("value", ""));
+        for (String name : new String[] {"auto-set-home", "auto-lobby", "anti-portal"})
+            assertTrue(find(root, name).getBooleanOr("active", false));
+        assertEquals("yes", value(find(root, "auto-lobby"), "General", "lobby-debug").getStringOr("value", ""));
+        var once = root.copy();
+        HighwayFlyConfigMigration.migrateIndependent(root, false);
+        assertEquals(once, root);
+    }
+
+    @Test void independentMigrationMovesProtectionAndReconnectWithoutMovingFlightPortalMode() {
+        var root = root(module("highway-fly", true, "Portals", setting("portal-mode", "Avoid"),
+            boolSetting("nether-portals", false), boolSetting("anti-portal", true)));
+        var highway = find(root, "highway-fly");
+        var settings = highway.getCompoundOrEmpty("settings");
+        var groups = settings.getListOrEmpty("groups");
+        groups.add(group(module("unused", false, "Lobby Recovery", boolSetting("auto-reconnect", false), setting("reconnect-delay", "8.5")), "Lobby Recovery"));
+        HighwayFlyConfigMigration.migrateIndependent(root, false);
+        assertEquals("Avoid", value(highway, "Portals", "portal-mode").getStringOr("value", ""));
+        assertTrue(value(highway, "Portals", "anti-portal").getBooleanOr("value", false));
+        assertFalse(value(find(root, "anti-portal"), "General", "nether-portals").getBooleanOr("value", true));
+        assertFalse(value(find(root, "auto-lobby"), "General", "auto-reconnect").getBooleanOr("value", true));
+        assertEquals("8.5", value(find(root, "auto-lobby"), "General", "reconnect-delay").getStringOr("value", ""));
+    }
+
+    @Test void independentDashboardMigrationDoesNotOverwriteNewPreferences() {
+        var root = root(module("highway-fly", false, "Dashboard", boolSetting("dashboard-enabled", false),
+            setting("dashboard-port", "8734")), module("highway-dashboard", true, "Server", setting("port", "9876")));
+        HighwayFlyConfigMigration.migrateIndependent(root, false);
+        assertFalse(value(find(root, "highway-fly"), "Dashboard", "dashboard-enabled").getBooleanOr("value", true));
+        assertEquals("8734", value(find(root, "highway-fly"), "Dashboard", "dashboard-port").getStringOr("value", ""));
+        var once = root.copy();
+        HighwayFlyConfigMigration.migrateIndependent(root, false);
+        assertEquals(once, root);
+    }
+
+    @Test void independentMigrationSplitsCombinedSettingsAndPreservesIntegrationSwitches() {
+        var root = root(module("highway-fly", true, "Auto Set Home",
+            setting("home", "travel"), boolSetting("auto-set-home", true)));
+        HighwayFlyConfigMigration.migrateIndependent(root, false);
+        assertEquals("travel", value(find(root, "auto-set-home"), "General", "home").getStringOr("value", ""));
+        assertFalse(find(root, "auto-set-home").getBooleanOr("active", true));
+        assertTrue(value(find(root, "highway-fly"), "Auto Set Home", "auto-set-home").getBooleanOr("value", false));
+        var once = root.copy();
+        HighwayFlyConfigMigration.migrateIndependent(root, false);
+        assertEquals(once, root);
+    }
+
+    @Test void independentMigrationPreservesStandaloneSettingsAndActivation() {
+        var root = root(module("highway-fly", false, "Auto Set Home", setting("home", "embedded")),
+            module("auto-set-home", true, "General", setting("home", "explicit")));
+        HighwayFlyConfigMigration.migrateIndependent(root, false);
+        assertEquals("explicit", value(find(root, "auto-set-home"), "General", "home").getStringOr("value", ""));
+        assertTrue(find(root, "auto-set-home").getBooleanOr("active", false));
+    }
+
+    @Test void independentMigrationMovesDashboardActivationAndSettings() {
+        var root = root(module("highway-fly", false, "Route", setting("destination", "existing")),
+            module("highway-dashboard", true, "Server", setting("port", "9876")));
+        HighwayFlyConfigMigration.migrateIndependent(root, false);
+        var highway = find(root, "highway-fly");
+        assertTrue(value(highway, "Dashboard", "dashboard-enabled").getBooleanOr("value", false));
+        assertEquals("9876", value(highway, "Dashboard", "dashboard-port").getStringOr("value", ""));
+        assertFalse(highway.getBooleanOr("active", true));
+    }
+
     @Test void migratesPeriodicWebhookPreferenceAndExplicitNewValueWins() {
         CompoundTag root = root(module("highway-fly", false, "Webhook Events", boolSetting("periodic-status", false)));
         HighwayFlyConfigMigration.regroupHighwaySettings(root, Map.of("home-replaced-events", "Webhook Events"));

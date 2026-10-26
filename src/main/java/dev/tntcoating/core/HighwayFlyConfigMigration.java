@@ -243,4 +243,104 @@ public final class HighwayFlyConfigMigration {
         }
         groups.add(group(name, values));
     }
+
+    /** Upgrades both historical layouts to independent helpers before Meteor resolves module names. */
+    public static void migrateIndependent(CompoundTag root, boolean recoveryPending) {
+        ListTag modules = root.getListOrEmpty("modules");
+        Map<String, CompoundTag> originals = new LinkedHashMap<>();
+        for (Tag entry : modules) if (entry instanceof CompoundTag module) {
+            String name = module.getStringOr("name", "");
+            if (Set.of("auto-set-home", "anti-portal", "auto-lobby").contains(name)) originals.put(name, module.copy());
+        }
+        migrate(root, recoveryPending);
+        modules = root.getListOrEmpty("modules");
+        CompoundTag highway = findModule(modules, "highway-fly");
+        CompoundTag dashboard = findModule(modules, "highway-dashboard");
+        if (highway == null && dashboard != null) {
+            highway = new CompoundTag();
+            highway.putString("name", "highway-fly");
+            highway.putBoolean("active", false);
+            modules.add(highway);
+        }
+        if (highway == null) return;
+        CompoundTag settings = highway.getCompoundOrEmpty("settings");
+        ListTag groups = settings.getListOrEmpty("groups");
+        splitHelper(modules, groups, originals, "auto-set-home", Set.of("home", "timing", "interval-seconds", "cooldown-buffer-seconds", "retry-delay-seconds", "override", "dialog-match", "button-match", "timeout-seconds"));
+        splitHelper(modules, groups, originals, "anti-portal", Set.of("nether-portals", "end-portals", "notify"));
+        splitHelper(modules, groups, originals, "auto-lobby", Set.of("auto-reconnect", "reconnect-delay", "resume-flight", "cracked-account", "login-password", "login-timeout", "enter-portal", "use-baritone", "search-radius", "search-height", "join-delay", "rescan-delay", "lobby-debug"));
+        if (dashboard != null) {
+            ListTag values = new ListTag();
+            values.add(toggle("dashboard-enabled", enabled(dashboard)));
+            for (Tag entry : dashboard.getCompoundOrEmpty("settings").getListOrEmpty("groups")) {
+                if (!(entry instanceof CompoundTag group)) continue;
+                for (Tag value : group.getListOrEmpty("settings")) if (value instanceof CompoundTag setting) {
+                    CompoundTag moved = setting.copy();
+                    moved.putString("name", "dashboard-" + setting.getStringOr("name", ""));
+                    values.add(moved);
+                }
+            }
+            mergeSettings(groups, "Dashboard", values);
+            modules.remove(dashboard);
+        }
+        settings.put("groups", groups);
+        highway.put("settings", settings);
+        root.put("modules", modules);
+    }
+
+    private static CompoundTag findModule(ListTag modules, String name) {
+        for (Tag entry : modules) if (entry instanceof CompoundTag module
+            && module.getStringOr("name", "").equals(name)) return module;
+        return null;
+    }
+
+    private static void splitHelper(ListTag modules, ListTag sourceGroups,
+                                    Map<String, CompoundTag> originals, String name, Set<String> names) {
+        CompoundTag helper = findModule(modules, name);
+        if (helper == null) {
+            helper = originals.getOrDefault(name, new CompoundTag()).copy();
+            helper.putString("name", name);
+            if (!helper.contains("active")) helper.putBoolean("active", false);
+            modules.add(helper);
+        }
+        CompoundTag settings = helper.getCompoundOrEmpty("settings");
+        ListTag targetGroups = new ListTag();
+        ListTag explicit = new ListTag();
+        for (Tag entry : settings.getListOrEmpty("groups")) if (entry instanceof CompoundTag group) {
+            for (Tag value : group.getListOrEmpty("settings")) if (value instanceof CompoundTag setting) {
+                CompoundTag copy = setting.copy();
+                if (name.equals("auto-lobby") && copy.getStringOr("name", "").equals("debug")) copy.putString("name", "lobby-debug");
+                explicit.add(copy);
+            }
+        }
+        mergeSettings(targetGroups, "General", explicit);
+        ListTag moved = new ListTag();
+        for (Tag entry : sourceGroups) if (entry instanceof CompoundTag group) {
+            ListTag values = group.getListOrEmpty("settings");
+            for (int i = 0; i < values.size(); i++) if (values.get(i) instanceof CompoundTag setting
+                && names.contains(setting.getStringOr("name", ""))) {
+                moved.add(setting.copy());
+                values.remove(i--);
+            }
+            group.put("settings", values);
+        }
+        mergeSettings(targetGroups, "General", moved);
+        settings.put("groups", targetGroups);
+        helper.put("settings", settings);
+    }
+
+    /** Destination values win, independent of the old group order. */
+    private static void mergeSettings(ListTag groups, String targetName, ListTag incoming) {
+        Set<String> present = new HashSet<>();
+        CompoundTag target = null;
+        for (Tag entry : groups) if (entry instanceof CompoundTag group) {
+            if (group.getStringOr("name", "").equals(targetName)) target = group;
+            for (Tag value : group.getListOrEmpty("settings")) if (value instanceof CompoundTag setting)
+                present.add(setting.getStringOr("name", ""));
+        }
+        if (target == null) { target = group(targetName, new ListTag()); groups.add(target); }
+        ListTag values = target.getListOrEmpty("settings");
+        for (Tag entry : incoming) if (entry instanceof CompoundTag setting
+            && present.add(setting.getStringOr("name", ""))) values.add(setting.copy());
+        target.put("settings", values);
+    }
 }

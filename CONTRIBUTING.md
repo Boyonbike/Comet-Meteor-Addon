@@ -22,11 +22,13 @@ and dependencies.
 ```sh
 ./gradlew clean build
 ./gradlew test
+python3 scripts/test_check_docs.py
+python3 scripts/check_docs.py
 ```
 
 `build` also writes `build/distributions/comet-<version>-mc<minecraft>-source.zip`.
 Publish that archive together with the JAR: the GPL-3.0-only adaptations need their
-corresponding source.
+corresponding source. Public module documentation under `docs/` is included; internal planning notes are excluded.
 
 ## Code
 
@@ -42,7 +44,7 @@ corresponding source.
 ## Releases
 
 Tag the commit on the matching branch as `v<version>-mc<minecraft>`, for example
-`v0.25.20-mc26.1.2`, and attach both `build/libs/comet-<version>-mc<minecraft>.jar`
+`v0.26.26-mc26.1.2`, and attach both `build/libs/comet-<version>-mc<minecraft>.jar`
 and `build/distributions/comet-<version>-mc<minecraft>-source.zip` to the GitHub
 release. Tags matching `v*` run the branch build workflow.
 

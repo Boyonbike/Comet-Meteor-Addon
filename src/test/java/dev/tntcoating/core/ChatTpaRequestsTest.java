@@ -9,6 +9,22 @@ final class ChatTpaRequestsTest {
 
     private void message(String text, long now) { state.message(text, List.of(), "Me", now, 120); }
 
+    @Test void configuredCapacityPreservesBurstAndChangesDoNotTreatSendAsSuccess() {
+        state.capacity(1024);
+        for(int i=0;i<1000;i++) message("P"+i+" has requested to teleport to you.",i);
+        assertEquals(1000,state.pending(1000).size());
+        assertEquals(1000,state.drainChanges().size());
+        state.sent("tpy P0",1001);
+        assertTrue(state.drainChanges().isEmpty());
+        message("P1 cancelled their teleport request.",1002);
+        assertEquals(ChatTpaRequests.ChangeKind.Cancelled,state.drainChanges().getFirst().kind());
+    }
+    @Test void configuredCapacityRejectsNewPlayersWithoutEvictingOld() {
+        state.capacity(64);
+        for(int i=0;i<65;i++) message("P"+i+" has requested to teleport to you.",0);
+        assertEquals("P0",state.pending(1).getFirst().player());
+        assertEquals(1,state.rejected());
+    }
     @Test void incomingRequestProvidesNamedYesAndNoCommands() {
         message("§6[TPA] §fAlice has requested to teleport to you.", 100);
         var request = state.pending(100).getFirst();

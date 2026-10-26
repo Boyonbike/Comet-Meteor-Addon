@@ -5,7 +5,6 @@
 
 package dev.tntcoating.modules;
 
-import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.core.TripEventLog;
 import dev.tntcoating.core.dashboard.DashboardJson;
 import dev.tntcoating.core.dashboard.DashboardLog;
@@ -27,7 +26,6 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.settings.StringSetting;
-import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.orbit.EventHandler;
 import net.fabricmc.loader.api.FabricLoader;
@@ -39,46 +37,63 @@ import net.minecraft.world.phys.Vec3;
  * Serves a read-only live dashboard for Highway Fly on the local network. All game state is collected on the game
  * thread; the HTTP server threads only read the published snapshot.
  */
-public final class HighwayDashboard extends Module {
+public final class HighwayDashboard {
     private static final int KEEP_ALIVE_MILLIS = 10_000;
 
-    private final SettingGroup serverGroup = settings.createGroup("Server", false);
-    private final SettingGroup accessGroup = settings.createGroup("Access", false);
-    private final SettingGroup publishingGroup = settings.createGroup("Publishing", false);
-    private final SettingGroup diagnosticsGroup = settings.createGroup("Diagnostics", false);
+    private final net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+    private final HighwayFly owner;
+    private final Setting<Boolean> enabled;
+    private final Setting<String> bindAddress;
+    private final Setting<Integer> port;
+    private final Setting<Integer> maxClients;
+    private final Setting<String> accessToken;
+    private final Setting<Integer> pushInterval;
+    private final Setting<Boolean> debug;
 
-    private final Setting<String> bindAddress = serverGroup.add(new StringSetting.Builder()
-        .name("bind-address")
+    HighwayDashboard(HighwayFly owner) {
+        this.owner = owner;
+        SettingGroup serverGroup = owner.dashboardGroup;
+        SettingGroup accessGroup = serverGroup;
+        SettingGroup publishingGroup = serverGroup;
+        SettingGroup diagnosticsGroup = serverGroup;
+        enabled = serverGroup.add(new BoolSetting.Builder().name("dashboard-enabled")
+            .description("Serve the dashboard even while Highway Fly is off.")
+            .defaultValue(false).onChanged(value -> sync()).build());
+
+        bindAddress = serverGroup.add(new StringSetting.Builder()
+        .name("dashboard-bind-address")
         .description("Interface to listen on. 0.0.0.0 opens the dashboard to every interface; 127.0.0.1 keeps it on this PC.")
         .defaultValue("0.0.0.0")
         .wide()
         .build());
-    private final Setting<Integer> port = serverGroup.add(new IntSetting.Builder()
-        .name("port")
+        port = serverGroup.add(new IntSetting.Builder()
+        .name("dashboard-port")
         .description("Port the dashboard listens on. Browsers use http://<this-pc-ip>:<port>/.")
         .defaultValue(8734).min(1024).max(65535)
         .build());
-    private final Setting<Integer> maxClients = serverGroup.add(new IntSetting.Builder()
-        .name("max-clients")
+        maxClients = serverGroup.add(new IntSetting.Builder()
+        .name("dashboard-max-clients")
         .description("Concurrent live browser streams. Each stream holds one server thread.")
         .defaultValue(8).min(1).max(32).sliderRange(1, 16)
         .build());
-    private final Setting<String> accessToken = accessGroup.add(new StringSetting.Builder()
-        .name("access-token")
+        accessToken = accessGroup.add(new StringSetting.Builder()
+        .name("dashboard-access-token")
         .description("Optional shared secret. Leave blank for an open LAN page; set it to require ?token= or the X-Highway-Token header.")
         .defaultValue("")
         .wide()
         .build());
-    private final Setting<Integer> pushInterval = publishingGroup.add(new IntSetting.Builder()
-        .name("push-interval-ms")
+        pushInterval = publishingGroup.add(new IntSetting.Builder()
+        .name("dashboard-push-interval-ms")
         .description("How often the page receives a new snapshot, in milliseconds.")
         .defaultValue(250).min(100).max(2000).sliderRange(100, 1000)
         .build());
-    private final Setting<Boolean> debug = diagnosticsGroup.add(new BoolSetting.Builder()
-        .name("debug")
+        debug = diagnosticsGroup.add(new BoolSetting.Builder()
+        .name("dashboard-debug")
         .description("Log dashboard clients, failures and server restarts to the Minecraft log.")
         .defaultValue(false)
         .build());
+
+    }
 
     private DashboardServer server;
     private String runningKey;
@@ -92,14 +107,16 @@ public final class HighwayDashboard extends Module {
     private long sequence;
     private long lastBuildAt;
 
-    public HighwayDashboard() {
-        super(TntCoatingAddon.CATEGORY, "highway-dashboard",
-            "Serves a live read-only Highway Fly dashboard on your local network.");
-        runInMainMenu = true;
-        chatFeedback = false;
+    void sync() {
+        if (enabled == null || owner.profileLoading) return;
+        if (!enabled.get()) { stopServer(); return; }
+        if (server == null || !server.running()) onActivate();
+        else maybeRestartServer();
     }
 
-    @Override
+    private void info(String message, Object... args) { owner.info(message, args); }
+    private void warning(String message, Object... args) { owner.warning(message, args); }
+
     public void onActivate() {
         runningKey = null;
         serverError = null;
@@ -110,15 +127,9 @@ public final class HighwayDashboard extends Module {
         startServer();
     }
 
-    @Override
-    public void onDeactivate() {
-        stopServer();
-        lastPhaseKey = null;
-    }
-
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (!isActive()) return;
+        if (!enabled.get() || owner.profileLoading) return;
         maybeRestartServer();
         HighwayFly fly = Modules.get().get(HighwayFly.class);
         recordPhase(fly);
@@ -198,15 +209,18 @@ public final class HighwayDashboard extends Module {
         HighwayTelemetry flight = fly == null ? HighwayTelemetry.idle() : fly.dashboardTelemetry();
         Map<String, List<DashboardSnapshot.SettingValue>> settings = new LinkedHashMap<>();
         if (fly != null) {
-            for (SettingGroup group : fly.settings) {
+            for (meteordevelopment.meteorclient.systems.modules.Module module : List.of(fly, fly.homes(), fly.portalGuard(), fly.lobby())) {
+            for (SettingGroup group : module.settings) {
+                String groupName = module == fly ? group.name : module.title + " / " + group.name;
                 List<DashboardSnapshot.SettingValue> values = new ArrayList<>();
                 for (Setting<?> setting : group) {
                     String rendered = DashboardSettings.isSensitive(setting.name) ? DashboardSettings.HIDDEN
                         : String.valueOf(setting.get());
-                    values.add(new DashboardSnapshot.SettingValue(group.name, setting.name, setting.title, rendered,
+                    values.add(new DashboardSnapshot.SettingValue(groupName, setting.name, setting.title, rendered,
                         setting.getClass().getSimpleName(), setting.isVisible()));
                 }
-                settings.put(group.name, values);
+                settings.put(groupName, values);
+            }
             }
         }
         List<DashboardSnapshot.EventEntry> events = new ArrayList<>();
@@ -274,7 +288,7 @@ public final class HighwayDashboard extends Module {
 
     private String version() {
         if (cachedVersion == null) {
-            cachedVersion = FabricLoader.getInstance().getModContainer("tnt-coating")
+            cachedVersion = FabricLoader.getInstance().getModContainer("comet")
                 .map(container -> container.getMetadata().getVersion().getFriendlyString())
                 .orElse("dev");
         }
@@ -283,13 +297,11 @@ public final class HighwayDashboard extends Module {
 
     private DashboardLog dashboardLog() {
         return new DashboardLog() {
-            @Override
-            public void info(String message) {
+                    public void info(String message) {
                 if (debug.get()) MeteorClient.LOG.info(message);
             }
 
-            @Override
-            public void warn(String message, Throwable error) {
+                    public void warn(String message, Throwable error) {
                 if (debug.get()) MeteorClient.LOG.warn(message, error);
             }
         };
@@ -302,12 +314,10 @@ public final class HighwayDashboard extends Module {
         return Math.round(scaled) / 1000.0;
     }
 
-    @Override
     public String getInfoString() {
         return server != null && server.running() ? primaryUrl() : null;
     }
 
-    @Override
     public WWidget getWidget(GuiTheme theme) {
         var list = theme.verticalList();
         DashboardServer current = server;
@@ -332,9 +342,8 @@ public final class HighwayDashboard extends Module {
 
     private void restartFromWidget() {
         mc.execute(() -> {
-            stopServer();
-            lastBuildAt = 0;
-            startServer();
+            if (!enabled.get()) enabled.set(true);
+            else { stopServer(); lastBuildAt = 0; startServer(); }
         });
     }
 }

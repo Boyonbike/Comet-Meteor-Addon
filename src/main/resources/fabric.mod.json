@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "id": "tnt-coating",
+  "id": "comet",
   "version": "${version}",
-  "name": "Comet by Boyonabike",
+  "name": "Comet",
   "authors": [
     "Boyonabike"
   ],
-  "description": "Comet by Boyonabike: adaptive elytra flight, DEVILS Auto Wasp, TNT coating, Chat Tools, storage ESP, Speedmine, waypoints and HUD elements for Meteor Client.",
+  "description": "Comet: adaptive elytra flight, DEVILS Auto Wasp, TNT coating, Chat Tools, storage ESP, Speedmine, waypoints and HUD elements for Meteor Client.",
   "contact": {
     "homepage": "https://github.com/Boyonbike/Comet-Meteor-Addon",
     "sources": "https://github.com/Boyonbike/Comet-Meteor-Addon",
