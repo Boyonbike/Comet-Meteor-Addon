@@ -10,6 +10,7 @@ import dev.tntcoating.core.HighwayCourse;
 import dev.tntcoating.core.HighwayRecoveryTargets;
 import dev.tntcoating.core.HighwayWebhook;
 import dev.tntcoating.core.LobbyLogin;
+import dev.tntcoating.core.LobbyLocation;
 import dev.tntcoating.core.LobbyPortalFinder;
 import dev.tntcoating.core.LobbyRecoveryStore;
 import dev.tntcoating.core.PortalLookahead;
@@ -74,7 +75,7 @@ public final class AutoLobby extends HighwayHelper {
 
     private final Setting<Boolean> crackedAccount = sgGeneral.add(new BoolSetting.Builder()
         .name("cracked-account")
-        .description("Log in with /login before walking to the recovery portal.")
+        .description("Also log in on unrecognised recovery spawns. The known cracked lobby always requires /login.")
         .defaultValue(false)
         .build());
 
@@ -82,7 +83,7 @@ public final class AutoLobby extends HighwayHelper {
         .name("login-password")
         .description("Password sent with /login. It is stored in plain text in the Meteor config.")
         .defaultValue("")
-        .visible(crackedAccount::get)
+        .visible(() -> crackedAccount.get() || this.location == LobbyLocation.CRACKED_LOBBY)
         .wide()
         .build());
 
@@ -92,7 +93,7 @@ public final class AutoLobby extends HighwayHelper {
         .defaultValue(200)
         .range(20, 1200)
         .sliderRange(20, 400)
-        .visible(crackedAccount::get)
+        .visible(() -> crackedAccount.get() || this.location == LobbyLocation.CRACKED_LOBBY)
         .build());
 
     private final Setting<Boolean> enterPortal = sgGeneral.add(new BoolSetting.Builder()
@@ -157,6 +158,7 @@ public final class AutoLobby extends HighwayHelper {
         AWAITING_JOIN,
         SETTLING,
         LOGIN,
+        QUEUED,
         SEARCHING,
         WALKING,
         ENTERING,
@@ -201,6 +203,8 @@ public final class AutoLobby extends HighwayHelper {
 
     private Stage stage = Stage.IDLE;
     private boolean armed;
+    private Object recoveryWorld;
+    private LobbyLocation location = LobbyLocation.NONE;
     private boolean loginStarted;
     private boolean loginSent;
     private boolean loginConfirmed;
@@ -258,7 +262,8 @@ public final class AutoLobby extends HighwayHelper {
             highway().notifyWebhook(HighwayWebhook.Event.RECOVERY,
                 "Found the saved trip and is recovering it before resuming flight.");
         }
-        beginLogin();
+        recoveryWorld = null;
+        resetLogin();
         return true;
     }
 
@@ -275,14 +280,17 @@ public final class AutoLobby extends HighwayHelper {
     }
 
     private void beginLogin() {
-        if (!crackedAccount.get() || loginStarted) return;
+        boolean needsLogin = location.requiresLogin(crackedAccount.get(), isResumeDimension());
+        if (!needsLogin || loginStarted) return;
+        loginStarted = true;
+        stage = Stage.LOGIN;
+        stageTicks = 0;
         if (LobbyLogin.command(loginPassword.get()) == null) {
-            warning("Cracked account is on but login-password is blank; skipping the login.");
+            warning("Set login-password or log in manually before portal recovery can continue.");
             highway().notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                "Cracked account is on, but login-password is blank; portal recovery cannot log in.");
+                "Login is required, but login-password is blank; set it or log in manually.");
             return;
         }
-        loginStarted = true;
         loginSent = false;
         loginConfirmed = false;
         loginRejected = false;
@@ -299,7 +307,7 @@ public final class AutoLobby extends HighwayHelper {
             finishLogin();
             return;
         }
-        if (!crackedAccount.get()) {
+        if (!crackedAccount.get() && location != LobbyLocation.CRACKED_LOBBY) {
             finishLogin();
             return;
         }
@@ -308,10 +316,7 @@ public final class AutoLobby extends HighwayHelper {
             if (++loginTicks < joinDelay.get()) return;
             String command = LobbyLogin.command(loginPassword.get());
             if (command == null) {
-                warning("Cracked account is on but login-password is blank; skipping the login.");
-                highway().notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
-                    "Cracked account is on, but login-password is blank; portal recovery cannot log in.");
-                finishLogin();
+                // Stay still until credentials are configured or a manual login is confirmed.
                 return;
             }
             mc.getConnection().sendCommand(command);
@@ -381,7 +386,15 @@ public final class AutoLobby extends HighwayHelper {
         }
         if (!highway().session.recoveryAllowed(serverAddress()) || !armed) return;
         if (!highway().isActive()) highway().prepareReconnectDelay();
+        updateLocation();
+        if (location == LobbyLocation.WAITING_AREA) {
+            stopWalking();
+            stage = Stage.QUEUED;
+            return;
+        }
+        beginLogin();
         if (stage == Stage.LOGIN) {
+            stopWalking();
             tickLogin();
             return;
         }
@@ -728,8 +741,37 @@ public final class AutoLobby extends HighwayHelper {
         return dx * dx + dz * dz;
     }
 
+    boolean isKnownLobby() {
+        return detectedLocation() != LobbyLocation.NONE;
+    }
+
+    private LobbyLocation detectedLocation() {
+        return mc.player == null ? LobbyLocation.NONE : LobbyLocation.detect(dimensionId(),
+            mc.player.getX(), mc.player.getY(), mc.player.getZ());
+    }
+
+    private void updateLocation() {
+        LobbyLocation detected = detectedLocation();
+        boolean changedWorld = recoveryWorld != mc.level;
+        if (!changedWorld && (detected == LobbyLocation.NONE || detected == location)) return;
+        stopWalking();
+        resetTransientState();
+        resetLogin();
+        failedPortals.clear();
+        recoveryWorld = mc.level;
+        // Keep the spawn classification while walking away from it towards the portal.
+        location = detected;
+        stage = Stage.SETTLING;
+        if (location != LobbyLocation.NONE) info("Detected %s.", switch (location) {
+            case CRACKED_LOBBY -> "cracked lobby; login is required before the portal";
+            case LOBBY -> "lobby; looking for the portal";
+            case WAITING_AREA -> "waiting area; waiting for the server to move you";
+            default -> "recovery area";
+        });
+    }
+
     private boolean isResumeDimension() {
-        return mc.level != null && resumeDimension != null && resumeDimension.equals(dimensionId());
+        return location == LobbyLocation.NONE && mc.level != null && resumeDimension != null && resumeDimension.equals(dimensionId());
     }
 
     private String dimensionId() {
@@ -829,6 +871,8 @@ public final class AutoLobby extends HighwayHelper {
         stage = Stage.IDLE;
         resumeDimension = null;
         resumeServer = null;
+        recoveryWorld = null;
+        location = LobbyLocation.NONE;
         portal = null;
         resetLogin();
         resetTransientState();
@@ -840,6 +884,7 @@ public final class AutoLobby extends HighwayHelper {
             case AWAITING_JOIN -> "Waiting for join";
             case SETTLING -> "Settling";
             case LOGIN -> "Logging in";
+            case QUEUED -> "Waiting area";
             case SEARCHING -> "Finding portal";
             case WALKING -> "Walking to portal";
             case ENTERING -> "Entering portal";

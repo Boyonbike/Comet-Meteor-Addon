@@ -793,6 +793,14 @@ public final class HighwayFly extends Module {
             }
 
         }
+        if (session.flying() && lobbyEnabled()
+            && (!java.util.Objects.equals(session.dimension(), dimensionId()) || lobby().isKnownLobby())) {
+            session.disconnected(true);
+            pauseRuntime();
+            pauseFlight();
+            lobby().saveRecovery();
+            lobby().resumePending();
+        }
         if (session.recovering()) {
             pauseRuntime();
             if (!lobbyEnabled()) {
