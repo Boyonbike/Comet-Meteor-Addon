@@ -10,7 +10,7 @@ import java.util.Objects;
 /** Notification categories and per-event monotonic-clock cooldowns for one trip. */
 public final class HighwayWebhookPolicy {
     public enum Category {
-        TRIP, STATUS, SAFETY, DEATH, LAVA, CONNECTION, PORTAL, ATTENTION
+        TRIP, STATUS, HOME, SAFETY, DEATH, LAVA, CONNECTION, PORTAL, ATTENTION
     }
 
     private final EnumMap<HighwayWebhook.Event, Long> lastAllowedNanos = new EnumMap<>(HighwayWebhook.Event.class);
@@ -20,6 +20,7 @@ public final class HighwayWebhookPolicy {
         return switch (event) {
             case STARTED, RESUMED, FINISHED, STOPPED -> Category.TRIP;
             case STATUS -> Category.STATUS;
+            case HOME_REPLACED -> Category.HOME;
             case SAFETY_LOGOUT -> Category.SAFETY;
             case DEATH -> Category.DEATH;
             case LAVA_AVOIDANCE -> Category.LAVA;
@@ -36,7 +37,7 @@ public final class HighwayWebhookPolicy {
     public boolean allow(HighwayWebhook.Event event, long nowNanos, long cooldownNanos) {
         Objects.requireNonNull(event, "event");
         if (cooldownNanos < 0) throw new IllegalArgumentException("Webhook cooldown must not be negative.");
-        if (event == HighwayWebhook.Event.DEATH || event == HighwayWebhook.Event.SAFETY_LOGOUT) return true;
+        if (event == HighwayWebhook.Event.HOME_REPLACED || event == HighwayWebhook.Event.DEATH || event == HighwayWebhook.Event.SAFETY_LOGOUT) return true;
         Long lastAllowed = lastAllowedNanos.get(event);
         if (cooldownNanos > 0 && lastAllowed != null && nowNanos - lastAllowed < cooldownNanos) return false;
         lastAllowedNanos.put(event, nowNanos);

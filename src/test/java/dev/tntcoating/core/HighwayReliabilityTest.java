@@ -14,6 +14,36 @@ class HighwayReliabilityTest {
         assertEquals(HighwayFlightSafety.Action.LOGOUT, HighwayFlightSafety.action(-1, 10, true, false));
         assertEquals(HighwayFlightSafety.Action.REPLACE, HighwayFlightSafety.action(2, 0, true, true));
     }
+    @Test void aChestplateIsReplacedWithWingsBeforeTakingOffAgain() {
+        assertEquals(HighwayFlightSafety.Action.REPLACE, HighwayFlightSafety.action(-1, 10, true, true));
+        assertEquals(HighwayFlightSafety.Action.LOGOUT, HighwayFlightSafety.action(-1, 10, false, true));
+    }
+    @Test void groundedWalkingCanKeepArmorWithoutRequiringAnElytraSwap() {
+        assertFalse(HighwayFlightSafety.requiresWings(true, false, true));
+        assertFalse(HighwayFlightSafety.requiresWings(true, true, true));
+        assertEquals(HighwayFlightSafety.Action.CONTINUE,
+            HighwayFlightSafety.action(-1, 10, false, false, false));
+        assertEquals(HighwayFlightSafety.Action.CONTINUE,
+            HighwayFlightSafety.action(1, 10, true, false, false));
+    }
+    @Test void anEstablishedWalkKeepsArmorDuringJumpsAndDrops() {
+        assertFalse(HighwayFlightSafety.requiresWings(true, true, false));
+    }
+    @Test void landingBeforeTheWalkStartsStillRequiresWings() {
+        assertTrue(HighwayFlightSafety.requiresWings(true, false, false));
+        assertEquals(HighwayFlightSafety.Action.LOGOUT,
+            HighwayFlightSafety.action(1, 10, true, false, true));
+    }
+    @Test void takeoffAndNormalFlightRequireWings() {
+        assertTrue(HighwayFlightSafety.requiresWings(false, false, true));
+        assertTrue(HighwayFlightSafety.requiresWings(false, false, false));
+        assertEquals(HighwayFlightSafety.Action.REPLACE,
+            HighwayFlightSafety.action(-1, 10, true, true, true));
+        assertEquals(HighwayFlightSafety.Action.REPLACE,
+            HighwayFlightSafety.action(10, 10, true, true, true));
+        assertEquals(HighwayFlightSafety.Action.CONTINUE,
+            HighwayFlightSafety.action(11, 10, false, false, true));
+    }
     @Test void prolongedOutageBacksOffWithoutRetryingTooFast() {
         HighwayReconnectBackoff backoff = new HighwayReconnectBackoff();
         backoff.failed(); assertEquals(3.5, backoff.delay(3.5, .5), 1e-8);

@@ -6,6 +6,31 @@ import static org.junit.jupiter.api.Assertions.*;
 class HighwayFlySessionTest {
     private static final String NETHER = "minecraft:the_nether";
 
+    @Test void initialHealthReceivedBeforeTheFlightStartsStillProtectsTheTrip() {
+        HighwayFlySession session = new HighwayFlySession();
+        HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
+        updates.reset(20);
+        updates.connectionStarted();
+
+        if (session.healthTrackingAllowed("6b6t.org")) updates.accept(6);
+        session.start(NETHER, "6b6t.org");
+
+        assertTrue(updates.lowHealth(8));
+    }
+
+    @Test void unrelatedServerHealthDoesNotPoisonARecoveringTrip() {
+        HighwayFlySession session = new HighwayFlySession();
+        HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
+        updates.reset(20);
+        session.recover(NETHER, "6b6t.org");
+
+        if (session.healthTrackingAllowed("other.org")) updates.accept(2);
+        assertFalse(updates.lowHealth(8));
+
+        if (session.healthTrackingAllowed("6B6T.ORG")) updates.accept(6);
+        assertTrue(updates.lowHealth(8));
+    }
+
     @Test void interruptedFlightKeepsRecoveryButSuspendsHomeAndPortalProtection() {
         HighwayFlySession session = new HighwayFlySession();
         session.start(NETHER, "6b6t.org");

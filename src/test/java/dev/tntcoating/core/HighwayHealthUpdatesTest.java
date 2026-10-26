@@ -2,36 +2,62 @@ package dev.tntcoating.core;
 
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 class HighwayHealthUpdatesTest {
     @Test
-    void retainsDamageReceivedAfterTheInitialConnectionSampleBeforeTheNextTick() {
+    void logsOutAtTheRemainingHealthThresholdAfterConnecting() {
         HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
         updates.reset(20);
 
         updates.connectionStarted();
         updates.accept(20);
-        updates.accept(12);
+        updates.accept(8);
 
-        assertTrue(updates.exceeded(8));
+        assertTrue(updates.lowHealth(8));
     }
 
     @Test
-    void countsDamageEvenWhenHealingArrivesInTheSameBurst() {
+    void healingBeforeTheNextTickPreventsAFullHealthLogout() {
         HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
         updates.reset(20);
 
-        updates.accept(12);
+        updates.accept(6);
         updates.accept(20);
 
-        assertTrue(updates.exceeded(8));
+        assertFalse(updates.lowHealth(8));
+    }
+
+    @Test
+    void repeatedHealedMobHitsDoNotExhaustATripDamageBudget() {
+        HighwayTravelSafety safety = new HighwayTravelSafety();
+        HighwayHealthUpdates updates = new HighwayHealthUpdates(safety);
+        updates.reset(20);
+
+        for (int hit = 0; hit < 10; hit++) {
+            updates.accept(18);
+            assertFalse(updates.lowHealth(8));
+            updates.accept(20);
+            assertFalse(updates.lowHealth(8));
+        }
+        assertEquals(20, safety.damageTaken());
+    }
+
+    @Test
+    void aHealthDropAboveTheThresholdDoesNotLogOut() {
+        HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
+        updates.reset(20);
+
+        updates.accept(8.5);
+        assertFalse(updates.lowHealth(8));
+        updates.accept(8);
+        assertTrue(updates.lowHealth(8));
     }
 
     @Test
     void preservesQueuedTripDamageWhenAConnectionStarts() {
-        HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
+        HighwayTravelSafety safety = new HighwayTravelSafety();
+        HighwayHealthUpdates updates = new HighwayHealthUpdates(safety);
         updates.reset(20);
 
         updates.accept(16);
@@ -39,22 +65,20 @@ class HighwayHealthUpdatesTest {
         updates.accept(10);
         updates.accept(6);
 
-        assertTrue(updates.exceeded(8));
+        assertTrue(updates.lowHealth(8));
+        assertEquals(8, safety.damageTaken());
     }
 
     @Test
-    void rebasesLowerInitialHealthWithoutErasingEarlierTripDamage() {
+    void lowHealthOnAReconnectionStillTriggersTheThreshold() {
         HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
         updates.reset(20);
         updates.accept(17);
-        assertFalse(updates.exceeded(8));
+        assertFalse(updates.lowHealth(8));
 
         updates.connectionStarted();
-        updates.accept(10);
-        assertFalse(updates.exceeded(8));
-
         updates.accept(5);
-        assertTrue(updates.exceeded(8));
+        assertTrue(updates.lowHealth(8));
     }
 
     @Test
@@ -66,7 +90,7 @@ class HighwayHealthUpdatesTest {
         updates.accept(10);
         updates.accept(2);
 
-        assertTrue(updates.exceeded(8));
+        assertTrue(updates.lowHealth(8));
     }
 
     @Test
@@ -75,24 +99,24 @@ class HighwayHealthUpdatesTest {
         updates.reset(20);
         updates.accept(16);
 
-        assertFalse(updates.exceeded(8));
-        assertFalse(updates.exceeded(8));
-        assertFalse(updates.exceeded(8));
+        assertFalse(updates.lowHealth(8));
+        assertFalse(updates.lowHealth(8));
+        assertFalse(updates.lowHealth(8));
 
         updates.accept(15);
-        assertFalse(updates.exceeded(8));
-        updates.accept(12);
-        assertTrue(updates.exceeded(8));
+        assertFalse(updates.lowHealth(8));
+        updates.accept(8);
+        assertTrue(updates.lowHealth(8));
     }
 
     @Test
-    void rechecksAccumulatedDamageWhenTheLimitChangesWithoutNewSamples() {
+    void rechecksCurrentHealthWhenTheThresholdChangesWithoutNewSamples() {
         HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
         updates.reset(20);
-        updates.accept(12);
+        updates.accept(6);
 
-        assertFalse(updates.exceeded(0));
-        assertTrue(updates.exceeded(8));
+        assertFalse(updates.lowHealth(0));
+        assertTrue(updates.lowHealth(8));
     }
 
     @Test
@@ -104,9 +128,9 @@ class HighwayHealthUpdatesTest {
 
         updates.reset(20);
 
-        assertFalse(updates.exceeded(8));
-        updates.accept(12);
-        assertTrue(updates.exceeded(8));
+        assertFalse(updates.lowHealth(8));
+        updates.accept(8);
+        assertTrue(updates.lowHealth(8));
     }
 
     @Test
@@ -118,22 +142,66 @@ class HighwayHealthUpdatesTest {
 
         updates.clear();
 
-        assertFalse(updates.exceeded(8));
-        updates.accept(12);
-        assertTrue(updates.exceeded(8));
+        assertFalse(updates.lowHealth(8));
+        updates.accept(8);
+        assertTrue(updates.lowHealth(8));
     }
 
     @Test
-    void resettingClearsDamageAlreadyCountedOnTheEndedTrip() {
+    void resettingClearsLowHealthFromTheEndedTrip() {
         HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
         updates.reset(20);
-        updates.accept(12);
-        assertTrue(updates.exceeded(8));
+        updates.accept(8);
+        assertTrue(updates.lowHealth(8));
 
         updates.reset(20);
 
-        assertFalse(updates.exceeded(8));
+        assertFalse(updates.lowHealth(8));
         updates.accept(16);
-        assertFalse(updates.exceeded(8));
+        assertFalse(updates.lowHealth(8));
+    }
+
+    @Test
+    void aHealthyReconnectDoesNotReuseOldLowHealthForLogout() {
+        HighwayTravelSafety safety = new HighwayTravelSafety();
+        HighwayHealthUpdates updates = new HighwayHealthUpdates(safety);
+        updates.reset(20);
+        updates.accept(4);
+        updates.connectionStarted();
+        updates.accept(20);
+
+        assertFalse(updates.lowHealth(8));
+        assertEquals(16, safety.damageTaken());
+    }
+
+    @Test
+    void disabledThresholdStillRetainsDamageTelemetry() {
+        HighwayTravelSafety safety = new HighwayTravelSafety();
+        HighwayHealthUpdates updates = new HighwayHealthUpdates(safety);
+        updates.reset(20);
+        updates.accept(2);
+
+        assertFalse(updates.lowHealth(0));
+        assertFalse(updates.lowHealth(-1));
+        assertEquals(18, safety.damageTaken());
+    }
+
+    @Test
+    void enablingWhileAlreadyLowDoesNotRequireANewPacket() {
+        HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
+        updates.reset(7);
+
+        assertTrue(updates.lowHealth(8));
+    }
+
+    @Test
+    void invalidThresholdCannotConsumeQueuedHealthSamples() {
+        HighwayHealthUpdates updates = new HighwayHealthUpdates(new HighwayTravelSafety());
+        updates.reset(20);
+        updates.accept(6);
+
+        assertThrows(IllegalArgumentException.class, () -> updates.lowHealth(Double.NaN));
+        assertThrows(IllegalArgumentException.class, () -> updates.lowHealth(Double.POSITIVE_INFINITY));
+        assertTrue(updates.lowHealth(8));
     }
 }

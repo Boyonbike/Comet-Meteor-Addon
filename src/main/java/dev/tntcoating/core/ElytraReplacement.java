@@ -28,6 +28,15 @@ public final class ElytraReplacement {
         return best;
     }
 
+    /** Counts elytra with strictly more remaining durability than the configured swap threshold. */
+    public static int countUsable(int[] remaining, int threshold) {
+        int count = 0;
+        for (int durability : remaining) {
+            if (durability > threshold) count++;
+        }
+        return count;
+    }
+
     /**
      * True when the worn elytra is at or below the threshold and no spare is left to replace it.
      *

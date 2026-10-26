@@ -32,32 +32,27 @@ public final class AutoSetHomeHud extends HudElement {
 
     private List<String> editorLines() {
         if (!isInEditor()) return List.of();
-        return List.of("Mode: Auto detect", "Next: 24s", "Home: test", "Cooldown: ~4m");
+        return List.of("Mode: Auto detect", "Home: test", "Cooldown: 4m 54s", "Buffer: 10s (after cooldown)", "Next: 5m 4s");
     }
 
     private static List<String> lines(HighwayFly.AutoSetHomeStatus status) {
         List<String> lines = new ArrayList<>(5);
         lines.add("Mode: " + status.mode());
-        lines.add((status.waiting() ? "Confirm: " : "Next: ") + remaining(status.waitMillis()));
+        lines.add((status.waiting() ? "Confirm: " : "Next: ") + remaining(status.waiting() ? status.schedule().responseMillis() : status.waitMillis()));
         lines.add("Home: " + (status.home().isEmpty() ? "not set" : status.home()));
 
-        String cooldown = status.cooldownLabel();
+        var schedule = status.schedule();
+        if (status.paused()) lines.add("Paused: countdown continues");
+        lines.add("State: " + schedule.phase().toLowerCase(java.util.Locale.ROOT).replace('_', ' '));
         if (status.fixedTimer()) {
-            lines.add("Interval: " + remaining(status.intervalMillis()));
-            if (status.cooldownKnown()) {
-                lines.add((cooldown.startsWith("Buffer ") || cooldown.isEmpty() ? "" : "Server: ")
-                    + (cooldown.isEmpty() ? "clear" : cooldown) + " (ignored)");
-            }
-        } else if (status.waiting()) {
-            lines.add("Server: waiting for override dialog");
-        } else if (cooldown.startsWith("Retry ")) {
-            lines.add("Retry: " + cooldown.substring("Retry ".length()));
-        } else if (cooldown.startsWith("Buffer ")) {
-            lines.add("Buffer: " + cooldown.substring("Buffer ".length()));
+            lines.add("Interval: " + remaining(schedule.intervalMillis()));
+            lines.add("Server cooldown: " + remaining(schedule.cooldownMillis()) + " (informational)");
         } else {
-            lines.add("Cooldown: " + (cooldown.isEmpty()
-                ? (status.cooldownKnown() ? "clear" : "none detected")
-                : cooldown));
+            lines.add("Cooldown: " + (schedule.learnedMillis() == 0 && schedule.cooldownMillis() == 0
+                ? "learning" : remaining(schedule.cooldownMillis())));
+            lines.add("Buffer: " + remaining(schedule.bufferMillis())
+                + (schedule.cooldownMillis() > 0 ? " (after cooldown)" : ""));
+            if (schedule.retryMillis() > 0) lines.add("Retry: " + remaining(schedule.retryMillis()));
         }
         return lines;
     }

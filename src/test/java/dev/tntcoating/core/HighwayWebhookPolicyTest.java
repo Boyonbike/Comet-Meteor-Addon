@@ -13,6 +13,7 @@ class HighwayWebhookPolicyTest {
     void groupsEveryEventUnderItsOwnNotificationSetting() {
         Map<HighwayWebhook.Event, HighwayWebhookPolicy.Category> categories = Map.ofEntries(
             Map.entry(STARTED, TRIP),
+            Map.entry(HOME_REPLACED, HOME),
             Map.entry(RESUMED, TRIP),
             Map.entry(FINISHED, TRIP),
             Map.entry(STOPPED, TRIP),
@@ -31,6 +32,12 @@ class HighwayWebhookPolicyTest {
 
         assertEquals(EnumSet.allOf(HighwayWebhook.Event.class), categories.keySet());
         categories.forEach((event, category) -> assertEquals(category, HighwayWebhookPolicy.category(event), event.name()));
+    }
+
+    @Test void confirmedHomesAreNeverSuppressedByGenericRepeatCooldown() {
+        var policy = new HighwayWebhookPolicy();
+        assertTrue(policy.allow(HOME_REPLACED, 100, 1_000));
+        assertTrue(policy.allow(HOME_REPLACED, 101, 1_000));
     }
 
     @Test
