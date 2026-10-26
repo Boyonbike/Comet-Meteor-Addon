@@ -8,6 +8,7 @@
   let lastSequence = -1;
   let lastEventsKey = '';
   let lastSettingsSignature = null;
+  let lastHomeHistoryKey = null;
   let lastSnapshotAt = 0;
   let accessWarning = '';
   let source = null;
@@ -59,6 +60,9 @@
       ? Math.max(0, Math.min(100, percent))
       : 0;
     el.style.width = `${safe}%`;
+    if (el.parentElement && el.parentElement.getAttribute('role') === 'progressbar') {
+      el.parentElement.setAttribute('aria-valuenow', String(Math.round(safe)));
+    }
   }
 
   function chip(label, tone = '') {
@@ -109,7 +113,13 @@
     source = new EventSource(`/api/events${query}`);
 
     source.addEventListener('open', () => {
-      setConnection('live', 'Live');
+      // A new server may restart its sequence at one. Refresh derived sections too.
+      lastSequence = -1;
+      lastEventsKey = '';
+      lastSettingsSignature = null;
+      lastHomeHistoryKey = null;
+      lastSnapshotAt = Date.now();
+      setConnection('stale', 'Waiting for flight data');
     });
 
     source.addEventListener('snapshot', (event) => {
@@ -126,7 +136,7 @@
     });
 
     source.addEventListener('error', () => {
-      const hint = token ? 'Reconnecting…' : 'Reconnecting… is an access token needed?';
+      const hint = accessWarning ? 'Access token required' : 'Connection lost · reconnecting…';
       setConnection('stale', hint);
     });
   }
@@ -187,8 +197,8 @@
     text('server-listen', `${server.bindAddress}:${server.port}`);
     text('server-clients', whole(server.clients));
     text('server-version', server.version);
-    text('server-uptime', server.running && server.startedAtMillis
-      ? duration((Date.now() - server.startedAtMillis) * 1e6)
+    text('server-uptime', server.running && server.startedAt
+      ? duration((Date.now() - server.startedAt) * 1e6)
       : 'stopped');
   }
 
@@ -218,7 +228,7 @@
         : 0;
       bar('progress-bar', progress * 100);
       text('progress-percent', `${Math.round(progress * 100)}%`);
-      text('progress-remaining', metres(route.remaining));
+      text('progress-remaining', `${metres(route.remaining)} remaining`);
       text('route-destination', `${whole(route.destinationX)}, ${whole(route.destinationZ)}`);
       text('route-length', metres(route.length));
       text('route-distance', metres(route.distanceToDestination));
@@ -262,9 +272,9 @@
 
     const safety = f.safety || {};
     const damageTaken = typeof safety.damageTaken === 'number' ? safety.damageTaken : 0;
-    const damageLimit = typeof safety.damageLimit === 'number' ? safety.damageLimit : 0;
-    bar('safety-damage-bar', damageLimit > 0 ? (damageTaken / damageLimit) * 100 : (damageTaken > 0 ? 100 : 0));
-    text('safety-damage-text', damageLimit > 0 ? `${fixed(damageTaken)} / ${fixed(damageLimit)}` : `${fixed(damageTaken)} / off`);
+    const minimumHealth = typeof safety.minimumHealth === 'number' ? safety.minimumHealth : 0;
+    text('safety-minimum-health', minimumHealth > 0 ? `${fixed(minimumHealth)} HP (${fixed(minimumHealth / 2)} hearts)` : 'off');
+    text('safety-trip-damage', `${fixed(damageTaken)} HP`);
     text('safety-noprogress', safety.noProgressLimitSeconds === null || safety.noProgressLimitSeconds === undefined
       ? PLACEHOLDER
       : `${safety.noProgressLimitSeconds} s`);
@@ -280,6 +290,7 @@
       ? (elytra.equipped ? 'unlimited' : PLACEHOLDER)
       : whole(elytra.remaining));
     text('elytra-min', whole(elytra.minDurability));
+    text('elytra-usable', whole(elytra.usableCount));
 
     const portal = f.portal || {};
     text('portal-mode', portal.mode || PLACEHOLDER);
@@ -296,16 +307,8 @@
     text('recovery-allowed', f.recovering ? (f.recoveryAllowed ? 'yes, on this server' : 'no, wrong server') : PLACEHOLDER);
     text('lobby-info', f.lobbyInfo || PLACEHOLDER);
 
-    const home = f.home;
-    if (!home) {
-      text('home-state', 'inactive');
-      text('home-waiting', PLACEHOLDER);
-    } else {
-      text('home-state', `${home.mode || 'auto'} → ${home.home || PLACEHOLDER}`);
-      text('home-waiting', home.waiting
-        ? `waiting ${duration(home.waitMillis * 1e6)}`
-        : (home.cooldownKnown && home.cooldownLabel ? home.cooldownLabel : 'idle'));
-    }
+    renderHome(f.home);
+
 
     const webhook = f.webhook;
     if (!webhook) {
@@ -320,7 +323,44 @@
     text('paused-modules', paused.length ? paused.join(', ') : 'none');
   }
 
+  function renderHome(home) {
+    const timing = home && home.schedule;
+    const ms = (value) => duration(Math.ceil(Math.max(0, value || 0) / 1000) * 1e9);
+    text('home-state', home ? `${home.mode} → ${home.home}${home.paused ? ' · paused' : ''}` : 'inactive');
+    text('home-waiting', timing ? `${timing.phase.toLowerCase().replaceAll('_', ' ')} · ${ms(timing.waiting ? timing.responseMillis : timing.waitMillis)}` : PLACEHOLDER);
+    text('home-cooldown', timing ? `${ms(timing.cooldownMillis)}${home.fixedTimer ? ' (informational)' : timing.learnedMillis === 0 ? ' · learning' : ''}` : PLACEHOLDER);
+    text('home-buffer', timing && !home.fixedTimer
+      ? `${ms(timing.bufferMillis)}${timing.cooldownMillis > 0 ? ' after cooldown' : ''}` : home && home.fixedTimer ? 'Not applied in fixed mode' : PLACEHOLDER);
+    text('home-interval', timing ? `${ms(timing.intervalMillis)}${home.fixedTimer ? '' : ' (fallback)'}` : PLACEHOLDER);
+    text('home-retry', timing ? `${ms(timing.retryMillis)}${home.fixedTimer ? ' (informational)' : ''}` : PLACEHOLDER);
+    text('home-history-zone', `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
+    text('home-history-context', home ? `${home.account} · ${home.server}` : 'Join a server to load its saved homes.');
+    const entries = home && home.history || [];
+    const key = JSON.stringify([home && home.account, home && home.server, entries]);
+    if (lastHomeHistoryKey === key) return;
+    lastHomeHistoryKey = key;
+    const body = $('home-history-body');
+    if (body) {
+      body.replaceChildren();
+      entries.forEach((entry) => {
+        const row = document.createElement('tr');
+        const loc = entry.location;
+        [new Date(entry.confirmedAt).toLocaleString([], { hour12: false }), entry.home,
+          `${fixed(loc.x, 1)} / ${fixed(loc.y, 1)} / ${fixed(loc.z, 1)}`, loc.dimension].forEach((value) => {
+          const cell = document.createElement('td');
+          cell.textContent = value;
+          row.append(cell);
+        });
+        body.append(row);
+      });
+    }
+    const empty = $('home-history-empty');
+    if (empty) empty.hidden = entries.length > 0;
+  }
+
   function renderClient(client) {
+    text('flight-coords', client && client.inWorld
+      ? `${fixed(client.x)}, ${fixed(client.y)}, ${fixed(client.z)}` : PLACEHOLDER);
     if (!client || !client.inWorld) {
       text('player-name', client && client.singleplayer ? 'Singleplayer menu' : 'Not in a world');
       text('player-server', PLACEHOLDER);
@@ -367,7 +407,7 @@
 
   function renderEvents(events) {
     if (!Array.isArray(events)) return;
-    const key = events.length ? `${events[events.length - 1].sequence}:${events.length}` : '0';
+    const key = JSON.stringify(events);
     if (key === lastEventsKey) return;
     lastEventsKey = key;
 
@@ -419,6 +459,7 @@
     const host = $('settings-list');
     const empty = $('settings-empty');
     if (!host) return;
+    const openGroups = new Set(Array.from(host.querySelectorAll ? host.querySelectorAll('details[open] > summary') : [], (summary) => summary.textContent.replace(/ \(\d+\)$/, '')));
     host.replaceChildren();
 
     const groups = settings || {};
@@ -429,6 +470,7 @@
     names.forEach((groupName) => {
       const values = groups[groupName] || [];
       const details = document.createElement('details');
+      details.open = openGroups.has(groupName);
       details.className = 'settings-group';
 
       const summary = document.createElement('summary');

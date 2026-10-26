@@ -39,6 +39,11 @@ public final class HighwayFlySession {
         return recovering() && sameServer(currentServer);
     }
 
+    /** A fresh trip retains health received before GameJoined; recovery stays on its original server. */
+    public boolean healthTrackingAllowed(String currentServer) {
+        return !recovering() || sameServer(currentServer);
+    }
+
     public boolean reconnectAllowed(boolean enabled, String reconnectServer) {
         return enabled && server != null && recoveryAllowed(reconnectServer);
     }

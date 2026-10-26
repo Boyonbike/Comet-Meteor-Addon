@@ -1,6 +1,16 @@
 # Changelog
 
+## Auto sethome reliability
+
+- Persist real-time home scheduling, learned server cooldowns and the latest 100 confirmed home locations per account/server across disconnects and restarts.
+- Recognise the server's teleport-worded cooldown and named home-moved success messages; retain existing override clicks while requiring server confirmation.
+- Replace periodic webhook check-ins with confirmed replacement notifications, migrate the old toggle, and add separate dashboard/HUD cooldown and buffer countdowns with saved home history.
+
+
 ## Unreleased
+
+- **Highway Fly recovery armour:** when **swap-elytra** and **swap-back** are enabled, grounded Baritone walking and lobby recovery equip an available inventory chestplate, then restore usable wings before takeoff. Turning either option off preserves that choice. Eating grants up to five seconds of walking-stall grace per no-progress period without clearing time already stalled.
+- **Highway Fly low-health logout:** **minimum-health** replaces the cumulative damage limit and logs out at or below **8 remaining health points** (**4 red hearts**) by default; healing is respected and absorption is excluded. Cumulative damage remains informational on the dashboard. Saved **damage-limit** values below 20 migrate to the new threshold, including **0** to keep the check disabled; values at least 20 or invalid values use the default 8. An explicit **minimum-health** value takes precedence.
 
 ## 0.26.25 — 2026-10-25
 

@@ -20,6 +20,8 @@ public final class HighwayFlyConfigMigration {
             if (!(entry instanceof CompoundTag module) || !module.getStringOr("name", "").equals("highway-fly")) continue;
             CompoundTag settings = module.getCompoundOrEmpty("settings");
             ListTag groups = settings.getListOrEmpty("groups");
+            boolean changed = destinationGroups.containsKey("minimum-health") && renameDamageLimit(groups);
+            if (destinationGroups.containsKey("home-replaced-events")) changed |= renameHomeWebhook(groups);
             Map<String, CompoundTag> groupsByName = new LinkedHashMap<>();
             var originalGroups = new ArrayList<CompoundTag>();
             Set<String> destinationValues = new HashSet<>();
@@ -35,7 +37,6 @@ public final class HighwayFlyConfigMigration {
                 }
             }
 
-            boolean changed = false;
             for (CompoundTag oldGroup : originalGroups) {
                 String oldName = oldGroup.getStringOr("name", "");
                 ListTag values = oldGroup.getListOrEmpty("settings");
@@ -70,6 +71,61 @@ public final class HighwayFlyConfigMigration {
                 module.put("settings", settings);
             }
         }
+    }
+
+    private static boolean renameHomeWebhook(ListTag groups) {
+        boolean explicit = false;
+        for (Tag entry : groups) if (entry instanceof CompoundTag group) {
+            for (Tag value : group.getListOrEmpty("settings"))
+                if (value instanceof CompoundTag setting && setting.getStringOr("name", "").equals("home-replaced-events")) explicit = true;
+        }
+        boolean changed = false;
+        for (Tag entry : groups) if (entry instanceof CompoundTag group) {
+            ListTag values = group.getListOrEmpty("settings");
+            for (int i = 0; i < values.size(); i++) {
+                if (!(values.get(i) instanceof CompoundTag setting)) continue;
+                String name = setting.getStringOr("name", "");
+                if (name.equals("status-interval-minutes")) { values.remove(i--); changed = true; }
+                if (!name.equals("periodic-status")) continue;
+                if (explicit) values.remove(i--);
+                else { setting.putString("name", "home-replaced-events"); explicit = true; }
+                changed = true;
+            }
+            group.put("settings", values);
+        }
+        return changed;
+    }
+
+    /** Explicit current values win even when they are still saved in an old group. */
+    private static boolean renameDamageLimit(ListTag groups) {
+        boolean hasMinimumHealth = false;
+        for (Tag entry : groups) {
+            if (!(entry instanceof CompoundTag group)) continue;
+            for (Tag value : group.getListOrEmpty("settings")) {
+                if (value instanceof CompoundTag setting
+                    && setting.getStringOr("name", "").equals("minimum-health")) hasMinimumHealth = true;
+            }
+        }
+
+        boolean changed = false;
+        for (Tag entry : groups) {
+            if (!(entry instanceof CompoundTag group)) continue;
+            ListTag values = group.getListOrEmpty("settings");
+            for (int i = 0; i < values.size(); i++) {
+                if (!(values.get(i) instanceof CompoundTag setting)
+                    || !setting.getStringOr("name", "").equals("damage-limit")) continue;
+                if (hasMinimumHealth) values.remove(i--);
+                else {
+                    double minimumHealth = setting.getDoubleOr("value", 8);
+                    if (!Double.isFinite(minimumHealth) || minimumHealth < 0 || minimumHealth >= 20) minimumHealth = 8;
+                    setting.putString("name", "minimum-health");
+                    setting.putDouble("value", minimumHealth);
+                }
+                group.put("settings", values);
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     /** Save the user's preference, rather than Highway Fly's temporary retry settings. */

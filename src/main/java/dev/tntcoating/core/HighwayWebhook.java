@@ -32,6 +32,7 @@ public final class HighwayWebhook {
     public enum Event {
         STARTED("🚀 Flight started", 0x57F287),
         RESUMED("✈️ Flight resumed", 0x57F287),
+        HOME_REPLACED("🏠 Home replaced", 0x57F287),
         STATUS("📊 Flight status", 0x5865F2),
         DIMENSION("🌍 Dimension changed", 0xFAA61A),
         LAVA_AVOIDANCE("🔥 Lava avoidance", 0xFAA61A),

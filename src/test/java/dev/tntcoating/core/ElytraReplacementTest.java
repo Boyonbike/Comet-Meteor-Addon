@@ -41,4 +41,9 @@ class ElytraReplacementTest {
     @Test void nothingWornIsNeverStranded() {
         assertFalse(ElytraReplacement.stranded(-1, new int[0], 20, 20));
     }
+    @Test void usableCountExcludesItemsAtOrBelowTheConfiguredThreshold() {
+        assertEquals(3, ElytraReplacement.countUsable(new int[] {-1, 1, 9, 10, 11, 432, Integer.MAX_VALUE}, 10));
+        assertEquals(1, ElytraReplacement.countUsable(new int[] {1, 2}, 1));
+        assertEquals(0, ElytraReplacement.countUsable(new int[0], 10));
+    }
 }

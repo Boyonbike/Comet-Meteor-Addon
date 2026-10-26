@@ -7,6 +7,7 @@ package dev.tntcoating.modules;
 
 import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.compat.BaritoneBridge;
+import dev.tntcoating.modules.autowasp.AutoWaspChestSwap;
 import dev.tntcoating.core.AdaptiveFlightController.Motion;
 import dev.tntcoating.core.AdaptiveFlightEngine;
 import dev.tntcoating.core.AltitudeHold;
@@ -29,7 +30,6 @@ import dev.tntcoating.core.HighwayLavaSafety;
 import dev.tntcoating.core.HighwayTravelSafety;
 import dev.tntcoating.core.HighwayWalkingProgress;
 import dev.tntcoating.core.HighwayHealthUpdates;
-import dev.tntcoating.core.HighwayStatusTimer;
 import dev.tntcoating.core.HighwayReconnectBackoff;
 import dev.tntcoating.core.HighwayRecoveryTargets;
 import dev.tntcoating.core.HighwayRouteLine;
@@ -47,7 +47,9 @@ import dev.tntcoating.core.LobbyRecoveryStore;
 import dev.tntcoating.core.PortalGuard;
 import dev.tntcoating.core.PortalLookahead;
 import dev.tntcoating.core.ServerGlide;
-import dev.tntcoating.core.SetHomeCooldown;
+import dev.tntcoating.core.SetHomeScheduler;
+import dev.tntcoating.core.SetHomeStore;
+import dev.tntcoating.core.ChatHomeNames;
 import dev.tntcoating.core.SetHomePacer;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -113,6 +115,7 @@ import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
@@ -134,6 +137,7 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.player.Inventory;
@@ -195,10 +199,12 @@ public final class HighwayFly extends Module {
         }
     }
 
-    /** Snapshot for the Auto set home timer HUD; null when auto-set-home cannot act. */
+    /** Shared countdowns and durable history, including while the helper is paused. */
     public record AutoSetHomeStatus(String mode, String home, boolean waiting, long waitMillis,
                                     long intervalMillis, boolean fixedTimer, String cooldownLabel,
-                                    boolean cooldownKnown) {}
+                                    boolean cooldownKnown, SetHomeScheduler.Status schedule,
+                                    boolean paused, String account, String server,
+                                    List<SetHomeScheduler.Entry> history) {}
 
     /** Snapshot for the Highway Fly status and runtime HUDs. */
     public record TripStatus(String state, String action, String detail, boolean started,
@@ -357,7 +363,7 @@ public final class HighwayFly extends Module {
         .build());
     private final Setting<Boolean> swapBack = elytra.add(new BoolSetting.Builder()
         .name("swap-back")
-        .description("Put the chestplate the elytra replaced back on after the flight ends on the ground.")
+        .description("Wear an available chestplate during grounded walking or lobby recovery, and put the displaced chestplate back on after landing.")
         .defaultValue(true)
         .visible(swapElytra::get)
         .build());
@@ -376,10 +382,10 @@ public final class HighwayFly extends Module {
         .description("Try a safe flying route over or around lava, then hand it to Baritone if flight cannot pass. Only actual lava immersion causes a lava logout.")
         .defaultValue(true)
         .build());
-    private final Setting<Double> damageLimit = safety.add(new DoubleSetting.Builder()
-        .name("damage-limit")
-        .description("Log out after this much cumulative health damage during the trip (2 points = 1 heart). Healing does not reset it; 0 disables.")
-        .defaultValue(8).range(0, 100).sliderRange(0, 20).decimalPlaces(1)
+    private final Setting<Double> minimumHealth = safety.add(new DoubleSetting.Builder()
+        .name("minimum-health")
+        .description("Log out at or below this much remaining red health (2 points = 1 heart). Absorption is excluded; 0 disables.")
+        .defaultValue(8).range(0, 20).sliderRange(0, 20).decimalPlaces(1)
         .build());
     private final Setting<Integer> noProgressTimeout = safety.add(new IntSetting.Builder()
         .name("no-progress-timeout")
@@ -522,7 +528,6 @@ public final class HighwayFly extends Module {
     private final HighwayTravelSafety travelSafety = new HighwayTravelSafety();
     private final HighwayWalkingProgress walkingProgress = new HighwayWalkingProgress();
     private final HighwayHealthUpdates healthUpdates = new HighwayHealthUpdates(travelSafety);
-    private final HighwayStatusTimer statusTimer = new HighwayStatusTimer();
     private boolean walkRecoveryAttempted;
     private boolean warnedLavaRecovery;
     private final HighwayWebhookLifecycle webhookLifecycle = new HighwayWebhookLifecycle();
@@ -584,9 +589,9 @@ public final class HighwayFly extends Module {
     private final Setting<Boolean> webhookTrip = webhookEvents.add(new BoolSetting.Builder()
         .name("trip-events").description("Flight start/resume, arrival and manual trip stops.")
         .defaultValue(true).visible(webhook::get).build());
-    private final Setting<Boolean> webhookStatus = webhookEvents.add(new BoolSetting.Builder()
-        .name("periodic-status").description("Send regular position, health and route progress updates.")
-        .defaultValue(true).visible(webhook::get).onChanged(value -> resetStatusCadence()).build());
+    private final Setting<Boolean> webhookHome = webhookEvents.add(new BoolSetting.Builder()
+        .name("home-replaced-events").description("Send a check-in after each confirmed home replacement.")
+        .defaultValue(true).visible(webhook::get).build());
     private final Setting<Boolean> webhookSafety = webhookEvents.add(new BoolSetting.Builder()
         .name("safety-logouts").description("Damage, actual lava immersion, durability and stalled recovery logouts.")
         .defaultValue(true).visible(webhook::get).build());
@@ -605,12 +610,8 @@ public final class HighwayFly extends Module {
     private final Setting<Boolean> webhookAttention = webhookEvents.add(new BoolSetting.Builder()
         .name("attention-events").description("Warnings that need you to check the trip.")
         .defaultValue(true).visible(webhook::get).build());
-    private final Setting<Integer> webhookInterval = webhookTiming.add(new IntSetting.Builder()
-        .name("status-interval-minutes").description("Minutes between status updates. Editing this starts a fresh interval.")
-        .defaultValue(30).range(1, 1440).sliderRange(1, 120)
-        .visible(() -> webhook.get() && webhookStatus.get()).onChanged(value -> resetStatusCadence()).build());
     private final Setting<Integer> webhookCooldown = webhookTiming.add(new IntSetting.Builder()
-        .name("event-cooldown-seconds").description("Minimum seconds between repeats of the same event; 0 disables. Status, death and safety logout use their own timing and are not delayed.")
+        .name("event-cooldown-seconds").description("Minimum seconds between repeats of the same event; 0 disables. Home replacements, death and safety logout are not delayed.")
         .defaultValue(30).range(0, 3600).sliderRange(0, 300)
         .visible(webhook::get).onChanged(value -> webhookPolicy.reset()).build());
     private final HomeAutomation homeAutomation = new HomeAutomation();
@@ -631,7 +632,6 @@ public final class HighwayFly extends Module {
         deathNotified = false;
         deathPending.set(false);
         healthUpdates.reset(mc.player == null ? 20 : mc.player.getHealth());
-        statusTimer.reset(System.nanoTime());
         if (!ensureCompatibleModules()) return;
         if (lobbyRecovery.get() && lobby.resumePending()) {
             prepareReconnectDelay();
@@ -653,7 +653,6 @@ public final class HighwayFly extends Module {
         deathNotified = false;
         deathPending.set(false);
         healthUpdates.clear();
-        statusTimer.clear();
         pauseRuntime();
         clearRuntime();
         session.stop();
@@ -715,7 +714,7 @@ public final class HighwayFly extends Module {
         if ((event == HighwayWebhook.Event.STOPPED || event == HighwayWebhook.Event.FINISHED
             || event == HighwayWebhook.Event.SAFETY_LOGOUT) && !webhookLifecycle.terminal()) return;
         if (!webhook.get() || fields == null || !webhookEventEnabled(event) || !HighwayWebhook.configured(webhookUrl.get())) return;
-        long cooldown = event == HighwayWebhook.Event.STATUS ? 0 : TimeUnit.SECONDS.toNanos(webhookCooldown.get());
+        long cooldown = (event == HighwayWebhook.Event.STATUS || event == HighwayWebhook.Event.HOME_REPLACED) ? 0 : TimeUnit.SECONDS.toNanos(webhookCooldown.get());
         if (!webhookPolicy.allow(event, System.nanoTime(), cooldown)) return;
         try {
             String mention = switch (event) {
@@ -827,17 +826,12 @@ public final class HighwayFly extends Module {
                 logOut("The player entered lava; logging out immediately.");
                 return;
             }
-            if (healthUpdates.exceeded(damageLimit.get())) {
-                logOut("The trip's damage limit of " + damageLimit.get() + " health points was reached.");
+            if (healthUpdates.lowHealth(minimumHealth.get())) {
+                logOut("Remaining health is at or below " + minimumHealth.get() + " health points ("
+                    + minimumHealth.get() / 2 + " hearts).");
                 return;
             }
-            if (webhook.get() && webhookStatus.get()
-                && statusTimer.due(System.nanoTime(), TimeUnit.MINUTES.toNanos(webhookInterval.get()))) {
-                List<HighwayWebhook.Field> fields = new ArrayList<>(routeFields());
-                fields.add(new HighwayWebhook.Field("🧭 State", session.recovering() ? "Lobby recovery" : state.name(), true));
-                fields.add(new HighwayWebhook.Field("❤️ Health", String.valueOf(mc.player.getHealth()), true));
-                notifyWebhook(HighwayWebhook.Event.STATUS, webhookInterval.get() + "-minute Highway Fly trip update.", fields);
-            }
+
         }
         if (session.recovering()) {
             pauseRuntime();
@@ -847,7 +841,10 @@ public final class HighwayFly extends Module {
                 disable();
                 return;
             }
-            if (session.recoveryAllowed(serverAddress())) lobby.onTick(event);
+            if (session.recoveryAllowed(serverAddress())) {
+                equipRecoveryChestplate();
+                lobby.onTick(event);
+            }
             return;
         }
         if (!session.flying()) {
@@ -876,7 +873,6 @@ public final class HighwayFly extends Module {
     }
 
     private void onWebhookChanged(boolean enabled) {
-        resetStatusCadence();
         webhookPolicy.reset();
         if (!enabled) return;
         if (webhookUrl.get().isBlank()) {
@@ -886,14 +882,11 @@ public final class HighwayFly extends Module {
         }
     }
 
-    private void resetStatusCadence() {
-        statusTimer.reset(System.nanoTime());
-    }
-
     private boolean webhookEventEnabled(HighwayWebhook.Event event) {
         return switch (HighwayWebhookPolicy.category(event)) {
             case TRIP -> webhookTrip.get();
-            case STATUS -> webhookStatus.get();
+            case STATUS -> false;
+            case HOME -> webhookHome.get();
             case SAFETY -> webhookSafety.get();
             case DEATH -> webhookDeath.get();
             case LAVA -> webhookLava.get();
@@ -1262,10 +1255,8 @@ public final class HighwayFly extends Module {
         activeNanos = 0;
     }
 
-    /** Snapshot for the Auto set home timer HUD; null while the helper cannot act. */
+    /** Shared home status remains available while paused or disconnected. */
     public AutoSetHomeStatus autoSetHomeStatus() {
-        if (!isActive() || !autoSetHome.get()) return null;
-        if (!session.setHomeAllowed(autoSetHome.get(), dimensionId(), serverAddress())) return null;
         return homeAutomation.status();
     }
 
@@ -1290,7 +1281,21 @@ public final class HighwayFly extends Module {
 
     /** Immutable telemetry for the local dashboard. Read-only; safe to call every few ticks on the game thread. */
     public HighwayTelemetry dashboardTelemetry() {
-        if (!isActive() || mc.player == null) return HighwayTelemetry.idle();
+        if (mc.player == null) return HighwayTelemetry.idle(homeAutomation.telemetry());
+        ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
+        int remainingDurability = elytraRemaining(chest);
+        // Main storage excludes armour and offhand; add both explicitly so worn wings count once.
+        Inventory inventory = mc.player.getInventory();
+        int[] durability = new int[Inventory.INVENTORY_SIZE + 2];
+        for (int slot = 0; slot < Inventory.INVENTORY_SIZE; slot++) {
+            durability[slot] = elytraRemaining(inventory.getItem(slot));
+        }
+        durability[Inventory.INVENTORY_SIZE] = remainingDurability;
+        durability[Inventory.INVENTORY_SIZE + 1] = elytraRemaining(inventory.getItem(Inventory.SLOT_OFFHAND));
+        HighwayTelemetry.Elytra elytra = new HighwayTelemetry.Elytra(usableElytra(chest),
+            remainingDurability < 0 || remainingDurability == Integer.MAX_VALUE ? null : remainingDurability,
+            minDurability.get(), ElytraReplacement.countUsable(durability, minDurability.get()));
+        if (!isActive()) return HighwayTelemetry.idle(homeAutomation.telemetry(), elytra);
         TripStatus status = tripStatus();
         HighwayTelemetry.Route route = null;
         HighwayTelemetry.Altitude altitude;
@@ -1312,15 +1317,8 @@ public final class HighwayFly extends Module {
             altitude = new HighwayTelemetry.Altitude(
                 round(lockAltitude.get() ? targetY.get() : destination.get().getY()), null, null, altitudeBlocked);
         }
-        ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
-        int remainingDurability = elytraRemaining(chest);
-        HighwayTelemetry.Elytra elytra = new HighwayTelemetry.Elytra(usableElytra(chest),
-            remainingDurability < 0 || remainingDurability == Integer.MAX_VALUE ? null : remainingDurability,
-            minDurability.get());
-        AutoSetHomeStatus homeStatus = autoSetHomeStatus();
-        HighwayTelemetry.Home home = homeStatus == null ? null : new HighwayTelemetry.Home(homeStatus.mode(),
-            homeStatus.home(), homeStatus.waiting(), homeStatus.waitMillis(), homeStatus.intervalMillis(),
-            homeStatus.fixedTimer(), homeStatus.cooldownLabel(), homeStatus.cooldownKnown());
+
+        HighwayTelemetry.Home home = homeAutomation.telemetry();
         List<Vec3> sourcePath = path == null ? List.of() : path;
         int firstPoint = Math.max(0, sourcePath.size() - DASHBOARD_PATH_LIMIT);
         List<HighwayTelemetry.Point> renderedPath = new ArrayList<>(sourcePath.size() - firstPoint);
@@ -1358,7 +1356,7 @@ public final class HighwayFly extends Module {
                 walkTarget == null ? null : (double) walkTarget.getZ(), walkBlocks, walkFailures),
             new HighwayTelemetry.Portal(portalMode.get().name(), portalInside, portalCrossing != null,
                 portalCrossingTicks, portalWalkPaused, portalHit != null, hit),
-            new HighwayTelemetry.Safety(round(travelSafety.damageTaken()), round(damageLimit.get()),
+            new HighwayTelemetry.Safety(round(travelSafety.damageTaken()), round(minimumHealth.get()),
                 noProgressTimeout.get(), safetyDisconnect, deathNotified),
             elytra,
             new HighwayTelemetry.Webhook(webhook.get(), HighwayWebhook.configured(webhookUrl.get()),
@@ -1467,7 +1465,6 @@ public final class HighwayFly extends Module {
         session.start(dimension, serverAddress());
         beginRuntime(resuming);
         travelSafety.resetProgress(-course.distanceToDestination(mc.player.position()));
-        if (!resuming) statusTimer.reset(System.nanoTime());
         tripDestination = target.immutable();
         tripTargetY = (int) Math.round(desiredY);
         connectedSince = System.nanoTime();
@@ -1505,7 +1502,7 @@ public final class HighwayFly extends Module {
             && mc.player != null && killed.playerId() == mc.player.getId()
             && (session.flying() || session.recoveryAllowed(serverAddress()))) deathPending.set(true);
         if (event.packet instanceof ClientboundSetHealthPacket health
-            && (session.flying() || session.recoveryAllowed(serverAddress()))) healthUpdates.accept(health.getHealth());
+            && session.healthTrackingAllowed(serverAddress())) healthUpdates.accept(health.getHealth());
         homeAutomation.onReceive(event);
         portalProtection.onReceive(event);
         if (event.packet instanceof ClientboundBlockUpdatePacket || event.packet instanceof ClientboundSectionBlocksUpdatePacket
@@ -1536,9 +1533,11 @@ public final class HighwayFly extends Module {
             finish("Landed");
             return;
         }
+        if (state == State.WALKING) equipRecoveryChestplate();
         ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
         HighwayFlightSafety.Action protection = HighwayFlightSafety.action(
-            elytraRemaining(chest), minDurability.get(), swapElytra.get(), canUseInventory());
+            elytraRemaining(chest), minDurability.get(), swapElytra.get(), canUseInventory(),
+            HighwayFlightSafety.requiresWings(state == State.WALKING, walkStarted, mc.player.onGround()));
         if (protection == HighwayFlightSafety.Action.LOGOUT) {
             logOut("Low or missing elytra durability and a replacement cannot be equipped safely.");
             return;
@@ -2152,7 +2151,8 @@ public final class HighwayFly extends Module {
             return;
         }
         if (walkingProgress.stalled(progress == null ? null : progress.path(),
-            progress == null ? 0 : progress.position(), noProgressTimeout.get() * 20)) {
+            progress == null ? 0 : progress.position(), noProgressTimeout.get() * 20,
+            mc.player.isUsingItem() && mc.player.getUseItem().has(DataComponents.FOOD))) {
             logOut("Baritone has not advanced along its path for " + noProgressTimeout.get() + " seconds.");
         }
     }
@@ -2503,6 +2503,39 @@ public final class HighwayFly extends Module {
         return spares[slot];
     }
 
+    /** Wear armour only after landing; the walking controller may then jump without demanding wings again. */
+    private void equipRecoveryChestplate() {
+        if (!swapElytra.get() || !swapBack.get() || mc.player == null || !mc.player.onGround()
+            || mc.player.isFallFlying() || !canUseInventory()
+            || dev.tntcoating.core.InventorySlotLoan.INSTANCE.isBorrowing()
+            || dev.tntcoating.core.InventoryWeaponAttack.INSTANCE.isPending()) return;
+        ItemStack worn = mc.player.getItemBySlot(EquipmentSlot.CHEST);
+        if (!worn.isEmpty() && !worn.is(Items.ELYTRA)) return;
+        var chestSlot = mc.player.inventoryMenu.getSlot(6);
+        if (!chestSlot.mayPickup(mc.player)) return;
+        List<AutoWaspChestSwap.Candidate> candidates = new ArrayList<>();
+        Inventory inventory = mc.player.getInventory();
+        for (int index = 0; index <= Inventory.INVENTORY_SIZE; index++) {
+            int slot = index == Inventory.INVENTORY_SIZE ? Inventory.SLOT_OFFHAND : index;
+            ItemStack stack = inventory.getItem(slot);
+            if (stack.isEmpty() || stack.has(DataComponents.GLIDER) || !chestSlot.mayPlace(stack)
+                || mc.player.getEquipmentSlotForItem(stack) != EquipmentSlot.CHEST
+                || EnchantmentHelper.has(stack, EnchantmentEffectComponents.PREVENT_ARMOR_CHANGE)) continue;
+            double[] armour = new double[2];
+            stack.forEachModifier(EquipmentSlot.CHEST, (attribute, modifier) -> {
+                if (attribute.equals(Attributes.ARMOR)) armour[0] += modifier.amount();
+                else if (attribute.equals(Attributes.ARMOR_TOUGHNESS)) armour[1] += modifier.amount();
+            });
+            int durability = stack.isDamageableItem() ? stack.getMaxDamage() - stack.getDamageValue() : Integer.MAX_VALUE;
+            candidates.add(new AutoWaspChestSwap.Candidate(slot, false, durability, armour[0], armour[1]));
+        }
+        int slot = AutoWaspChestSwap.best(candidates, false);
+        if (slot < 0) return;
+        InvUtils.move().from(slot).toArmor(2);
+        // The elytra is now stored in this slot. swapInElytra remembers the armour's new slot at takeoff.
+        if (!mc.player.getItemBySlot(EquipmentSlot.CHEST).is(Items.ELYTRA)) chestplateSlot = -1;
+    }
+
     /** Puts the displaced chestplate back on now when the player is safely grounded, or once they land. */
     private void restoreChestplate() {
         if (chestplateSlot < 0) return;
@@ -2624,13 +2657,15 @@ public final class HighwayFly extends Module {
 
     private final class HomeAutomation {
         private final SettingGroup sgGeneral = homeGroup;
-        private final SetHomePacer pacer = new SetHomePacer();
-        private int waitingTicks;
-        private boolean waiting;
-        private final SetHomeCooldown cooldown = new SetHomeCooldown();
+        private SetHomeStore store;
+        private SetHomeScheduler scheduler;
+        private String account;
+        private String accountLabel;
+        private String homeServer;
+        private boolean storeWarning;
+        private boolean invalidHomeWarning;
         private Connection connectionSession;
         private Screen confirmationScreen;
-        private String requestedHome;
 
         private final Setting<String> home = sgGeneral.add(new StringSetting.Builder()
             .name("home")
@@ -2646,7 +2681,7 @@ public final class HighwayFly extends Module {
 
         private final Setting<Integer> intervalSeconds = sgGeneral.add(new IntSetting.Builder()
             .name("interval-seconds")
-            .description("Fixed timer: seconds between commands. Auto detect: fallback delay when the server has not stated a cooldown.")
+            .description("Fixed timer: real seconds between attempts, even during a server cooldown. Auto detect: discovery/fallback delay until the server cooldown is learned.")
             .defaultValue(60)
             .range(5, 3600)
             .sliderRange(5, 300)
@@ -2701,90 +2736,121 @@ public final class HighwayFly extends Module {
 
         public void onActivate() {
             confirmationScreen = null;
-            waiting = false;
-            waitingTicks = 0;
-            pacer.reset();
+            if (scheduler != null) scheduler.cancel();
         }
 
         public void onDeactivate() {
             confirmationScreen = null;
             connectionSession = null;
-            waiting = false;
-            waitingTicks = 0;
-            pacer.reset();
+            if (scheduler != null) scheduler.cancel();
         }
 
         private void onTick(TickEvent.Pre event) {
             if (mc.player == null || mc.level == null || mc.getConnection() == null) {
-                waiting = false;
-                waitingTicks = 0;
-                pacer.reset();
+                onDeactivate();
                 return;
             }
-
             checkSession();
-
-            if (waiting) {
-                if (!override.get() || !home.get().strip().equals(requestedHome)) {
-                    waiting = false;
+            scheduler.expire();
+            if (scheduler.waiting()) {
+                if (!home.get().strip().equals(scheduler.requestedHome())) {
+                    scheduler.cancel();
+                    confirmationScreen = null;
                     return;
                 }
-                if (tryOverride()) {
-                    waiting = false;
-                    cooldown.confirmed(now());
-                } else if (--waitingTicks <= 0) {
-                    waiting = false;
+                if (scheduler.waitingForDialog() && override.get() && tryOverride()) {
+                    scheduler.clicked(location());
+                    confirmationScreen = null;
                 }
                 return;
             }
-
-            if (mc.gui.screen() != null) return;
-            long now = now();
-            if (!pacer.ready(now, intervalMillis(), cooldown, bufferMillis(), timing.get() == HomeTiming.FIXED)) return;
-            if (!sendHome()) {
-                pacer.sent(now);
+            confirmationScreen = null;
+            if (mc.gui.screen() != null || !scheduler.ready(timing.get() == HomeTiming.FIXED, intervalMillis(), bufferMillis())) return;
+            String name = ChatHomeNames.valid(home.get());
+            if (name == null) {
+                if (!invalidHomeWarning) warning("Auto set home: choose a valid single home name.");
+                invalidHomeWarning = true;
                 return;
             }
-            pacer.sent(now);
-            cooldown.sent(now);
-            if (!override.get()) return;
-
-            waiting = true;
-            requestedHome = home.get().strip();
-            confirmationScreen = null;
-            waitingTicks = Math.max(1, timeoutSeconds.get() * 20);
+            invalidHomeWarning = false;
+            // Record and persist before dispatch so even a crash after sending retains the attempt timestamp.
+            scheduler.sent(name, location(), override.get(), timeoutSeconds.get() * 1_000L);
+            save();
+            mc.getConnection().sendCommand(HomeOverride.command(name));
         }
 
         private void onReceive(PacketEvent.Receive event) {
             if (!(event.packet instanceof ClientboundSystemChatPacket packet)) return;
             mc.execute(() -> {
-                if (!isActive() || !session.setHomeAllowed(autoSetHome.get(), dimensionId(), serverAddress()) || mc.player == null || mc.level == null || mc.getConnection() == null
+                if (!isActive() || !session.setHomeAllowed(autoSetHome.get(), dimensionId(), serverAddress())
+                    || mc.player == null || mc.level == null || mc.getConnection() == null
                     || event.connection != mc.getConnection().getConnection()) return;
                 checkSession();
                 String text = packet.content().getString();
                 if (ChatSender.fromPlayer(text, this::online)) return;
-                if (cooldown.message(text, now(), retryMillis())) {
-                    waiting = false;
-                    waitingTicks = 0;
+                SetHomeScheduler.Reply reply = scheduler.message(text, retryMillis());
+                if (reply == SetHomeScheduler.Reply.IGNORED) return;
+                confirmationScreen = null;
+                save();
+                if (reply == SetHomeScheduler.Reply.SUCCESS) {
+                    SetHomeScheduler.Entry entry = scheduler.state().history().getFirst();
+                    List<HighwayWebhook.Field> fields = new ArrayList<>(routeFields());
+                    fields.add(new HighwayWebhook.Field("Home", entry.home(), true, true));
+                    fields.add(new HighwayWebhook.Field("Confirmed", java.time.Instant.ofEpochMilli(entry.confirmedAt()).toString(), true));
+                    fields.add(new HighwayWebhook.Field("Home position", entry.location().x() + ", " + entry.location().y() + ", " + entry.location().z(), true));
+                    fields.add(new HighwayWebhook.Field("Home dimension", entry.location().dimension(), true));
+                    fields.add(new HighwayWebhook.Field("Health", String.valueOf(mc.player.getHealth()), true));
+                    notifyWebhook(HighwayWebhook.Event.HOME_REPLACED, "Successfully replaced home " + entry.home() + ".", fields);
                 }
             });
         }
 
         private void checkSession() {
-            Connection current = mc.getConnection().getConnection();
-            if (current == connectionSession) return;
-            connectionSession = current;
-            cooldown.reset();
-            waiting = false;
-            waitingTicks = 0;
-            pacer.reset();
+            if (store == null) {
+                store = new SetHomeStore(MeteorClient.FOLDER.toPath().resolve("auto-set-home-state.json"));
+                if (store.loadError() != null) warning("Auto set home: saved state could not be loaded; learning again.");
+            }
+            String currentAccount = mc.player == null ? mc.getUser().getProfileId().toString() : mc.player.getUUID().toString();
+            boolean connected = mc.player != null && mc.getConnection() != null;
+            String currentServer = connected ? SetHomeStore.normaliseServer(serverAddress())
+                : currentAccount.equals(account) ? homeServer : store.latestServer(currentAccount);
+            if (currentServer == null) {
+                scheduler = null;
+                account = null;
+                accountLabel = null;
+                homeServer = null;
+                connectionSession = null;
+                confirmationScreen = null;
+                return;
+            }
+            if (scheduler == null || !currentAccount.equals(account) || !currentServer.equals(homeServer)) {
+                account = currentAccount;
+                accountLabel = (mc.player == null ? mc.getUser().getName() : mc.player.getName().getString()) + " (" + account + ")";
+                homeServer = currentServer;
+                scheduler = new SetHomeScheduler(System::currentTimeMillis, store.load(account, homeServer));
+                confirmationScreen = null;
+            }
+            Connection current = connected ? mc.getConnection().getConnection() : null;
+            if (current != connectionSession) {
+                connectionSession = current;
+                scheduler.cancel();
+                confirmationScreen = null;
+            }
         }
 
-        private boolean sendHome() {
-            String homeName = home.get().strip();
-            if (homeName.isEmpty()) return false;
-            mc.getConnection().sendCommand(HomeOverride.command(homeName));
-            return true;
+        private void save() {
+            try {
+                store.save(account, homeServer, scheduler.state());
+                storeWarning = false;
+            } catch (IOException | RuntimeException e) {
+                if (!storeWarning) warning("Auto set home: saving failed; timing may be lost after restart.");
+                storeWarning = true;
+                MeteorClient.LOG.warn("Saving auto set home state failed", e);
+            }
+        }
+
+        private SetHomeScheduler.Location location() {
+            return new SetHomeScheduler.Location(mc.player.getX(), mc.player.getY(), mc.player.getZ(), dimensionId());
         }
 
         private boolean tryOverride() {
@@ -2817,7 +2883,7 @@ public final class HighwayFly extends Module {
         }
 
         private void onScreen(Screen screen) {
-            if (waiting && confirmationScreen == null && screen instanceof DialogScreen<?>) confirmationScreen = screen;
+            if (scheduler != null && scheduler.waitingForDialog() && confirmationScreen == null && screen instanceof DialogScreen<?>) confirmationScreen = screen;
         }
 
         private long intervalMillis() {
@@ -2828,42 +2894,36 @@ public final class HighwayFly extends Module {
             return Math.max(0, cooldownBufferSeconds.get() * 1_000L);
         }
 
-        private long retryMillis() {
-            return timing.get() == HomeTiming.AUTO ? Math.max(0, retryDelaySeconds.get() * 1_000L) : 0;
-        }
+        private long retryMillis() { return Math.max(0, retryDelaySeconds.get() * 1_000L); }
 
         private AutoSetHomeStatus status() {
-            long now = now();
+            checkSession();
+            if (scheduler == null) return null;
             boolean fixed = timing.get() == HomeTiming.FIXED;
-            long wait = waiting
-                ? Math.max(0, waitingTicks * 50L)
-                : pacer.waitMillis(now, intervalMillis(), cooldown, bufferMillis(), fixed);
-            return new AutoSetHomeStatus(
-                timing.get().toString(),
-                home.get().strip(),
-                waiting,
-                wait,
-                intervalMillis(),
-                fixed,
-                cooldown.statusAfter(now, bufferMillis()),
-                cooldown.known()
-            );
+            SetHomeScheduler.Status schedule = scheduler.snapshot(fixed, intervalMillis(), bufferMillis());
+            boolean paused = !isActive() || mc.player == null || mc.level == null
+                || !session.setHomeAllowed(autoSetHome.get(), dimensionId(), serverAddress());
+            String label = schedule.cooldownMillis() > 0
+                ? dev.tntcoating.core.ChatTeleportState.remaining(schedule.cooldownMillis())
+                : schedule.bufferMillis() > 0 ? "Buffer " + dev.tntcoating.core.ChatTeleportState.remaining(schedule.bufferMillis()) : "";
+            return new AutoSetHomeStatus(timing.get().toString(), home.get().strip(), schedule.waiting(),
+                schedule.waitMillis(), intervalMillis(), fixed, label, scheduler.state().cooldownEnd() != 0,
+                schedule, paused, accountLabel, homeServer, scheduler.state().history());
+        }
+
+        private HighwayTelemetry.Home telemetry() {
+            AutoSetHomeStatus status = status();
+            return status == null ? null : new HighwayTelemetry.Home(status.mode(), status.home(), status.waiting(),
+                status.waitMillis(), status.intervalMillis(), status.fixedTimer(), status.cooldownLabel(),
+                status.cooldownKnown(), status.schedule(), status.paused(), status.account(), status.server(), status.history());
         }
 
         private boolean online(String name) {
             return mc.getConnection() != null && mc.getConnection().getPlayerInfoIgnoreCase(name) != null;
         }
 
-        private static long now() {
-            return System.nanoTime() / 1_000_000L;
-        }
-
-        public String getInfoString() {
-            String name = home.get().strip();
-            String status = cooldown.statusAfter(now(), bufferMillis());
-            return status.isEmpty() ? name : name + " " + status;
-        }
     }
+
 
     private final class PortalProtection {
         /** One tick of ordinary movement is well under this; a farther target means the anchor is stale. */

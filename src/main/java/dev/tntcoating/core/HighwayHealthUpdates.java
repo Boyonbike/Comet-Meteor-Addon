@@ -37,19 +37,19 @@ public final class HighwayHealthUpdates {
         samples.add(new Sample(health, nextSampleIsBaseline.getAndSet(false)));
     }
 
-    /** Drains every sample on the game thread, retaining damage even when healing arrived before the next tick. */
-    public boolean exceeded(double maxDamage) {
-        boolean exceeded = false;
+    /** Counts damage for telemetry, then checks remaining red health after all queued healing is applied. */
+    public boolean lowHealth(double minimumHealth) {
+        if (!Double.isFinite(minimumHealth)) throw new IllegalArgumentException("Health threshold must be finite.");
         Sample sample;
         while ((sample = samples.poll()) != null) {
             latestHealth = sample.health();
             if (sample.baseline()) {
                 safety.rebaseHealth(latestHealth);
-            } else if (safety.damageLimitReached(latestHealth, maxDamage)) {
-                exceeded = true;
+            } else {
+                safety.damageLimitReached(latestHealth, 0);
             }
         }
-        return safety.damageLimitReached(latestHealth, maxDamage) || exceeded;
+        return minimumHealth > 0 && latestHealth <= minimumHealth;
     }
 
     /** Drops pending connection updates when the trip ends. */
