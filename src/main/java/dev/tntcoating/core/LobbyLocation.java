@@ -26,7 +26,8 @@ public enum LobbyLocation {
         for (LobbyLocation location : values()) {
             if (location != NONE && location.dimension.equals(dimension)
                 && Math.abs(location.y - y) <= 1
-                && Math.hypot(location.x - x, location.z - z) <= 2) return location;
+                && Math.abs(location.x - x) <= 3
+                && Math.abs(location.z - z) <= 3) return location;
         }
         return NONE;
     }
