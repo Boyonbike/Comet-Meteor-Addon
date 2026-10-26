@@ -16,7 +16,7 @@ class LobbyLocationTest {
 
     @Test void identifiesEachSpawnInItsDimension() {
         assertEquals(LobbyLocation.CRACKED_LOBBY, LobbyLocation.detect("minecraft:the_end", 1000.5, 100, 1000.5));
-        assertEquals(LobbyLocation.LOBBY, LobbyLocation.detect("minecraft:overworld", 247.5, 62, 228.5));
+        assertEquals(LobbyLocation.LOBBY, LobbyLocation.detect("minecraft:overworld", 247.5, 62, 228));
         assertEquals(LobbyLocation.WAITING_AREA, LobbyLocation.detect("minecraft:the_end", 29.5, 19.06, 18.5));
     }
 
@@ -26,7 +26,7 @@ class LobbyLocationTest {
                 assertEquals(LobbyLocation.CRACKED_LOBBY,
                     LobbyLocation.detect("minecraft:the_end", 1000.5 + dx, 100, 1000.5 + dz));
                 assertEquals(LobbyLocation.LOBBY,
-                    LobbyLocation.detect("minecraft:overworld", 247.5 + dx, 62, 228.5 + dz));
+                    LobbyLocation.detect("minecraft:overworld", 247.5 + dx, 62, 228 + dz));
                 assertEquals(LobbyLocation.WAITING_AREA,
                     LobbyLocation.detect("minecraft:the_end", 29.5 + dx, 19.06, 18.5 + dz));
             }
@@ -36,9 +36,9 @@ class LobbyLocationTest {
     @Test void rejectsPositionsJustBeyondTheSquare() {
         for (double offset : new double[] {-3.01, 3.01}) {
             assertEquals(LobbyLocation.NONE,
-                LobbyLocation.detect("minecraft:overworld", 247.5 + offset, 62, 228.5));
+                LobbyLocation.detect("minecraft:overworld", 247.5 + offset, 62, 228));
             assertEquals(LobbyLocation.NONE,
-                LobbyLocation.detect("minecraft:overworld", 247.5, 62, 228.5 + offset));
+                LobbyLocation.detect("minecraft:overworld", 247.5, 62, 228 + offset));
         }
     }
 
@@ -49,7 +49,7 @@ class LobbyLocationTest {
 
     @Test void doesNotConfuseRouteCoordinatesOrOtherDimensionsWithLobbies() {
         assertEquals(LobbyLocation.NONE, LobbyLocation.detect("minecraft:overworld", 1000.5, 100, 1000.5));
-        assertEquals(LobbyLocation.NONE, LobbyLocation.detect("minecraft:the_nether", 247.5, 62, 228.5));
+        assertEquals(LobbyLocation.NONE, LobbyLocation.detect("minecraft:the_nether", 247.5, 62, 228));
         assertEquals(LobbyLocation.NONE, LobbyLocation.detect("minecraft:the_end", 29.5, 30, 18.5));
         assertEquals(LobbyLocation.NONE, LobbyLocation.detect("minecraft:the_end", 40, 19.06, 18.5));
         assertEquals(LobbyLocation.NONE, LobbyLocation.detect(null, 29.5, 19.06, 18.5));

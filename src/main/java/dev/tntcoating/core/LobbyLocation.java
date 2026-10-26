@@ -4,7 +4,7 @@ package dev.tntcoating.core;
 public enum LobbyLocation {
     NONE(null, 0, 0, 0),
     CRACKED_LOBBY("minecraft:the_end", 1000.5, 100, 1000.5),
-    LOBBY("minecraft:overworld", 247.5, 62, 228.5),
+    LOBBY("minecraft:overworld", 247.5, 62, 228),
     WAITING_AREA("minecraft:the_end", 29.5, 19.06, 18.5);
 
     private final String dimension;
