@@ -20,6 +20,28 @@ class LobbyLocationTest {
         assertEquals(LobbyLocation.WAITING_AREA, LobbyLocation.detect("minecraft:the_end", 29.5, 19.06, 18.5));
     }
 
+    @Test void recognisesNudgesToEveryCornerOfTheThreeBlockSquareRadius() {
+        for (int dx : new int[] {-3, 3}) {
+            for (int dz : new int[] {-3, 3}) {
+                assertEquals(LobbyLocation.CRACKED_LOBBY,
+                    LobbyLocation.detect("minecraft:the_end", 1000.5 + dx, 100, 1000.5 + dz));
+                assertEquals(LobbyLocation.LOBBY,
+                    LobbyLocation.detect("minecraft:overworld", 247.5 + dx, 62, 228.5 + dz));
+                assertEquals(LobbyLocation.WAITING_AREA,
+                    LobbyLocation.detect("minecraft:the_end", 29.5 + dx, 19.06, 18.5 + dz));
+            }
+        }
+    }
+
+    @Test void rejectsPositionsJustBeyondTheSquare() {
+        for (double offset : new double[] {-3.01, 3.01}) {
+            assertEquals(LobbyLocation.NONE,
+                LobbyLocation.detect("minecraft:overworld", 247.5 + offset, 62, 228.5));
+            assertEquals(LobbyLocation.NONE,
+                LobbyLocation.detect("minecraft:overworld", 247.5, 62, 228.5 + offset));
+        }
+    }
+
     @Test void allowsSmallSpawnRoundingAndMovement() {
         assertEquals(LobbyLocation.WAITING_AREA, LobbyLocation.detect("minecraft:the_end", 29.6, 19, 18.4));
         assertEquals(LobbyLocation.CRACKED_LOBBY, LobbyLocation.detect("minecraft:the_end", 1001, 100.1, 1001));
