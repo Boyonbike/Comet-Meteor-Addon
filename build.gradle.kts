@@ -126,7 +126,14 @@ val sourceDistribution = tasks.register<Zip>("sourceDistribution") {
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))
     from("src") { into("src") }
     from("gradle") { into("gradle") }
-    from("scripts") { into("scripts") }
+    from("scripts") {
+        into("scripts")
+        exclude("**/__pycache__/**", "**/*.pyc")
+    }
+    from("docs") {
+        into("docs")
+        exclude("superpowers/**")
+    }
     from("gradlew", "gradlew.bat", "build.gradle.kts", "settings.gradle.kts", "gradle.properties",
         "LICENSE", "LICENSE-CC0", "LICENSE-NoTextureRotations", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md", "CONTRIBUTING.md")
 }

@@ -38,11 +38,14 @@ public final class ChatClan {
      * (Name, Username, IGN, Player, Member...) selects that column; otherwise a single line is a list of names and
      * several lines take the first column, so extra columns such as rank or join date are ignored.
      */
-    public static Import csv(String text) {
+    public static Import csv(String text) { return collect(csvEntries(text)); }
+
+    /** Raw selected cells, retained for importers that report duplicates. */
+    public static List<String> csvEntries(String text) {
         String clean = text.startsWith("﻿") ? text.substring(1) : text;
         List<String> lines = new ArrayList<>();
         for (String line : LINES.split(clean)) if (!line.isBlank()) lines.add(line);
-        if (lines.isEmpty()) return new Import(List.of(), 0);
+        if (lines.isEmpty()) return List.of();
         char delimiter = delimiter(lines.getFirst());
         List<List<String>> rows = new ArrayList<>();
         for (String line : lines) rows.add(cells(line, delimiter));
@@ -55,7 +58,7 @@ public final class ChatClan {
             if (column < 0) cells.addAll(row);
             else if (column < row.size()) cells.add(row.get(column));
         }
-        return collect(cells);
+        return List.copyOf(cells);
     }
 
     /** File contents as text; usernames are ASCII, so only the encodings spreadsheets save in matter. */

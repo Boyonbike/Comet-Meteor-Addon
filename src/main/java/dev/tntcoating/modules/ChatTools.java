@@ -6,6 +6,9 @@ import com.mojang.brigadier.tree.CommandNode;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.core.ChatClan;
+import dev.tntcoating.core.AutoTpyController;
+import dev.tntcoating.core.AutoTpyPolicy;
+import dev.tntcoating.core.AutoTpyQueue;
 import dev.tntcoating.core.ChatCommandTemplate;
 import dev.tntcoating.core.ChatHomeNames;
 import dev.tntcoating.core.ChatHomeEdit;
@@ -108,6 +111,35 @@ public final class ChatTools extends Module {
     private final Setting<Integer> requestTimeout = general.add(new IntSetting.Builder().name("tpa-request-timeout")
         .description("Seconds to retain incoming requests when the server does not report their expiry.")
         .defaultValue(120).range(5, 3600).sliderRange(30, 300).build());
+    private final SettingGroup autoTpySettings = settings.createGroup("Auto TPY");
+    private final Setting<Boolean> autoTpyEnabledSetting = autoTpySettings.add(new BoolSetting.Builder().name("auto-tpy")
+        .description("Buffer and automatically accept eligible incoming requests. Configure the whitelist first.").defaultValue(false)
+        .onChanged(ignored -> syncAutoTpy()).build());
+    private final Setting<Boolean> autoWhitelistOnly = autoTpySettings.add(new BoolSetting.Builder().name("auto-tpy-whitelist-only")
+        .description("Only allow whitelisted players, plus Meteor friends when the bypass is enabled.").defaultValue(true).build());
+    private final Setting<Boolean> autoAllowFriends = autoTpySettings.add(new BoolSetting.Builder().name("auto-tpy-allow-meteor-friends")
+        .description("Allow Meteor friends without whitelist membership. The blocklist still wins.").defaultValue(false).build());
+    private final Setting<Boolean> autoToMe = autoTpySettings.add(new BoolSetting.Builder().name("auto-tpy-to-me")
+        .description("Accept requests for players to teleport to you.").defaultValue(true).build());
+    private final Setting<Boolean> autoToThem = autoTpySettings.add(new BoolSetting.Builder().name("auto-tpy-to-them")
+        .description("Accept requests asking you to teleport to someone else.").defaultValue(false).build());
+    private final Setting<List<String>> autoWhitelist = autoTpySettings.add(new StringListSetting.Builder().name("auto-tpy-whitelist")
+        .description("Allowed usernames. Manage or import CSV in Chat Tools > Overview > Auto TPY.").defaultValue().build());
+    private final Setting<List<String>> autoBlocklist = autoTpySettings.add(new StringListSetting.Builder().name("auto-tpy-blocklist")
+        .description("Never accept these players, including friends and whitelisted names.").defaultValue().build());
+    private final Setting<Integer> autoInterval = autoInt("auto-tpy-interval-ms", "Minimum milliseconds between accept commands; zero sends at most once per client tick.", 500, 0, 60000);
+    private final Setting<Boolean> autoAdaptive = autoTpySettings.add(new BoolSetting.Builder().name("auto-tpy-adaptive")
+        .description("Learn pacing from attributable server confirmations and rate-limit replies. Unknown replies never train faster.").defaultValue(false).build());
+    private final Setting<Integer> autoMinimum = autoTpySettings.add(new IntSetting.Builder().name("auto-tpy-min-interval-ms")
+        .description("Fastest adaptive interval.").defaultValue(50).range(0,60000).sliderRange(0,5000).onChanged(ignored -> autoBounds(true)).build());
+    private final Setting<Integer> autoMaximum = autoTpySettings.add(new IntSetting.Builder().name("auto-tpy-max-interval-ms")
+        .description("Slowest adaptive interval; explicit server pauses can be longer.").defaultValue(5000).range(0,60000).sliderRange(0,10000).onChanged(ignored -> autoBounds(false)).build());
+    private final Setting<Integer> autoCapacity = autoInt("auto-tpy-buffer-limit", "Maximum live buffered requests. New players are rejected visibly when full.", 1024, 64, 16384);
+    private final Setting<Integer> autoInFlight = autoInt("auto-tpy-in-flight", "Maximum commands awaiting replies while incoming requests keep buffering.", 4, 1, 32);
+    private final Setting<Integer> autoAttempts = autoInt("auto-tpy-max-attempts", "Total attempts including the first send.", 3, 1, 10);
+    private final Setting<Integer> autoReplyTimeout = autoInt("auto-tpy-reply-timeout-ms", "Wait for confirmation before scheduling a priority retry.", 3000, 500, 30000);
+    private final Setting<Integer> autoBackoff = autoInt("auto-tpy-retry-backoff-ms", "Initial retry delay, doubling each retry up to 30 seconds.", 1000, 0, 30000);
+
     private final SettingGroup cooldownSettings = settings.createGroup("Teleport Cooldowns");
     private final Setting<Integer> homeCooldown = cooldownSettings.add(new IntSetting.Builder().name("home-cooldown-seconds")
         .description("Estimated cooldown after a successful home teleport until the server reports one. Learned and manual lengths in the Chat Tools window replace it. Zero disables the fallback.")
@@ -168,6 +200,9 @@ public final class ChatTools extends Module {
     private final List<String> discoveredHomes = new ArrayList<>();
     private final List<String> suggestedHomes = new ArrayList<>();
     private Connection session;
+    private final AutoTpyController autoTpy = new AutoTpyController();
+    private String autoAccount;
+    private long autoTick;
     private volatile int homeRequest;
     private int nextHomeRequest = -1_400_000_000;
     private long homeRequestedAt;
@@ -215,6 +250,54 @@ public final class ChatTools extends Module {
         button.action = () -> openPopup(null);
         return button;
     }
+
+    private Setting<Integer> autoInt(String name, String description, int value, int min, int max) {
+        return autoTpySettings.add(new IntSetting.Builder().name(name).description(description).defaultValue(value)
+            .range(min,max).sliderRange(min,Math.min(max,Math.max(value*2,min))).build());
+    }
+    private void autoBounds(boolean minimumChanged) {
+        if (autoMinimum == null || autoMaximum == null) return;
+        if (autoMinimum.get() > autoMaximum.get()) {
+            if (minimumChanged) autoMaximum.set(autoMinimum.get()); else autoMinimum.set(autoMaximum.get());
+        }
+    }
+    private void syncAutoTpy() {
+        if (autoTpy == null || autoBackoff == null) return;
+        Set<String> friends = new HashSet<>();
+        if (Friends.get() != null) for (Friend friend : Friends.get()) friends.add(friend.getName());
+        autoTpy.configure(new AutoTpyPolicy(Set.copyOf(autoWhitelist.get()),Set.copyOf(autoBlocklist.get()),autoWhitelistOnly.get(),
+                autoAllowFriends.get(),autoToMe.get(),autoToThem.get()),friends,autoCapacity.get(),autoInFlight.get(),autoAttempts.get(),
+                autoReplyTimeout.get(),autoBackoff.get(),autoInterval.get(),autoAdaptive.get(),autoMinimum.get(),autoMaximum.get());
+        incomingRequests.capacity(autoCapacity.get());
+        boolean starting = isActive() && autoTpyEnabledSetting.get() && !autoTpy.enabled();
+        autoTpy.enabled(isActive() && autoTpyEnabledSetting.get());
+        if (starting) for (var request : incomingRequests.pending(now())) offerAutoTpy(request);
+    }
+    private void offerAutoTpy(ChatTpaRequests.Request request) {
+        autoTpy.offer(new AutoTpyQueue.Request(request.player(),request.toThem(),request.expires(),acceptCommand(request)),now());
+    }
+    public boolean autoTpyEnabled() { return autoTpyEnabledSetting.get(); }
+    public void autoTpyEnabled(boolean enabled) { autoTpyEnabledSetting.set(enabled);syncAutoTpy(); }
+    public boolean autoTpyAdaptive() { return autoAdaptive.get(); }
+    public void toggleAutoTpyAdaptive() { autoAdaptive.set(!autoAdaptive.get());syncAutoTpy(); }
+    public boolean autoTpyAllowsFriends() { return autoAllowFriends.get(); }
+    public void toggleAutoTpyFriends() { autoAllowFriends.set(!autoAllowFriends.get());syncAutoTpy(); }
+    public boolean autoTpyWhitelistOnly() { return autoWhitelistOnly.get(); }
+    public void toggleAutoTpyWhitelistOnly() { autoWhitelistOnly.set(!autoWhitelistOnly.get());syncAutoTpy(); }
+    public List<AutoTpyQueue.Entry> autoTpyEntries() { return autoTpy.queue().entries(now()); }
+    public AutoTpyQueue.Stats autoTpyStats() {
+        var stats=autoTpy.queue().stats(now());
+        return new AutoTpyQueue.Stats(stats.live(),stats.queued(),stats.awaiting(),stats.retries(),stats.overflow()+incomingRequests.rejected(),stats.latest());
+    }
+    public long autoTpyIntervalMs() { return autoTpy.pacer().intervalMs(); }
+    public String autoTpySessionKey() { return homeServerKey(); }
+    public void cancelAutoTpy(String player) { autoTpy.queue().cancel(player,now()); }
+    public void clearAutoTpy() { autoTpy.queue().clear(now()); }
+    public void resetAutoTpyLearning() { autoTpy.pacer().resetLearning(); }
+    public List<String> autoTpyWhitelist() { return ChatClan.members(autoWhitelist.get()); }
+    public List<String> autoTpyBlocklist() { return ChatClan.members(autoBlocklist.get()); }
+    public void setAutoTpyWhitelist(List<String> names) { autoWhitelist.set(ChatClan.members(names));syncAutoTpy(); }
+    public void setAutoTpyBlocklist(List<String> names) { autoBlocklist.set(ChatClan.members(names));syncAutoTpy(); }
 
     public boolean isFriend(String player) { return Friends.get() != null && Friends.get().get(player) != null; }
 
@@ -561,6 +644,14 @@ public final class ChatTools extends Module {
     @EventHandler private void onTick(TickEvent.Pre event) {
         checkSession();
         sendWhispers();
+        if (mc.player != null && mc.getConnection() != null) {
+            String account = autoTpySessionKey();
+            if (autoAccount != null && !autoAccount.equals(account)) { autoTpy.reset();incomingRequests.clear(); }
+            autoAccount=account;
+            syncAutoTpy();
+            autoTick=mc.player.tickCount;
+            autoTpy.tick(now(),autoTick, command -> mc.getConnection().sendCommand(withoutSlash(command)));
+        }
         // Friend, clan and colour edits are rare; a one-second refresh keeps highlighting current without per-tick work.
         if (++friendRefreshTicks >= FRIEND_REFRESH_TICKS) {
             friendRefreshTicks = 0;
@@ -573,6 +664,8 @@ public final class ChatTools extends Module {
      * completes many teleports. Conversations and timers survive that; a new connection still starts a new session.
      */
     @EventHandler private void onGameLeft(GameLeftEvent event) {
+        autoTpy.reset();
+        incomingRequests.clear();
         teleports.transferred(now());
         syncSavedCooldowns();
     }
@@ -613,6 +706,8 @@ public final class ChatTools extends Module {
         teleports.clear();
         savedKey = null;
         incomingRequests.clear();
+        autoTpy.reset();
+        autoAccount=null;
         pendingHomeEdit = null;
     }
 
@@ -635,6 +730,7 @@ public final class ChatTools extends Module {
             if (parts.length > 1 && Set.of("msg", "w", "whisper", "tell", "tpa", "tpahere").contains(verb)) rememberPlayer(parts[1]);
             if (ChatWhisperQueue.isWhisper(command, messageCommand.get())) whispers.sent(command, now());
             syncSavedCooldowns();
+            autoTpy.commandSent(command,now(),autoTick);
             teleports.sent(command, now());
             incomingRequests.sent(command, now());
             ChatHomeEdit edit = ChatHomeEdit.parse(command);
@@ -698,9 +794,16 @@ public final class ChatTools extends Module {
             return Optional.empty();
         }, Style.EMPTY);
         String self = mc.player == null ? null : mc.player.getGameProfile().name();
-        var before = incomingRequests.pending(now());
+        syncAutoTpy();
+        autoTpy.message(message.getString(),now());
         incomingRequests.message(message.getString(), commands, self, now(), requestTimeout.get());
-        for (var request : incomingRequests.pending(now())) if (!before.contains(request)) rememberPlayer(request.player());
+        for (var change : incomingRequests.drainChanges()) {
+            autoTpy.lifecycle(change,now());
+            if (change.kind() == ChatTpaRequests.ChangeKind.Upsert) {
+                offerAutoTpy(change.request());
+                rememberPlayer(change.request().player());
+            }
+        }
     }
 
     /**
