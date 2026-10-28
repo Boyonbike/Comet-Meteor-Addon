@@ -1,0 +1,9 @@
+# Only needed when deploying with Wrangler instead of the Cloudflare dashboard.
+# Add the token with `npx wrangler secret put BOT_TOKEN`; never write it in this file.
+name = "comet-ign-relay"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+GUILD_ID = "your server ID"
+CHANNEL_ID = "your #ign channel ID"

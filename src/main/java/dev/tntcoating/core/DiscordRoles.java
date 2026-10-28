@@ -69,16 +69,19 @@ public final class DiscordRoles {
         return Set.copyOf(members);
     }
 
-    /** The guild and channel a saved roster came from, so its permissions cannot outlive the source. */
-    public static String source(String guildId, String channelId) { return strip(guildId) + "/" + strip(channelId); }
+    /**
+     * The relay a saved roster came from, so its permissions cannot outlive the source. Never blank, so a missing
+     * saved source cannot match an unconfigured connection.
+     */
+    public static String source(String relay) { return "relay " + DiscordConnection.relay(relay); }
 
     /**
-     * Selected-role access counts only while the roster came from the guild and channel being synced now.
+     * Selected-role access counts only while the roster came from the relay being synced now.
      * A missing, blank or stale source admits nobody until the next successful sync rewrites it.
      */
     public static Set<String> authorizedMembers(Map<String, List<Role>> roster, Set<String> roleIds,
-                                                String savedSource, String guildId, String channelId) {
-        if (savedSource == null || !savedSource.equals(source(guildId, channelId))) return Set.of();
+                                                String savedSource, String relay) {
+        if (savedSource == null || !savedSource.equals(source(relay))) return Set.of();
         return matchingMembers(roster, roleIds);
     }
 
@@ -147,5 +150,4 @@ public final class DiscordRoles {
 
     private static String key(String name) { return name.toLowerCase(Locale.ROOT); }
 
-    private static String strip(String value) { return value == null ? "" : value.strip(); }
 }

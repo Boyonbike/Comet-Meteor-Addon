@@ -44,14 +44,8 @@ public final class DiscordIgnSync extends Module {
     });
 
     private final SettingGroup general = settings.getDefaultGroup();
-    private final Setting<String> botToken = general.add(new StringSetting.Builder().name("bot-token")
-        .description("Token of a dedicated Discord app with Server Members Intent and Message Content Intent. Comet only reads; the token is stored in Meteor's config, so use a separate app, not the clan's admin bot.")
-        .defaultValue("").build());
-    private final Setting<String> guildId = general.add(new StringSetting.Builder().name("guild-id")
-        .description("Discord server ID (turn on Developer Mode, then right-click the server → Copy Server ID).")
-        .defaultValue("").build());
-    private final Setting<String> channelId = general.add(new StringSetting.Builder().name("ign-channel-id")
-        .description("Channel where members post their Minecraft Java usernames, separated by commas, slashes or new lines. The bot needs View Channel and Read Message History there; it does not need Send Messages.")
+    private final Setting<String> relayUrl = general.add(new StringSetting.Builder().name("relay-url")
+        .description("The clan's public relay link (https://…). The relay holds the Discord bot token and reads the server's members and #ign for everyone, so no token is stored here.")
         .defaultValue("").build());
     private final SettingGroup applying = settings.createGroup("Applying");
     private final Setting<Boolean> applyToClan = applying.add(new BoolSetting.Builder().name("apply-to-clan")
@@ -60,9 +54,9 @@ public final class DiscordIgnSync extends Module {
     private final Setting<Boolean> applyToAutoTpy = applying.add(new BoolSetting.Builder().name("apply-to-auto-tpy")
         .description("Keep the Auto TPY whitelist in step with the linked players. The Auto TPY blocklist still wins.")
         .defaultValue(true).build());
-    private final Setting<Integer> autoSyncMinutes = applying.add(new IntSetting.Builder().name("auto-sync-minutes")
-        .description("Sync while the module is on, this many minutes apart. Zero syncs only when you press Sync now.")
-        .defaultValue(5).range(0, 120).sliderRange(0, 60).build());
+    private final Setting<Integer> autoSyncHours = applying.add(new IntSetting.Builder().name("auto-sync-hours")
+        .description("Sync once when the game starts, then this many hours apart while you play. Zero syncs only at game start and when you press Sync now.")
+        .defaultValue(6).range(0, 24).sliderRange(0, 24).build());
     private final Setting<List<String>> clanSynced = applying.add(new StringListSetting.Builder().name("clan-synced")
         .description("Names the last sync added to the clan list. Hidden; used to remove them again when they leave.")
         .defaultValue().visible(() -> false).build());
@@ -83,6 +77,11 @@ public final class DiscordIgnSync extends Module {
     private boolean failed;
     /** Last completed read or rejected attempt, in monotonic milliseconds. */
     private long lastSync;
+    /**
+     * Meteor re-activates modules on every server join; only the first join of a game launch, or one after a failed
+     * read, syncs. Every player's sync reaches the shared relay, so rejoining must not trigger another full read.
+     */
+    private boolean syncedThisLaunch;
     private final AtomicLong retryNotBefore = new AtomicLong();
 
     public DiscordIgnSync() {
@@ -99,21 +98,20 @@ public final class DiscordIgnSync extends Module {
             status = problem;
             return;
         }
-        syncNow();
+        if (!syncedThisLaunch) syncNow();
     }
 
     @Override public void onDeactivate() {
         syncState.cancel();
         if (task != null) task.cancel(true);
         task = null;
-        lastSync = now();
         status = "Discord sync disabled.";
     }
 
     @EventHandler private void onTick(TickEvent.Pre event) {
-        int minutes = autoSyncMinutes.get();
-        if (minutes <= 0 || syncState.busy() || now() < retryNotBefore.get()) return;
-        if (now() - lastSync < minutes * 60_000L) return;
+        int hours = autoSyncHours.get();
+        if (hours <= 0 || syncState.busy() || now() < retryNotBefore.get()) return;
+        if (now() - lastSync < hours * 3_600_000L) return;
         syncNow();
     }
 
@@ -123,39 +121,33 @@ public final class DiscordIgnSync extends Module {
         return button;
     }
 
-    public String configuredGuildId() { return guildId.get().strip(); }
-    public String configuredChannelId() { return channelId.get().strip(); }
-    public boolean hasBotToken() { return !token().isEmpty(); }
+    public String configuredRelay() { return DiscordConnection.relay(relayUrl.get()); }
+    public boolean hasRelay() { return !configuredRelay().isEmpty(); }
     public boolean syncBusy() { return syncState.busy(); }
     public String syncStatus() { return status; }
     /** Monotonic milliseconds; zero until a readable, nonempty roster has been applied. */
     public long lastSuccessfulSync() { return successfulSync; }
     public boolean syncFailed() { return failed; }
     public int syncedAccounts() { return accountCount; }
-    public int intervalMinutes() { return autoSyncMinutes.get(); }
-    public void setIntervalMinutes(int minutes) {
-        mc.execute(() -> autoSyncMinutes.set(Math.max(0, Math.min(120, minutes))));
+    public int intervalHours() { return autoSyncHours.get(); }
+    public void setIntervalHours(int hours) {
+        mc.execute(() -> autoSyncHours.set(Math.max(0, Math.min(24, hours))));
     }
     public boolean appliesToClan() { return applyToClan.get(); }
     public void appliesToClan(boolean value) { mc.execute(() -> applyToClan.set(value)); }
     public boolean appliesToAutoTpy() { return applyToAutoTpy.get(); }
     public void appliesToAutoTpy(boolean value) { mc.execute(() -> applyToAutoTpy.set(value)); }
 
-    /** Validate all fields before changing any setting. An empty password keeps the stored token. */
-    public String configureConnection(String tokenOrBlank, String guild, String channel) {
-        if (!mc.isSameThread()) return mc.submit(() -> configureConnection(tokenOrBlank, guild, channel)).join();
-        String nextToken = DiscordConnection.replacementToken(tokenOrBlank, botToken.get());
-        String nextGuild = guild == null ? "" : guild.strip();
-        String nextChannel = channel == null ? "" : channel.strip();
-        String problem = DiscordConnection.problem(nextToken, nextGuild, nextChannel);
+    /** Validate the relay before changing the setting. */
+    public String configureConnection(String relay) {
+        if (!mc.isSameThread()) return mc.submit(() -> configureConnection(relay)).join();
+        String problem = DiscordConnection.problem(relay);
         if (problem != null) {
             status = problem;
             return problem;
         }
-        botToken.set(nextToken);
-        guildId.set(nextGuild);
-        channelId.set(nextChannel);
-        // Role access is bound to its source: a changed guild or channel must stop admitting the old roster now.
+        relayUrl.set(DiscordConnection.relay(relay));
+        // Role access is bound to its source: a changed relay must stop admitting the old roster now.
         ChatTools chatTools = Modules.get().get(ChatTools.class);
         if (chatTools != null) chatTools.refreshAutoTpyPolicy();
         if (!syncState.busy()) status = "Connection saved. Ready to sync.";
@@ -196,15 +188,15 @@ public final class DiscordIgnSync extends Module {
         info(status);
         task = WORKER.submit(() -> {
             try {
-                DiscordIgnClient.Sync sync = new DiscordIgnClient(DiscordIgnClient.live(), config.token(), this::deferRetry)
-                    .fetch(config.guildId(), config.channelId());
+                DiscordIgnClient.Sync sync = new DiscordIgnClient(DiscordIgnClient.live(), config.relay(), this::deferRetry)
+                    .fetch();
                 mc.execute(() -> finished(ticket, sync));
             } catch (DiscordIgnClient.ApiException exception) {
                 mc.execute(() -> failed(ticket, exception.explanation(), exception.retryDelayMillis()));
             } catch (IOException exception) {
                 MeteorClient.LOG.warn("Reading Discord IGNs failed", exception);
                 mc.execute(() -> failed(ticket, exception.getMessage() == null || exception.getMessage().isBlank()
-                    ? "Could not reach Discord; the clan list and whitelist were left unchanged."
+                    ? "Could not reach the relay; the clan list and whitelist were left unchanged."
                     : "Could not read Discord: " + exception.getMessage() + " The lists were left unchanged.", 0));
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
@@ -217,8 +209,7 @@ public final class DiscordIgnSync extends Module {
     }
 
     private DiscordIgnSyncState.Settings configuration() {
-        return new DiscordIgnSyncState.Settings(token(), guildId.get().strip(), channelId.get().strip(),
-            applyToClan.get(), applyToAutoTpy.get());
+        return new DiscordIgnSyncState.Settings(configuredRelay(), applyToClan.get(), applyToAutoTpy.get());
     }
 
     /** Only the matching, unchanged read may finish; old callbacks cannot release a newer read. */
@@ -243,6 +234,7 @@ public final class DiscordIgnSync extends Module {
 
     private void finished(DiscordIgnSyncState.Ticket ticket, DiscordIgnClient.Sync sync) {
         if (!accept(ticket)) return;
+        syncedThisLaunch = true;
         DiscordIgn.Result result = sync.result();
         ChatTools chatTools = Modules.get().get(ChatTools.class);
         if (chatTools == null) {
@@ -305,9 +297,9 @@ public final class DiscordIgnSync extends Module {
         countInvalid(result);
     }
 
-    /** Guild and channel of the accepted read, so role access can never outlive the source that granted it. */
+    /** Relay of the accepted read, so role access can never outlive the source that granted it. */
     private static String source(DiscordIgnSyncState.Ticket ticket) {
-        return DiscordRoles.source(ticket.settings().guildId(), ticket.settings().channelId());
+        return DiscordRoles.source(ticket.settings().relay());
     }
 
     private void warnConflicts(DiscordIgn.Result result) {
@@ -327,8 +319,7 @@ public final class DiscordIgnSync extends Module {
         if (retryMillis > 0) deferRetry(retryMillis);
         if (!accept(ticket)) return;
         failed = true;
-        String secret = ticket.settings().token();
-        status = secret.isEmpty() ? message : message.replace(secret, "[redacted]");
+        status = message;
         error(status);
     }
 
@@ -339,16 +330,12 @@ public final class DiscordIgnSync extends Module {
 
     /** What stops a sync, or null when the settings are usable. */
     private String problem() {
-        String problem = DiscordConnection.problem(token(), configuredGuildId(), configuredChannelId());
+        String problem = DiscordConnection.problem(relayUrl.get());
         if (problem != null) return problem;
         if (!applyToClan.get() && !applyToAutoTpy.get()) {
             return "Turn on apply-to-clan, apply-to-auto-tpy, or both; otherwise there is nowhere to put the names.";
         }
         return null;
-    }
-
-    private String token() {
-        return DiscordConnection.token(botToken.get());
     }
 
     private static String plural(int count) {

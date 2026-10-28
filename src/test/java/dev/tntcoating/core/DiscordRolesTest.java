@@ -97,4 +97,22 @@ final class DiscordRolesTest {
         assertEquals(Set.of(), DiscordRoles.matchingMembers(roster, Set.of()));
     }
 
+    @Test void roleAuthorizationRequiresTheSameRelayAsTheSnapshot() throws Exception {
+        var roster = DiscordRoles.bind(Map.of("Alice", List.of("20")), "1", ROLES);
+        String saved = DiscordRoles.source("https://relay.test");
+        assertEquals(Set.of("alice"), DiscordRoles.authorizedMembers(roster, Set.of("20"), saved, "https://relay.test/"));
+        assertEquals(Set.of(), DiscordRoles.authorizedMembers(roster, Set.of("20"), saved, "https://other.test"));
+        assertEquals(Set.of(), DiscordRoles.authorizedMembers(roster, Set.of("20"), saved, ""));
+        assertEquals(Set.of(), DiscordRoles.authorizedMembers(roster, Set.of("20"), "", ""));
+        // Rosters saved by the old direct-token connection are bound to "guild/channel" and stay hidden.
+        assertEquals(Set.of(), DiscordRoles.authorizedMembers(roster, Set.of("20"), "1/2", "https://relay.test"));
+    }
+
+    @Test void successfulEmptyRoleSnapshotRevokesAllRoleAccess() throws Exception {
+        var roster = DiscordRoles.bind(Map.of("Alice", List.of("20")), "1", ROLES);
+        String saved = DiscordRoles.source("https://relay.test");
+        assertEquals(Set.of("alice"), DiscordRoles.authorizedMembers(roster, Set.of("20"), saved, "https://relay.test"));
+        var empty = DiscordRoles.bind(Map.of(), "1", ROLES);
+        assertEquals(Set.of(), DiscordRoles.authorizedMembers(empty, Set.of("20"), saved, "https://relay.test"));
+    }
 }
