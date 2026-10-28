@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Discord IGN sync relay:** players no longer paste a Discord bot token, server ID or channel ID. The module reads through one public **relay URL** (new **relay-url** setting), a Cloudflare Worker that alone holds the bot token and forwards only the four read-only sync requests; its code ships in `relay/worker.js`. Chat Tools' Discord connection is now a single **Clan relay URL** field. Saved **bot-token**, **guild-id** and **ign-channel-id** values are no longer used, and saved role data is hidden until the first relay sync rewrites it.
+- **Discord IGN sync schedule:** syncs once on the first server join after starting the game, then every **6 hours** (new **auto-sync-hours**, 0–24) instead of every 5 minutes; reconnecting or switching servers no longer triggers a sync unless the last read failed. **Sync now** still reads immediately. The old **auto-sync-minutes** value is not carried over.
+
 ## 0.26.27 — 2026-10-28
 
 - **Boat Fly and Auto Boat Fly (new):** native flying-boat travel adapted from Quiettee Utils arrives on every branch. **Boat Fly** is a manual module: steer a flying, phasing boat with WASD, jump and sprint, with no heading, helpers or logouts. **Auto Boat Fly** (`auto-boat-fly`) is the fixed-heading AFK controller: enable to start, pause for manual positioning, and use the current-heading button to capture your yaw. AutoWalk, AutoEat, Auto Set Home and Auto Lobby are managed integrations, and helper settings screens open from its module screen. Only one boat controller runs at a time and paused movement modules are handed over between them.

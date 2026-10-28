@@ -17,11 +17,11 @@ import java.util.Set;
 import java.util.function.LongConsumer;
 
 /**
- * Reads the guild member list and the last pages of an #ign channel from Discord's REST API. Each sync is a fresh
- * full read, so edited or deleted messages and players who left are noticed.
+ * Reads the guild member list and the last pages of an #ign channel through the clan's relay, which holds the bot
+ * token and forwards four fixed Discord reads ({@code /channel}, {@code /members}, {@code /roles},
+ * {@code /messages}). Each sync is a fresh full read, so edited or deleted messages and players who left are noticed.
  */
 public final class DiscordIgnClient {
-    private static final String BASE = "https://discord.com/api/v10";
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
     private static final int MEMBER_PAGE = 1000;
     private static final int MESSAGE_PAGE = 100;
@@ -63,20 +63,18 @@ public final class DiscordIgnClient {
 
         public String explanation() {
             return switch (status) {
-                case 401 -> "Discord rejected the bot token (401). Reset the token in the Developer Portal, then paste "
-                    + "the new one; the old token stops working as soon as it is reset.";
                 case 403 -> switch (endpoint) {
-                    case MEMBERS -> "Discord refused the member list (403). Turn on Server Members Intent on the app's Bot page.";
-                    case CHANNEL, MESSAGES -> "Discord refused #ign (403). Give the bot View Channel and Read Message History on that channel.";
-                    case ROLES -> "Discord refused the role list (403). Re-invite the bot with the invite link from the setup guide.";
+                    case MEMBERS -> "The relay's bot cannot read the member list (403). The relay owner needs to turn on Server Members Intent.";
+                    case CHANNEL, MESSAGES -> "The relay's bot cannot read #ign (403). The relay owner needs to give it View Channel and Read Message History there.";
+                    case ROLES -> "The relay's bot cannot read the role list (403). The relay owner needs to re-invite it to the server.";
                 };
-                case 404 -> switch (endpoint) {
-                    case MEMBERS, ROLES -> "Discord could not find the guild (404). Check guild-id.";
-                    case CHANNEL, MESSAGES -> "Discord could not find #ign (404). Check ign-channel-id.";
-                };
-                case 429 -> "Discord is rate limiting the sync. Try again "
+                case 404 -> "The relay did not recognise the request (404). Check the relay URL; if it is right, the relay's "
+                    + "GUILD_ID or CHANNEL_ID is wrong.";
+                case 502 -> "The relay could not reach Discord (502). This usually means its bot token was reset; the relay "
+                    + "owner needs to update BOT_TOKEN.";
+                case 429 -> "Discord is rate limiting the relay. Try again "
                     + "in " + (long) Math.ceil(retryDelayMillis() / 1000.0) + " seconds.";
-                default -> "Discord returned HTTP " + status + " while reading "
+                default -> "The relay returned HTTP " + status + " while reading "
                     + (endpoint == Endpoint.MEMBERS ? "the member list" : endpoint == Endpoint.ROLES
                     ? "the role list" : "#ign messages") + ".";
             };
@@ -89,7 +87,7 @@ public final class DiscordIgnClient {
     public record Sync(DiscordIgn.Result result, Map<String, List<DiscordRoles.Role>> roles) {}
 
     private final Transport transport;
-    private final String token;
+    private final String relay;
     private final int memberLimit;
     private final int messageLimit;
     private final int maxMemberPages;
@@ -99,30 +97,30 @@ public final class DiscordIgnClient {
     private long pendingWait;
     private long deadline;
 
-    public DiscordIgnClient(Transport transport, String token) {
-        this(transport, token, MEMBER_PAGE, MESSAGE_PAGE, MAX_MEMBER_PAGES, MAX_MESSAGE_PAGES);
+    public DiscordIgnClient(Transport transport, String relay) {
+        this(transport, relay, MEMBER_PAGE, MESSAGE_PAGE, MAX_MEMBER_PAGES, MAX_MESSAGE_PAGES);
     }
 
-    DiscordIgnClient(Transport transport, String token, int memberLimit, int messageLimit, int maxMemberPages,
+    DiscordIgnClient(Transport transport, String relay, int memberLimit, int messageLimit, int maxMemberPages,
                      int maxMessagePages) {
-        this(transport, token, memberLimit, messageLimit, maxMemberPages, maxMessagePages, Thread::sleep);
+        this(transport, relay, memberLimit, messageLimit, maxMemberPages, maxMessagePages, Thread::sleep);
     }
 
-    public DiscordIgnClient(Transport transport, String token, LongConsumer deferRetry) {
-        this(transport, token, MEMBER_PAGE, MESSAGE_PAGE, MAX_MEMBER_PAGES, MAX_MESSAGE_PAGES, Thread::sleep, deferRetry);
+    public DiscordIgnClient(Transport transport, String relay, LongConsumer deferRetry) {
+        this(transport, relay, MEMBER_PAGE, MESSAGE_PAGE, MAX_MEMBER_PAGES, MAX_MESSAGE_PAGES, Thread::sleep, deferRetry);
     }
 
-    DiscordIgnClient(Transport transport, String token, int memberLimit, int messageLimit, int maxMemberPages,
+    DiscordIgnClient(Transport transport, String relay, int memberLimit, int messageLimit, int maxMemberPages,
                      int maxMessagePages, Sleeper sleeper) {
-        this(transport, token, memberLimit, messageLimit, maxMemberPages, maxMessagePages, sleeper, millis -> {});
+        this(transport, relay, memberLimit, messageLimit, maxMemberPages, maxMessagePages, sleeper, millis -> {});
     }
 
-    DiscordIgnClient(Transport transport, String token, int memberLimit, int messageLimit, int maxMemberPages,
+    DiscordIgnClient(Transport transport, String relay, int memberLimit, int messageLimit, int maxMemberPages,
                      int maxMessagePages, Sleeper sleeper, LongConsumer deferRetry) {
         this.deferRetry = deferRetry;
         this.transport = transport;
         this.sleeper = sleeper;
-        this.token = token.strip();
+        this.relay = DiscordConnection.relay(relay);
         this.memberLimit = memberLimit;
         this.messageLimit = messageLimit;
         this.maxMemberPages = maxMemberPages;
@@ -143,26 +141,30 @@ public final class DiscordIgnClient {
     /**
      * Read every eligible guild member, their account posts and their role labels. Roles never filter membership.
      */
-    public Sync fetch(String guildId, String channelId)
-        throws ApiException, IOException, InterruptedException {
+    public Sync fetch() throws ApiException, IOException, InterruptedException {
+        if (relay.isEmpty()) throw new IOException("The relay URL must be a plain https:// link.");
         deadline = System.nanoTime() + Duration.ofMinutes(5).toNanos();
-        JsonObject channel = JsonParser.parseString(get(BASE + "/channels/" + channelId, Endpoint.CHANNEL).body()).getAsJsonObject();
-        if (!channelId.equals(string(channel, "id")) || !guildId.equals(string(channel, "guild_id")))
-            throw new IOException("ign-channel-id must identify a channel in guild-id.");
+        JsonObject channel = JsonParser.parseString(get(relay + "/channel", Endpoint.CHANNEL).body()).getAsJsonObject();
+        String guildId = string(channel, "guild_id");
+        if (string(channel, "id").isEmpty() || guildId.isEmpty())
+            throw new IOException("The relay's CHANNEL_ID must be a channel in a server.");
         JsonElement type = channel.get("type");
         if (type == null || !Set.of(0, 5, 10, 11, 12).contains(type.getAsInt()))
-            throw new IOException("ign-channel-id must be a text channel or text thread.");
-        List<String> members = memberPages(guildId);
-        String roleJson = get(BASE + "/guilds/" + guildId + "/roles", Endpoint.ROLES).body();
-        DiscordIgn.Result result = DiscordIgn.parse(members, messagePages(channelId));
+            throw new IOException("The relay's CHANNEL_ID must be a text channel or text thread.");
+        List<String> members = memberPages();
+        String roleJson = get(relay + "/roles", Endpoint.ROLES).body();
+        // Every guild's role list includes @everyone, whose ID is the guild's; without it the relay is mixing servers.
+        if (!hasRole(roleJson, guildId))
+            throw new IOException("The relay's GUILD_ID and CHANNEL_ID belong to different servers.");
+        DiscordIgn.Result result = DiscordIgn.parse(members, messagePages());
         return new Sync(result, DiscordRoles.bind(result.roleIds(), guildId, roleJson));
     }
 
-    private List<String> memberPages(String guildId) throws ApiException, IOException, InterruptedException {
+    private List<String> memberPages() throws ApiException, IOException, InterruptedException {
         List<String> pages = new ArrayList<>();
         String after = null;
         for (int page = 0; page < maxMemberPages; page++) {
-            String url = BASE + "/guilds/" + guildId + "/members?limit=" + memberLimit
+            String url = relay + "/members?limit=" + memberLimit
                 + (after == null ? "" : "&after=" + after);
             Response response = get(url, Endpoint.MEMBERS);
             pages.add(response.body());
@@ -174,17 +176,17 @@ public final class DiscordIgnClient {
             }
             after = last;
         }
-        if (JsonParser.parseString(get(BASE + "/guilds/" + guildId + "/members?limit=1&after=" + after,
+        if (JsonParser.parseString(get(relay + "/members?limit=1&after=" + after,
             Endpoint.MEMBERS).body()).getAsJsonArray().isEmpty()) return pages;
         throw new IOException("This guild has more members than one sync reads ("
             + (maxMemberPages * memberLimit) + ").");
     }
 
-    private List<String> messagePages(String channelId) throws ApiException, IOException, InterruptedException {
+    private List<String> messagePages() throws ApiException, IOException, InterruptedException {
         List<String> pages = new ArrayList<>();
         String before = null;
         for (int page = 0; page < maxMessagePages; page++) {
-            String url = BASE + "/channels/" + channelId + "/messages?limit=" + messageLimit
+            String url = relay + "/messages?limit=" + messageLimit
                 + (before == null ? "" : "&before=" + before);
             Response response = get(url, Endpoint.MESSAGES);
             pages.add(response.body());
@@ -196,7 +198,7 @@ public final class DiscordIgnClient {
             }
             before = last;
         }
-        if (JsonParser.parseString(get(BASE + "/channels/" + channelId + "/messages?limit=1&before=" + before,
+        if (JsonParser.parseString(get(relay + "/messages?limit=1&before=" + before,
             Endpoint.MESSAGES).body()).getAsJsonArray().isEmpty()) return pages;
         throw new IOException("The #ign history reached the sync limit (" + (maxMessagePages * messageLimit)
             + " messages). A partial roster cannot safely update the lists; use a dedicated, shorter #ign channel.");
@@ -205,7 +207,6 @@ public final class DiscordIgnClient {
     private Response get(String url, Endpoint endpoint) throws ApiException, IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
             .timeout(TIMEOUT)
-            .header("Authorization", "Bot " + token)
             .header("User-Agent", "Comet discord-ign-sync")
             .header("Accept", "application/json")
             .GET()
@@ -268,6 +269,13 @@ public final class DiscordIgnClient {
             if (!Double.isFinite(seconds) || seconds <= 0) return fallback;
             return (long) Math.min(Math.ceil(seconds * 1000), Long.MAX_VALUE / 4.0);
         } catch (RuntimeException ignored) { return fallback; }
+    }
+
+    private static boolean hasRole(String roleJson, String id) {
+        for (JsonElement element : JsonParser.parseString(roleJson).getAsJsonArray()) {
+            if (element.isJsonObject() && id.equals(string(element.getAsJsonObject(), "id"))) return true;
+        }
+        return false;
     }
 
     /** The last user ID on a member page, for the next {@code after}. */
