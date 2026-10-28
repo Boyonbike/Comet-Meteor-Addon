@@ -26,6 +26,53 @@ class LobbyRecoveryStoreTest {
         return new LobbyRecoveryStore(marker());
     }
 
+    @Test void boatTripRetainsHeadingWithoutBecomingHighwayFlight() throws IOException {
+        store().saveBoat("minecraft:the_nether", "6b6t.org", 135.0f);
+        var recovery = store().load().orElseThrow();
+        assertEquals(135.0f, recovery.boatYaw());
+        assertNull(recovery.destination());
+        assertTrue(recovery.isForServer("6b6t.org"));
+    }
+
+    @Test void highwayTripDoesNotResumeBoatWalking() throws IOException {
+        store().save("minecraft:the_nether", "6b6t.org");
+        assertNull(store().load().orElseThrow().boatYaw());
+    }
+
+    @Test void highwayReplacementClearsBoatIdentity() throws IOException {
+        store().saveBoat("minecraft:the_nether", "6b6t.org", -90f);
+        store().save("minecraft:overworld", "6b6t.org", new BlockPos(12, 80, 30), 80);
+        var recovery = store().load().orElseThrow();
+        assertNull(recovery.boatYaw());
+        assertEquals(new BlockPos(12, 80, 30), recovery.destination());
+    }
+
+    @Test void rejectsInvalidBoatHeadingAndMixedTripIdentity() {
+        assertThrows(IllegalArgumentException.class,
+            () -> store().saveBoat("minecraft:the_nether", "6b6t.org", Float.NaN));
+        assertThrows(IllegalArgumentException.class,
+            () -> store().saveBoat("minecraft:the_nether", "6b6t.org", Float.POSITIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class,
+            () -> new LobbyRecoveryStore.Recovery("minecraft:the_nether", "6b6t.org", BlockPos.ZERO, 80, 90f));
+    }
+
+    @Test void nativeBoatTripRetainsControllerIdentity() throws IOException {
+        store().saveBoat("minecraft:the_nether", "6b6t.org", 90f, LobbyRecoveryStore.NATIVE_BOAT);
+        assertEquals("auto-boat-fly", store().load().orElseThrow().boatModule());
+    }
+
+    @Test void markerFromBeforeTheBoatSplitBelongsToAutoBoatFly() throws IOException {
+        store().saveBoat("minecraft:the_nether", "6b6t.org", 90f, "boat-fly");
+        assertEquals(LobbyRecoveryStore.NATIVE_BOAT, store().load().orElseThrow().boatModule());
+        assertThrows(IllegalArgumentException.class,
+            () -> new LobbyRecoveryStore.Recovery("minecraft:the_nether", "6b6t.org", null, null, 90f, "some-other-boat"));
+    }
+
+    @Test void legacyBoatTripStillUsesExternalQuiettee() throws IOException {
+        store().saveBoat("minecraft:the_nether", "6b6t.org", 90f);
+        assertEquals("boat-phase", store().load().orElseThrow().boatModule());
+    }
+
     @Test void savesAndLoadsServerTrip() throws IOException {
         store().save("minecraft:the_nether", "6b6t.org");
 

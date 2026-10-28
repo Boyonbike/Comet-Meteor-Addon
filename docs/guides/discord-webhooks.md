@@ -28,3 +28,5 @@ Stash Report only:
 **Screenshot:** with **show-screenshot** on, the module waits for you to close any open menu (the confirmation prompt closes by itself), hides the GUI for one frame exactly as F1 does, photographs that frame and puts the GUI back. That hides the hotbar, chat, hand, crosshair, Meteor's HUD and tracers. Outlines drawn into the world, such as ESP boxes, still show. Screens wider than 2560 pixels are scaled down to stay inside Discord's upload limit. If a menu stays open for 10 seconds, or the picture can't be taken, the message goes without it and chat says so.
 
 Chat says whether each post went out, or why Discord refused it (a deleted webhook, rate limiting, no connection). Sending happens in the background, so the game doesn't pause while it waits. Meteor's toggled on/off messages are off for both modules by default.
+
+For reading Minecraft names from a Discord **#ign** channel into Chat Tools, see [Discord IGN Sync](../modules/discord-ign-sync.md).

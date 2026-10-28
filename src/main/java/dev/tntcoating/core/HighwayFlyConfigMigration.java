@@ -22,55 +22,176 @@ public final class HighwayFlyConfigMigration {
             ListTag groups = settings.getListOrEmpty("groups");
             boolean changed = destinationGroups.containsKey("minimum-health") && renameDamageLimit(groups);
             if (destinationGroups.containsKey("home-replaced-events")) changed |= renameHomeWebhook(groups);
-            Map<String, CompoundTag> groupsByName = new LinkedHashMap<>();
-            var originalGroups = new ArrayList<CompoundTag>();
-            Set<String> destinationValues = new HashSet<>();
-            for (Tag candidate : groups) {
-                if (!(candidate instanceof CompoundTag group)) continue;
-                String groupName = group.getStringOr("name", "");
-                originalGroups.add(group);
-                groupsByName.putIfAbsent(groupName, group);
-                for (Tag value : group.getListOrEmpty("settings")) {
-                    if (!(value instanceof CompoundTag setting)) continue;
-                    String name = setting.getStringOr("name", "");
-                    if (groupName.equals(destinationGroups.get(name))) destinationValues.add(name);
-                }
-            }
-
-            for (CompoundTag oldGroup : originalGroups) {
-                String oldName = oldGroup.getStringOr("name", "");
-                ListTag values = oldGroup.getListOrEmpty("settings");
-                boolean groupChanged = false;
-                for (int i = 0; i < values.size(); i++) {
-                    if (!(values.get(i) instanceof CompoundTag setting)) continue;
-                    String name = setting.getStringOr("name", "");
-                    String destination = destinationGroups.get(name);
-                    if (destination == null || destination.equals(oldName)) continue;
-                    if (destinationValues.add(name)) {
-                        CompoundTag targetGroup = groupsByName.get(destination);
-                        if (targetGroup == null) {
-                            targetGroup = group(destination, new ListTag());
-                            targetGroup.putBoolean("sectionExpanded", oldGroup.getBooleanOr("sectionExpanded", true));
-                            groups.add(targetGroup);
-                            groupsByName.put(destination, targetGroup);
-                        }
-                        ListTag targetValues = targetGroup.getListOrEmpty("settings");
-                        targetValues.add(setting.copy());
-                        targetGroup.put("settings", targetValues);
-                    }
-                    values.remove(i--);
-                    groupChanged = true;
-                }
-                if (groupChanged) {
-                    oldGroup.put("settings", values);
-                    changed = true;
-                }
-            }
+            changed |= regroup(groups, destinationGroups);
             if (changed) {
                 settings.put("groups", groups);
                 module.put("settings", settings);
             }
         }
+    }
+
+    /** Rehomes one module's saved values into the groups that now own each setting name. */
+    public static void regroupSettings(CompoundTag root, String moduleName, Map<String, String> destinationGroups) {
+        if (destinationGroups.isEmpty()) return;
+        CompoundTag module = findModule(root.getListOrEmpty("modules"), moduleName);
+        if (module == null) return;
+        CompoundTag settings = module.getCompoundOrEmpty("settings");
+        ListTag groups = settings.getListOrEmpty("groups");
+        if (!regroup(groups, destinationGroups)) return;
+        settings.put("groups", groups);
+        module.put("settings", settings);
+    }
+
+    /** Moves values saved under an old group name; explicit values already in the destination group win. */
+    private static boolean regroup(ListTag groups, Map<String, String> destinationGroups) {
+        boolean changed = false;
+        Map<String, CompoundTag> groupsByName = new LinkedHashMap<>();
+        var originalGroups = new ArrayList<CompoundTag>();
+        Set<String> destinationValues = new HashSet<>();
+        for (Tag candidate : groups) {
+            if (!(candidate instanceof CompoundTag group)) continue;
+            String groupName = group.getStringOr("name", "");
+            originalGroups.add(group);
+            groupsByName.putIfAbsent(groupName, group);
+            for (Tag value : group.getListOrEmpty("settings")) {
+                if (!(value instanceof CompoundTag setting)) continue;
+                String name = setting.getStringOr("name", "");
+                if (groupName.equals(destinationGroups.get(name))) destinationValues.add(name);
+            }
+        }
+
+        for (CompoundTag oldGroup : originalGroups) {
+            String oldName = oldGroup.getStringOr("name", "");
+            ListTag values = oldGroup.getListOrEmpty("settings");
+            boolean groupChanged = false;
+            for (int i = 0; i < values.size(); i++) {
+                if (!(values.get(i) instanceof CompoundTag setting)) continue;
+                String name = setting.getStringOr("name", "");
+                String destination = destinationGroups.get(name);
+                if (destination == null || destination.equals(oldName)) continue;
+                if (destinationValues.add(name)) {
+                    CompoundTag targetGroup = groupsByName.get(destination);
+                    if (targetGroup == null) {
+                        targetGroup = group(destination, new ListTag());
+                        targetGroup.putBoolean("sectionExpanded", oldGroup.getBooleanOr("sectionExpanded", true));
+                        groups.add(targetGroup);
+                        groupsByName.put(destination, targetGroup);
+                    }
+                    ListTag targetValues = targetGroup.getListOrEmpty("settings");
+                    targetValues.add(setting.copy());
+                    targetGroup.put("settings", targetValues);
+                }
+                values.remove(i--);
+                groupChanged = true;
+            }
+            if (groupChanged) {
+                oldGroup.put("settings", values);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Boat Fly used to be the automatic controller. Its record becomes Auto Boat Fly, and the manual Boat Fly that now
+     * owns the name keeps a copy of the shared movement settings but starts disabled.
+     */
+    public static void splitBoatFly(CompoundTag root) {
+        ListTag modules = root.getListOrEmpty("modules");
+        CompoundTag manual = findModule(modules, LobbyRecoveryStore.LEGACY_NATIVE_BOAT);
+        if (manual == null || findModule(modules, LobbyRecoveryStore.NATIVE_BOAT) != null) return;
+        CompoundTag automatic = manual.copy();
+        automatic.putString("name", LobbyRecoveryStore.NATIVE_BOAT);
+        modules.add(automatic);
+        manual.putBoolean("active", false);
+        renameBoatEngineSettings(manual);
+        renameBoatEngineSettings(automatic);
+        root.put("modules", modules);
+    }
+
+    /** Merges the two overlapping speed caps and gives the phasing speeds names that say what they do. */
+    private static void renameBoatEngineSettings(CompoundTag module) {
+        CompoundTag settings = module.getCompoundOrEmpty("settings");
+        ListTag groups = settings.getListOrEmpty("groups");
+        Double speed = null, limit = null;
+        CompoundTag limitTag = null;
+        for (Tag entry : groups) if (entry instanceof CompoundTag group) {
+            ListTag values = group.getListOrEmpty("settings");
+            for (int i = 0; i < values.size(); i++) {
+                if (!(values.get(i) instanceof CompoundTag setting)) continue;
+                switch (setting.getStringOr("name", "")) {
+                    case "phase-speed" -> setting.putString("name", "adaptive-phase-speed");
+                    case "phase-horizontal-speed" -> setting.putString("name", "in-block-speed");
+                    case "horizontal-limit" -> { limit = setting.getDoubleOr("value", .99); limitTag = setting; }
+                    case "horizontal-speed" -> { speed = setting.getDoubleOr("value", 2.8); values.remove(i--); }
+                    default -> {}
+                }
+            }
+            group.put("settings", values);
+        }
+        // Travel used min(horizontal-speed, horizontal-limit); defaults were 2.8 and 0.99.
+        if (speed != null || limit != null) {
+            double merged = Math.min(speed == null ? 2.8 : speed, limit == null ? .99 : limit);
+            if (limitTag == null) {
+                limitTag = new CompoundTag();
+                ListTag added = new ListTag();
+                added.add(limitTag);
+                groups.add(group("Speed", added));
+            }
+            limitTag.putString("name", "limited-speed");
+            limitTag.putDouble("value", Math.max(.01, merged));
+        }
+        settings.put("groups", groups);
+        module.put("settings", settings);
+    }
+
+    /**
+     * Highway Fly and Boat Fly each used to serve their own dashboard from a Dashboard settings group. Both move to the
+     * standalone Flight Dashboard; Highway Fly's server settings win because its page is the one that remains.
+     */
+    public static void migrateFlightDashboard(CompoundTag root) {
+        ListTag modules = root.getListOrEmpty("modules");
+        if (findModule(modules, "flight-dashboard") != null) return;
+        ListTag values = new ListTag();
+        Set<String> present = new HashSet<>();
+        boolean enabled = false, found = false;
+        for (String owner : java.util.List.of("highway-fly", LobbyRecoveryStore.LEGACY_NATIVE_BOAT)) {
+            CompoundTag module = findModule(modules, owner);
+            if (module == null) continue;
+            CompoundTag settings = module.getCompoundOrEmpty("settings");
+            ListTag groups = settings.getListOrEmpty("groups");
+            for (Tag entry : groups) if (entry instanceof CompoundTag group) {
+                ListTag groupValues = group.getListOrEmpty("settings");
+                for (int i = 0; i < groupValues.size(); i++) {
+                    if (!(groupValues.get(i) instanceof CompoundTag setting)) continue;
+                    String name = setting.getStringOr("name", "");
+                    if (!name.startsWith("dashboard-")) continue;
+                    groupValues.remove(i--);
+                    found = true;
+                    String moved = name.substring("dashboard-".length());
+                    if (moved.equals("enabled")) enabled |= setting.getBooleanOr("value", false);
+                    else if (present.add(moved)) {
+                        CompoundTag copy = setting.copy();
+                        copy.putString("name", moved);
+                        values.add(copy);
+                    }
+                }
+                group.put("settings", groupValues);
+            }
+            settings.put("groups", groups);
+            module.put("settings", settings);
+        }
+        if (!found) return;
+        CompoundTag dashboard = new CompoundTag();
+        dashboard.putString("name", "flight-dashboard");
+        dashboard.putBoolean("active", enabled);
+        CompoundTag settings = new CompoundTag();
+        ListTag groups = new ListTag();
+        groups.add(group("General", values));
+        settings.put("groups", groups);
+        dashboard.put("settings", settings);
+        modules.add(dashboard);
+        root.put("modules", modules);
     }
 
     private static boolean renameHomeWebhook(ListTag groups) {

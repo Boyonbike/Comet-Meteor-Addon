@@ -77,6 +77,37 @@ final class ChatWhisperQueueTest {
         assertTrue(queue.pending("Bob", 0).isEmpty());
     }
 
+    @Test void aConfiguredMinimumSpacesWhispersBeforeAnyRefusal() {
+        var queue = new ChatWhisperQueue();
+        queue.minimum(2_500);
+        queue.add(whisper("Alice", "one"));
+        queue.add(whisper("Bob", "two"));
+        assertEquals("one", queue.poll(0).text());
+        assertNull(queue.poll(2_499));
+        var waiting = queue.entries(1_000);
+        assertEquals(1, waiting.size());
+        assertEquals("two", waiting.getFirst().whisper().text());
+        assertEquals(1_500, waiting.getFirst().eta());
+        assertEquals("two", queue.poll(2_500).text());
+        queue.refused(REFUSAL, 2_600);
+        queue.add(whisper("Carol", "three"));
+        assertTrue(queue.entries(2_600).stream().allMatch(e -> e.eta() >= 2_250), "A longer learned wait still wins");
+    }
+
+    @Test void aCancelledWhisperLeavesTheQueue() {
+        var queue = new ChatWhisperQueue();
+        queue.minimum(2_500);
+        queue.add(whisper("Alice", "sent"));
+        queue.poll(0);
+        queue.add(whisper("Alice", "keep"));
+        queue.add(whisper("Alice", "drop"));
+        long drop = queue.entries(0).get(1).id();
+        assertTrue(queue.cancel(drop));
+        assertEquals(List.of("sent", "keep"), queue.pending("Alice", 0).stream().map(ChatWhisperQueue.Whisper::text).toList());
+        assertEquals("keep", queue.poll(2_500).text());
+        assertNull(queue.poll(10_000));
+    }
+
     @Test void onlyTheServersOwnRefusalCounts() {
         assertTrue(ChatWhisperQueue.isRefusal(REFUSAL));
         assertTrue(ChatWhisperQueue.isRefusal("§cPlease wait 1 second before sending another whisper."));

@@ -28,11 +28,17 @@ public final class SetHomeStore {
             try (var input = Files.newInputStream(file)) { bytes = input.readNBytes(MAX_BYTES + 1); }
             if (bytes.length > MAX_BYTES) throw new IOException("Home state exceeds size limit");
             Document doc = GSON.fromJson(new String(bytes, StandardCharsets.UTF_8), Document.class);
-            if (doc == null || doc.version() != 1 || doc.records() == null || doc.records().size() > 128
+            if (doc == null || (doc.version() != 1 && doc.version() != 2) || doc.records() == null || doc.records().size() > 128
                 || doc.records().entrySet().stream().anyMatch(e -> e.getKey() == null || e.getValue() == null))
                 throw new IOException("Unsupported home state");
-            records.putAll(doc.records());
+            doc.records().forEach((key, state) -> records.put(key, doc.version() == 1 ? upgradeLegacy(state) : state));
         } catch (IOException | RuntimeException e) { loadError = e.getMessage(); }
+    }
+    /** Old learning used elapsed offline time and could persist an inflated estimate indefinitely. */
+    private static SetHomeScheduler.State upgradeLegacy(SetHomeScheduler.State state) {
+        boolean estimated = state.successActionAt() > 0 && state.lastSuccessAt() >= state.lastSentAt();
+        return new SetHomeScheduler.State(state.lastSentAt(), state.lastSuccessAt(), state.successActionAt(),
+            0, estimated ? 0 : state.cooldownEnd(), state.retryAt(), state.history());
     }
     /** Most recently saved server for this account, for the dashboard before joining a world. */
     public String latestServer(String account) {
@@ -54,7 +60,7 @@ public final class SetHomeStore {
         String key = key(account, server);
         updated.remove(key); updated.put(key, state);
         while (updated.size() > 128) updated.remove(updated.keySet().iterator().next());
-        byte[] bytes = GSON.toJson(new Document(1, updated)).getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = GSON.toJson(new Document(2, updated)).getBytes(StandardCharsets.UTF_8);
         if (bytes.length > MAX_BYTES) throw new IOException("Home state exceeds size limit");
         Path target = file.toAbsolutePath();
         Files.createDirectories(target.getParent());

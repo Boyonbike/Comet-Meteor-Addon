@@ -4,6 +4,14 @@
   const $ = (id) => document.getElementById(id);
   const PLACEHOLDER = '—';
   const token = new URLSearchParams(window.location.search).get('token');
+  // Keep the shared secret out of the visible address, history and referrers once it has been read.
+  if (token && typeof history !== 'undefined' && history.replaceState) {
+    history.replaceState(null, '', window.location.pathname + window.location.hash);
+  }
+  const MODES = {
+    highway: { logo: 'HF', title: 'Highway Fly' },
+    boat: { logo: 'BF', title: 'Auto Boat Fly' }
+  };
 
   let lastSequence = -1;
   let lastEventsKey = '';
@@ -158,14 +166,84 @@
   /* ---------- rendering ---------- */
 
   function render(snapshot) {
-    document.body.dataset.trip = snapshot.flight && snapshot.flight.active ? 'active' : 'idle';
+    const mode = snapshot.mode === 'boat' && snapshot.boat ? 'boat' : 'highway';
+    const brand = MODES[mode];
+    document.body.dataset.mode = mode;
+    const active = mode === 'boat' ? snapshot.boat.active : snapshot.flight && snapshot.flight.active;
+    document.body.dataset.trip = active ? 'active' : 'idle';
+    text('brand-logo', brand.logo);
+    text('brand-title', brand.title);
+    text('footer-title', brand.title);
+    text('settings-title', `${brand.title} settings`);
+    document.title = `${brand.title} · Comet Flight Dashboard`;
     text('generated-at', clockTime(snapshot.generatedAt));
     showBanner(snapshot.error ? `Snapshot error: ${snapshot.error}` : accessWarning);
     renderServer(snapshot.server);
-    renderFlight(snapshot.flight, snapshot.client);
+    if (mode === 'boat') renderBoat(snapshot.boat, snapshot.client);
+    else renderFlight(snapshot.flight, snapshot.client);
     renderClient(snapshot.client);
     renderEvents(snapshot.events);
     renderSettings(snapshot.settings, snapshot.settingsSignature);
+  }
+
+  /* Minecraft yaw: 0 south, 90 west, 180 north, -90 east. */
+  function compass(yaw) {
+    if (typeof yaw !== 'number' || !Number.isFinite(yaw)) return '';
+    const points = ['S', 'SW', 'W', 'NW', 'N', 'NE', 'E', 'SE'];
+    return points[Math.round((((yaw % 360) + 360) % 360) / 45) % 8];
+  }
+
+  function degrees(yaw) {
+    return typeof yaw === 'number' && Number.isFinite(yaw) ? `${fixed(yaw, 1)}° ${compass(yaw)}` : PLACEHOLDER;
+  }
+
+  function renderBoat(boat, client) {
+    const b = boat || {};
+    const inWorld = Boolean(b.inWorld && client && client.inWorld);
+    text('flight-state', b.state === 'Safety logout' ? b.state : inWorld || b.active ? b.state : 'Not in a world');
+    text('flight-action', b.detail || (inWorld ? PLACEHOLDER : 'Join a world to see live boat data.'));
+    text('flight-detail', b.recovering ? (b.lobbyInfo || 'Lobby recovery in progress') : PLACEHOLDER);
+    text('trip-time', duration(b.tripNanos));
+    text('active-time', duration(b.activeNanos));
+
+    text('boat-speed', inWorld ? fixed(b.speedBps, 1) : PLACEHOLDER);
+    text('boat-heading', degrees(b.heading));
+    text('boat-yaw', inWorld ? degrees(b.yaw) : PLACEHOLDER);
+    text('boat-controller', !b.active ? 'Stopped' : !b.automaticTravel ? 'Paused for positioning'
+      : b.recovering ? 'Paused for recovery' : 'Automatic travel');
+    text('boat-mounted', inWorld ? (b.mounted ? 'Driver' : 'Not driving') : PLACEHOLDER);
+    text('boat-distance', metres(b.distanceTravelled));
+    text('boat-speed-mode', b.speedMode);
+    text('boat-corrections', whole(b.corrections));
+
+    text('boat-egaps', inWorld ? whole(b.egaps) : PLACEHOLDER);
+    text('boat-food', inWorld ? `${whole(b.food)} / 20` : PLACEHOLDER);
+    text('boat-eating', b.eating ? 'Eating now' : b.autoEat ? 'Ready' : 'Off');
+    const minimumHealth = typeof b.minimumHealth === 'number' ? b.minimumHealth : 0;
+    text('boat-minimum-health', minimumHealth > 0 ? `${fixed(minimumHealth)} HP (${fixed(minimumHealth / 2)} hearts)` : 'off');
+    text('boat-egap-reserve', b.egapReserve === null || b.egapReserve === undefined ? 'off' : whole(b.egapReserve));
+    const flags = [];
+    if (b.state === 'Safety logout') flags.push(chip('safety logout', 'danger'));
+    if (b.recovering) flags.push(chip('recovering', 'warn'));
+    if (inWorld && b.egapReserve !== null && b.egapReserve !== undefined && b.egaps <= b.egapReserve + 2) flags.push(chip('eGaps low', 'warn'));
+    setChips('boat-flags', flags);
+
+    text('recovery-state', b.recovering ? 'recovering' : 'ready');
+    text('lobby-info', b.lobbyInfo || PLACEHOLDER);
+    renderHome(b.home);
+    renderWebhook(b.webhook);
+    setChips('boat-helpers', [['AutoWalk', b.autoWalk], ['AutoLobby', b.autoLobby], ['AutoSetHome', b.autoSetHome], ['AutoEat', b.autoEat]]
+      .map(([name, on]) => chip(`${name} ${on ? 'on' : 'off'}`, on ? 'ok' : '')));
+  }
+
+  function renderWebhook(webhook) {
+    if (!webhook) {
+      text('webhook-state', PLACEHOLDER);
+    } else if (!webhook.enabled) {
+      text('webhook-state', 'off');
+    } else {
+      text('webhook-state', `${webhook.configured ? 'configured' : 'no URL'}${webhook.terminal ? ' · terminal sent' : ''}`);
+    }
   }
 
   function renderServer(server) {
@@ -308,16 +386,7 @@
     text('lobby-info', f.lobbyInfo || PLACEHOLDER);
 
     renderHome(f.home);
-
-
-    const webhook = f.webhook;
-    if (!webhook) {
-      text('webhook-state', PLACEHOLDER);
-    } else if (!webhook.enabled) {
-      text('webhook-state', 'off');
-    } else {
-      text('webhook-state', `${webhook.configured ? 'configured' : 'no URL'}${webhook.terminal ? ' · terminal sent' : ''}`);
-    }
+    renderWebhook(f.webhook);
 
     const paused = f.pausedModules || [];
     text('paused-modules', paused.length ? paused.join(', ') : 'none');
@@ -328,7 +397,7 @@
     const ms = (value) => duration(Math.ceil(Math.max(0, value || 0) / 1000) * 1e9);
     text('home-state', home ? `${home.mode} → ${home.home}${home.paused ? ' · paused' : ''}` : 'inactive');
     text('home-waiting', timing ? `${timing.phase.toLowerCase().replaceAll('_', ' ')} · ${ms(timing.waiting ? timing.responseMillis : timing.waitMillis)}` : PLACEHOLDER);
-    text('home-cooldown', timing ? `${ms(timing.cooldownMillis)}${home.fixedTimer ? ' (informational)' : timing.learnedMillis === 0 ? ' · learning' : ''}` : PLACEHOLDER);
+    text('home-cooldown', timing ? `${ms(timing.cooldownMillis)}${timing.estimatedCooldown ? ' (estimate)' : ''}${home.fixedTimer ? ' (informational)' : timing.learnedMillis === 0 ? ' · learning' : ''}` : PLACEHOLDER);
     text('home-buffer', timing && !home.fixedTimer
       ? `${ms(timing.bufferMillis)}${timing.cooldownMillis > 0 ? ' after cooldown' : ''}` : home && home.fixedTimer ? 'Not applied in fixed mode' : PLACEHOLDER);
     text('home-interval', timing ? `${ms(timing.intervalMillis)}${home.fixedTimer ? '' : ' (fallback)'}` : PLACEHOLDER);

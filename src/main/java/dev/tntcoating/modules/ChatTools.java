@@ -6,6 +6,8 @@ import com.mojang.brigadier.tree.CommandNode;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.core.ChatClan;
+import dev.tntcoating.core.DiscordRoles;
+import dev.tntcoating.core.DiscordIgn;
 import dev.tntcoating.core.AutoTpyController;
 import dev.tntcoating.core.AutoTpyPolicy;
 import dev.tntcoating.core.AutoTpyQueue;
@@ -21,6 +23,7 @@ import dev.tntcoating.core.ChatHomeFavorites;
 import dev.tntcoating.core.ChatSavedCooldowns;
 import dev.tntcoating.core.ChatRecentPlayers;
 import dev.tntcoating.core.ChatWhisperQueue;
+import dev.tntcoating.core.ChatPublicQueue;
 import dev.tntcoating.core.ChatCountdowns;
 import dev.tntcoating.gui.ChatToolsScreen;
 import dev.tntcoating.mixin.EntityArgumentAccessor;
@@ -49,11 +52,13 @@ import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.settings.StringListSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.KeybindSetting;
 import meteordevelopment.meteorclient.settings.StringSetting;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import meteordevelopment.meteorclient.systems.friends.Friend;
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
@@ -72,6 +77,8 @@ import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ServerboundCommandSuggestionPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandSignedPacket;
+import net.minecraft.network.protocol.game.ServerboundChatPacket;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.storage.LevelResource;
 
@@ -108,6 +115,9 @@ public final class ChatTools extends Module {
     private final Setting<List<String>> savedFavorites = general.add(new StringListSetting.Builder().name("favorite-homes")
         .description("Saved home favourites for each server and account. Managed from the Chat Tools Homes tab.")
         .defaultValue().visible(() -> false).build());
+    private final Setting<Double> windowScale = general.add(new DoubleSetting.Builder().name("window-scale")
+        .description("Size of the Chat Tools window. Zero sizes it from your screen height; larger values make everything bigger.")
+        .defaultValue(0).range(0, 4).sliderRange(0, 4).decimalPlaces(2).build());
     private final Setting<Integer> requestTimeout = general.add(new IntSetting.Builder().name("tpa-request-timeout")
         .description("Seconds to retain incoming requests when the server does not report their expiry.")
         .defaultValue(120).range(5, 3600).sliderRange(30, 300).build());
@@ -127,6 +137,8 @@ public final class ChatTools extends Module {
         .description("Allowed usernames. Manage or import CSV in Chat Tools > Overview > Auto TPY.").defaultValue().build());
     private final Setting<List<String>> autoBlocklist = autoTpySettings.add(new StringListSetting.Builder().name("auto-tpy-blocklist")
         .description("Never accept these players, including friends and whitelisted names.").defaultValue().build());
+    private final Setting<List<String>> autoDiscordRoleIds = autoTpySettings.add(new StringListSetting.Builder().name("auto-tpy-discord-role-ids")
+        .description("Discord role IDs whose synced accounts may be accepted. Empty uses the whitelist settings.").defaultValue().build());
     private final Setting<Integer> autoInterval = autoInt("auto-tpy-interval-ms", "Minimum milliseconds between accept commands; zero sends at most once per client tick.", 500, 0, 60000);
     private final Setting<Boolean> autoAdaptive = autoTpySettings.add(new BoolSetting.Builder().name("auto-tpy-adaptive")
         .description("Learn pacing from attributable server confirmations and rate-limit replies. Unknown replies never train faster.").defaultValue(false).build());
@@ -170,10 +182,34 @@ public final class ChatTools extends Module {
     private final Setting<List<String>> savedRecents = messaging.add(new StringListSetting.Builder().name("recent-players")
         .description("Recently contacted players for each server and account, so the Chat Tools list survives rejoins and restarts.")
         .defaultValue().visible(() -> false).build());
+    private final Setting<Boolean> queueChat = messaging.add(new BoolSetting.Builder().name("queue-chat")
+        .description("Enter adds public chat to a queue that sends at the server's pace, so you can keep typing.").defaultValue(true).build());
+    private final Setting<Integer> chatCooldown = messaging.add(new IntSetting.Builder().name("chat-cooldown-ms")
+        .description("Milliseconds between queued public chat messages. A longer wait the server reports still wins.")
+        .defaultValue(5000).range(0, 30000).sliderRange(0, 10000).build());
+    private final Setting<Integer> whisperCooldown = messaging.add(new IntSetting.Builder().name("whisper-cooldown-ms")
+        .description("Milliseconds between queued private messages. A longer wait the server reports still wins.")
+        .defaultValue(2500).range(0, 30000).sliderRange(0, 10000).build());
+    private final Setting<Boolean> waitingNotice = messaging.add(new BoolSetting.Builder().name("waiting-notification")
+        .description("Keep a notification on screen while teleport requests, unread messages or sync problems wait for you.")
+        .defaultValue(true).build());
     private final SettingGroup clan = settings.createGroup("Clan");
     private final Setting<List<String>> clanMembers = clan.add(new StringListSetting.Builder().name("clan-members")
-        .description("Usernames of your clan members. Also added, imported from CSV and removed in the Chat Tools Clan tab.")
-        .defaultValue().build());
+        .description("Minecraft usernames maintained by Discord IGN Sync.")
+        .defaultValue().visible(() -> false).build());
+    private final Setting<String> savedDiscordRoles = clan.add(new StringSetting.Builder().name("discord-role-roster")
+        .description("Saved Discord roles and hierarchy for the synced Minecraft accounts.")
+        .defaultValue("{}").visible(() -> false).build());
+    private final Setting<String> savedDiscordRoleSource = clan.add(new StringSetting.Builder().name("discord-role-source")
+        .description("Guild and channel that produced the saved role roster. Role access is ignored once the connection no longer matches it.")
+        .defaultValue("").visible(() -> false).build());
+    private final Setting<String> savedDiscordUsernames = clan.add(new StringSetting.Builder().name("discord-username-roster")
+        .description("Saved Discord usernames for each synced Minecraft account.")
+        .defaultValue("{}").visible(() -> false).build());
+    private String cachedDiscordUsernameData;
+    private Map<String, String> cachedDiscordUsernames = Map.of();
+    private String cachedDiscordRoleData;
+    private Map<String, List<DiscordRoles.Role>> cachedDiscordRoles = Map.of();
     private final Setting<Boolean> highlightClanChat = clan.add(new BoolSetting.Builder().name("highlight-clan-chat")
         .description("Colour clan members' names in chat. Clan members who are Meteor friends get the friend colour while that is on.").defaultValue(true).build());
     private final Setting<SettingColor> clanChatColor = clan.add(new ColorSetting.Builder().name("clan-chat-color")
@@ -191,6 +227,7 @@ public final class ChatTools extends Module {
     private final ChatMessages messages = new ChatMessages();
     private final ChatRecentPlayers recentPlayers = new ChatRecentPlayers();
     private final ChatWhisperQueue whispers = new ChatWhisperQueue();
+    private final ChatPublicQueue chats = new ChatPublicQueue();
     private String replyPlayer;
     private final List<String> hotspotDetails = new ArrayList<>();
     private long hotspotReadingUntil;
@@ -201,6 +238,11 @@ public final class ChatTools extends Module {
     private final List<String> suggestedHomes = new ArrayList<>();
     private Connection session;
     private final AutoTpyController autoTpy = new AutoTpyController();
+    private Map<String, List<DiscordRoles.Role>> autoRoleRoster;
+    private String autoRoleSource;
+    private Set<String> autoRoleSelection = Set.of();
+    private Set<String> autoRoleMembers = Set.of();
+    private List<DiscordRoles.Role> autoAvailableRoles = List.of();
     private String autoAccount;
     private long autoTick;
     private volatile int homeRequest;
@@ -265,8 +307,9 @@ public final class ChatTools extends Module {
         if (autoTpy == null || autoBackoff == null) return;
         Set<String> friends = new HashSet<>();
         if (Friends.get() != null) for (Friend friend : Friends.get()) friends.add(friend.getName());
+        refreshAutoTpyRoles();
         autoTpy.configure(new AutoTpyPolicy(Set.copyOf(autoWhitelist.get()),Set.copyOf(autoBlocklist.get()),autoWhitelistOnly.get(),
-                autoAllowFriends.get(),autoToMe.get(),autoToThem.get()),friends,autoCapacity.get(),autoInFlight.get(),autoAttempts.get(),
+                autoAllowFriends.get(),autoToMe.get(),autoToThem.get(),autoRoleMembers,!autoRoleSelection.isEmpty()),friends,autoCapacity.get(),autoInFlight.get(),autoAttempts.get(),
                 autoReplyTimeout.get(),autoBackoff.get(),autoInterval.get(),autoAdaptive.get(),autoMinimum.get(),autoMaximum.get());
         incomingRequests.capacity(autoCapacity.get());
         boolean starting = isActive() && autoTpyEnabledSetting.get() && !autoTpy.enabled();
@@ -284,6 +327,69 @@ public final class ChatTools extends Module {
     public void toggleAutoTpyFriends() { autoAllowFriends.set(!autoAllowFriends.get());syncAutoTpy(); }
     public boolean autoTpyWhitelistOnly() { return autoWhitelistOnly.get(); }
     public void toggleAutoTpyWhitelistOnly() { autoWhitelistOnly.set(!autoWhitelistOnly.get());syncAutoTpy(); }
+    public boolean autoTpyToMe() { return autoToMe.get(); }
+    public void toggleAutoTpyToMe() { autoToMe.set(!autoToMe.get());syncAutoTpy(); }
+    public boolean autoTpyToThem() { return autoToThem.get(); }
+    public void toggleAutoTpyToThem() { autoToThem.set(!autoToThem.get());syncAutoTpy(); }
+    /** Role access follows the live connection, so a changed guild or channel cannot keep old permissions. */
+    private void refreshAutoTpyRoles() {
+        Map<String, List<DiscordRoles.Role>> roster = discordRoleRoster();
+        Set<String> selected = Set.copyOf(autoDiscordRoleIds.get());
+        DiscordIgnSync sync = Modules.get().get(DiscordIgnSync.class);
+        String guild = sync == null ? "" : sync.configuredGuildId();
+        String channel = sync == null ? "" : sync.configuredChannelId();
+        String source = DiscordRoles.source(guild, channel);
+        boolean rosterChanged = roster != autoRoleRoster;
+        if (rosterChanged) autoAvailableRoles = DiscordRoles.availableRoles(roster);
+        if (rosterChanged || !selected.equals(autoRoleSelection) || !source.equals(autoRoleSource)) {
+            autoRoleMembers = DiscordRoles.authorizedMembers(roster, selected, savedDiscordRoleSource.get(), guild, channel);
+            autoRoleSelection = selected;
+            autoRoleRoster = roster;
+            autoRoleSource = source;
+        }
+    }
+    public List<DiscordRoles.Role> autoTpyAvailableRoles() { refreshAutoTpyRoles();return autoAvailableRoles; }
+    public List<String> autoTpyRoleIds() { return List.copyOf(autoDiscordRoleIds.get()); }
+    public void toggleAutoTpyRole(String id) {
+        if (id == null || !id.matches("[0-9]+")) return;
+        List<String> ids = new ArrayList<>(autoDiscordRoleIds.get());
+        if (ids.contains(id)) ids.removeIf(id::equals); else ids.add(id);
+        autoDiscordRoleIds.set(ids);
+        syncAutoTpy();
+    }
+    public void clearAutoTpyRoles() { autoDiscordRoleIds.set(List.of());syncAutoTpy(); }
+    public int autoTpyRoleMemberCount() { refreshAutoTpyRoles();return autoRoleMembers.size(); }
+    private Setting<Integer> autoTpyNumberSetting(String key) {
+        return switch (key) {
+            case "interval" -> autoInterval;
+            case "min-interval" -> autoMinimum;
+            case "max-interval" -> autoMaximum;
+            case "buffer-limit" -> autoCapacity;
+            case "in-flight" -> autoInFlight;
+            case "max-attempts" -> autoAttempts;
+            case "reply-timeout" -> autoReplyTimeout;
+            case "retry-backoff" -> autoBackoff;
+            default -> throw new IllegalArgumentException("Unknown Auto TPY setting: " + key);
+        };
+    }
+    public int autoTpyNumber(String key) { return autoTpyNumberSetting(key).get(); }
+    public void setAutoTpyNumber(String key, int value) {
+        int min = switch (key) {
+            case "buffer-limit" -> 64;
+            case "in-flight", "max-attempts" -> 1;
+            case "reply-timeout" -> 500;
+            default -> 0;
+        };
+        int max = switch (key) {
+            case "buffer-limit" -> 16384;
+            case "in-flight" -> 32;
+            case "max-attempts" -> 10;
+            case "reply-timeout", "retry-backoff" -> 30000;
+            default -> 60000;
+        };
+        autoTpyNumberSetting(key).set(Math.clamp(value, min, max));
+        syncAutoTpy();
+    }
     public List<AutoTpyQueue.Entry> autoTpyEntries() { return autoTpy.queue().entries(now()); }
     public AutoTpyQueue.Stats autoTpyStats() {
         var stats=autoTpy.queue().stats(now());
@@ -316,6 +422,46 @@ public final class ChatTools extends Module {
     public List<String> clanMembers() {
         return ChatClan.members(clanMembers.get()).stream().filter(name -> !isSelf(name)).toList();
     }
+    /** Every saved clan member, including yourself, in saved order, for whole-list rewrites. */
+    public List<String> savedClanMembers() { return ChatClan.members(clanMembers.get()); }
+    public DiscordRoles.Groups discordClanGroups() {
+        return DiscordRoles.groups(clanMembers(), this::isFriend, this::online, discordRoleRoster());
+    }
+    public String discordRoleLabel(String player) { return DiscordRoles.label(discordRoleRoster(), player); }
+    public String discordUsername(String player) {
+        String data = savedDiscordUsernames.get();
+        if (!data.equals(cachedDiscordUsernameData)) {
+            cachedDiscordUsernames = DiscordIgn.decodeUsernames(data);
+            cachedDiscordUsernameData = data;
+        }
+        return cachedDiscordUsernames.getOrDefault(player.toLowerCase(Locale.ROOT), "");
+    }
+    public void setDiscordUsernames(Map<String, String> usernames) {
+        savedDiscordUsernames.set(DiscordIgn.encodeUsernames(usernames));
+        cachedDiscordUsernameData = null;
+    }
+    public void setDiscordRoles(Map<String, List<DiscordRoles.Role>> roster, String source) {
+        savedDiscordRoles.set(DiscordRoles.encode(roster));
+        savedDiscordRoleSource.set(source == null ? "" : source);
+        cachedDiscordRoleData = null;
+        syncAutoTpy();
+    }
+    /** Re-evaluate Auto TPY admission after the Discord connection changes. */
+    public void refreshAutoTpyPolicy() { syncAutoTpy(); }
+    /** Saved roles describe one guild and channel; a different connection hides them until the next sync. */
+    private Map<String, List<DiscordRoles.Role>> discordRoleRoster() {
+        String data = savedDiscordRoles.get();
+        if (!data.equals(cachedDiscordRoleData)) {
+            cachedDiscordRoles = DiscordRoles.decode(data);
+            cachedDiscordRoleData = data;
+        }
+        return savedDiscordRoleSource.get().equals(discordSource()) ? cachedDiscordRoles : Map.of();
+    }
+    /** Guild and channel the connection is configured for right now. */
+    private String discordSource() {
+        DiscordIgnSync sync = Modules.get().get(DiscordIgnSync.class);
+        return sync == null ? "" : DiscordRoles.source(sync.configuredGuildId(), sync.configuredChannelId());
+    }
     public ChatClan.Groups clanGroups() { return ChatClan.groups(clanMembers(), this::isFriend, this::online); }
     public boolean inClan(String player) { return ChatClan.contains(clanMembers.get(), player); }
     /** Adds the usernames not already in the clan and returns how many that was. */
@@ -328,6 +474,11 @@ public final class ChatTools extends Module {
     public void removeFromClan(String player) {
         if (!inClan(player)) return;
         clanMembers.set(ChatClan.remove(clanMembers.get(), player));
+        refreshHighlights();
+    }
+    /** Replaces the whole clan list, for a sync that keeps names added by hand but removes ones it added itself. */
+    public void setClanMembers(List<String> names) {
+        clanMembers.set(ChatClan.members(names));
         refreshHighlights();
     }
     public void toggleClan(String player) {
@@ -465,6 +616,7 @@ public final class ChatTools extends Module {
 
     private boolean queueWhisper(ChatWhisperQueue.Whisper whisper) {
         checkSession();
+        applyCooldowns();
         if (mc.getConnection() == null || !whispers.add(whisper)) return false;
         if (whisper.player() != null) rememberPlayer(whisper.player());
         sendWhispers();
@@ -476,6 +628,75 @@ public final class ChatTools extends Module {
         if (mc.player == null || mc.level == null || mc.getConnection() == null) return;
         var next = whispers.poll(now());
         if (next != null) send(next.command());
+    }
+
+    /** Sends public chat through the queue, or straight away when queueing is off. */
+    public boolean sendPublic(String text) {
+        checkSession();
+        if (text == null || text.isBlank() || mc.getConnection() == null) return false;
+        if (!queueChat.get()) { sendChatNow(text); return true; }
+        applyCooldowns();
+        if (!chats.add(text)) return false;
+        sendChats();
+        return true;
+    }
+
+    /** Settings can change at any time; queueing and reading the queue always use the current cooldowns. */
+    private void applyCooldowns() {
+        whispers.minimum(whisperCooldown.get());
+        chats.minimum(chatCooldown.get());
+    }
+
+    private void sendChats() {
+        if (mc.player == null || mc.level == null || mc.getConnection() == null) return;
+        String next = chats.poll(now());
+        if (next != null) sendChatNow(next);
+    }
+
+    private void sendChatNow(String text) {
+        mc.gui.getChat().addRecentChat(text);
+        mc.getConnection().sendChat(text);
+    }
+
+    /** One message waiting in either queue, for the window's send tray. */
+    public record Outgoing(boolean whisper, long id, String target, String text, long eta) {}
+    /** Everything still waiting to send, soonest first. */
+    public List<Outgoing> outgoing() {
+        checkSession();
+        applyCooldowns();
+        long now = now();
+        List<Outgoing> result = new ArrayList<>();
+        for (var entry : chats.entries(now)) result.add(new Outgoing(false, entry.id(), null, entry.text(), entry.eta()));
+        for (var entry : whispers.entries(now)) result.add(new Outgoing(true, entry.id(),
+            entry.whisper().player() == null ? "Reply" : entry.whisper().player(), entry.whisper().text(), entry.eta()));
+        result.sort(java.util.Comparator.comparingLong(Outgoing::eta));
+        return result;
+    }
+    public void cancelOutgoing(Outgoing outgoing) {
+        if (outgoing.whisper()) whispers.cancel(outgoing.id()); else chats.cancel(outgoing.id());
+    }
+    public int chatCooldownMs() { return chatCooldown.get(); }
+    /** Screen pixels per window unit chosen by the player, or zero to size the window from the screen. */
+    public double windowScale() { return windowScale.get(); }
+    public int whisperCooldownMs() { return whisperCooldown.get(); }
+
+    /** What is waiting for the player: teleport requests to answer, unread messages and a Discord sync problem. */
+    public record Waiting(int requests, int unread, String problem) {
+        public int total() { return requests + unread + (problem == null ? 0 : 1); }
+    }
+    /** Refreshed every tick, so the in-game notification never recomputes it while drawing. */
+    private Waiting waitingNow = new Waiting(0, 0, null);
+    public Waiting waiting() { return waitingNow; }
+    private Waiting computeWaiting() {
+        DiscordIgnSync sync = Modules.get().get(DiscordIgnSync.class);
+        String problem = sync != null && sync.isActive() && sync.syncFailed() ? sync.syncStatus() : null;
+        return new Waiting(mc.getConnection() == null ? 0 : requests().size(), messages().unread(), problem);
+    }
+
+    @EventHandler private void onRender2D(Render2DEvent event) {
+        if (!waitingNotice.get() || mc.screen != null || mc.options.hideGui || mc.player == null) return;
+        var waiting = waitingNow;
+        if (waiting.total() > 0) dev.tntcoating.gui.WaitingPill.draw(event.drawContext, event.screenWidth, waiting, openPopupKey.get());
     }
 
     /** How long queued whispers still wait for the server's delay, or 0 when none are waiting. */
@@ -491,7 +712,7 @@ public final class ChatTools extends Module {
         checkSession();
         String text = event.getMessage().getString();
         // The refused whisper goes again once the wait is over, so the server's refusal would only be noise.
-        if (whispers.refused(text, now())) { event.cancel(); return; }
+        if (whispers.refused(text, now()) || chats.refused(text, now())) { event.cancel(); return; }
         ChatMessages.Message message = messages.parse(text, mc.player.getGameProfile().name(), now());
         if (message == null) return;
         if (!message.incoming()) whispers.delivered(message.player());
@@ -643,7 +864,10 @@ public final class ChatTools extends Module {
     }
     @EventHandler private void onTick(TickEvent.Pre event) {
         checkSession();
+        applyCooldowns();
+        waitingNow = computeWaiting();
         sendWhispers();
+        sendChats();
         if (mc.player != null && mc.getConnection() != null) {
             String account = autoTpySessionKey();
             if (autoAccount != null && !autoAccount.equals(account)) { autoTpy.reset();incomingRequests.clear(); }
@@ -695,6 +919,7 @@ public final class ChatTools extends Module {
         recentPlayers.clear();
         recentKey = null;
         whispers.clear();
+        chats.clear();
         replyPlayer = null;
         hotspotDetails.clear();
         hotspotReadingUntil = 0;
@@ -719,6 +944,11 @@ public final class ChatTools extends Module {
     }
 
     @EventHandler private void onSent(PacketEvent.Sent event) {
+        if (event.packet instanceof ServerboundChatPacket chat) {
+            String text = chat.message();
+            mc.execute(() -> { if (isActive()) { checkSession(); chats.sent(text, now()); } });
+            return;
+        }
         String command = event.packet instanceof ServerboundChatCommandPacket packet ? packet.command()
             : event.packet instanceof ServerboundChatCommandSignedPacket packet ? packet.command() : null;
         if (command == null) return;

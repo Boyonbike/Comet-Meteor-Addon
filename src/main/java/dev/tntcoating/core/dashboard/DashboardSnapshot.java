@@ -13,11 +13,16 @@ import java.util.Map;
 /**
  * One published dashboard frame. Schema 2 is frozen for the served frontend; new fields may be added, but existing
  * names and meanings must not change without a schema bump.
+ *
+ * <p>{@code mode} names the flight module the page should present ({@link #HIGHWAY} or {@link #BOAT}). {@code flight}
+ * is always present (idle while Highway Fly is off) and {@code boat} is null unless the mode is boat.
  */
 public record DashboardSnapshot(int schema, long sequence, long generatedAt, Server server, Client client,
-                                HighwayTelemetry flight, Map<String, List<SettingValue>> settings,
+                                String mode, HighwayTelemetry flight, BoatTelemetry boat,
+                                Map<String, List<SettingValue>> settings,
                                 int settingsSignature, List<EventEntry> events, String error) {
     public static final int SCHEMA = 2;
+    public static final String HIGHWAY = "highway", BOAT = "boat";
 
     public DashboardSnapshot {
         schema = SCHEMA;

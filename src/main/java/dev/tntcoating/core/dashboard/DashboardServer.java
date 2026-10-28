@@ -62,6 +62,7 @@ public final class DashboardServer {
     private record Published(long sequence, String json, byte[] bytes) {}
 
     private final Config config;
+    private final DashboardAssets.Bundle assets;
     private final DashboardLog log;
     private final Object monitor = new Object();
     private final Set<HttpExchange> streams = Collections.synchronizedSet(new LinkedHashSet<>());
@@ -73,6 +74,11 @@ public final class DashboardServer {
     private volatile long startedAtMillis;
 
     public DashboardServer(Config config, DashboardLog log) {
+        this(config, log, DashboardAssets.flight());
+    }
+
+    public DashboardServer(Config config, DashboardLog log, DashboardAssets.Bundle assets) {
+        this.assets = Objects.requireNonNull(assets, "assets");
         this.config = Objects.requireNonNull(config, "config");
         this.log = Objects.requireNonNull(log, "log");
         this.executor = Executors.newFixedThreadPool(Math.max(6, config.maxClients() + 4), threadFactory());
@@ -94,7 +100,7 @@ public final class DashboardServer {
         server = created;
         startedAtMillis = System.currentTimeMillis();
         running = true;
-        log.info("Highway dashboard listening on " + address.getHostAddress() + ":" + port());
+        log.info("Flight dashboard listening on " + address.getHostAddress() + ":" + port());
         return port();
     }
 
@@ -167,7 +173,7 @@ public final class DashboardServer {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
-        log.info("Highway dashboard stopped");
+        log.info("Flight dashboard stopped");
     }
 
     private void handle(HttpExchange exchange) {
@@ -186,9 +192,9 @@ public final class DashboardServer {
 
             String path = exchange.getRequestURI().getPath();
             switch (path) {
-                case "/", "/index.html" -> sendAsset(exchange, "text/html; charset=utf-8", DashboardAssets.html(), true);
-                case "/app.css" -> sendAsset(exchange, "text/css; charset=utf-8", DashboardAssets.css(), false);
-                case "/app.js" -> sendAsset(exchange, "text/javascript; charset=utf-8", DashboardAssets.js(), false);
+                case "/", "/index.html" -> sendAsset(exchange, "text/html; charset=utf-8", assets.html(), true);
+                case "/app.css" -> sendAsset(exchange, "text/css; charset=utf-8", assets.css(), false);
+                case "/app.js" -> sendAsset(exchange, "text/javascript; charset=utf-8", assets.js(), false);
                 case "/favicon.ico" -> exchange.sendResponseHeaders(204, -1);
                 case "/api/health" -> sendJson(exchange, 200, healthJson());
                 case "/api/snapshot" -> {

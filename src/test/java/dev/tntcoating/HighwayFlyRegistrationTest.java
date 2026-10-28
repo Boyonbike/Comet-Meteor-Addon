@@ -108,6 +108,10 @@ class HighwayFlyRegistrationTest {
             assertTrue(registered.contains("dev/tntcoating/modules/" + helper), helper + " must be independently registered");
         }
         assertFalse(registered.contains("dev/tntcoating/modules/SmartAutoFly"));
-        assertFalse(registered.contains("dev/tntcoating/modules/HighwayDashboard"), "Dashboard belongs to Highway Fly settings");
+        for (String flight : new String[] {"BoatFly", "AutoBoatFly", "FlightDashboard"}) {
+            assertTrue(registered.contains("dev/tntcoating/modules/" + flight), flight + " must be registered");
+        }
+        assertFalse(registered.contains("dev/tntcoating/modules/HighwayDashboard"), "Flight Dashboard replaced the Highway dashboard");
+        assertFalse(registered.contains("dev/tntcoating/modules/BoatDashboard"), "Flight Dashboard replaced the Boat dashboard");
     }
 }

@@ -65,3 +65,12 @@ test('buffer and fixed countdowns and response deadlines have distinct meanings'
   d.render(null);
   assert.equal(d.elements.get('home-history-body').children.length, 0);
 });
+
+test('reported and estimated home cooldowns are clearly distinguished', () => {
+  const d = dashboard(); const h = home();
+  h.schedule.estimatedCooldown = true; d.render(h);
+  assert.equal(d.elements.get('home-cooldown').textContent, '00:04:54 (estimate)');
+  h.schedule.estimatedCooldown = false; d.render(h);
+  assert.equal(d.elements.get('home-cooldown').textContent, '00:04:54');
+  assert.equal(d.elements.get('home-waiting').textContent, 'cooldown · 00:05:04');
+});

@@ -366,6 +366,71 @@ class HighwayFlyConfigMigrationTest {
         assertTrue(group(highway, "Old Safety").getListOrEmpty("settings").isEmpty());
     }
 
+    private static CompoundTag number(String name, double value) {
+        var tag = new CompoundTag(); tag.putString("name", name); tag.putDouble("value", value); return tag;
+    }
+
+    @Test void oldBoatFlyRecordBecomesAutoBoatFlyAndManualKeepsTheMovementSettings() {
+        var old = module("boat-fly", true, "Movement & Phasing", number("horizontal-speed", 2), number("horizontal-limit", 2.5),
+            number("phase-speed", 1.5), number("phase-horizontal-speed", .2));
+        var groups = old.getCompoundOrEmpty("settings").getListOrEmpty("groups");
+        var general = new CompoundTag(); general.putString("name", "General");
+        var values = new ListTag(); values.add(number("heading", 90)); general.put("settings", values);
+        groups.add(general);
+        var root = root(old);
+        HighwayFlyConfigMigration.splitBoatFly(root);
+        var manual = find(root, "boat-fly");
+        var automatic = find(root, "auto-boat-fly");
+        assertFalse(manual.getBooleanOr("active", true), "The new manual module must not start a trip on load");
+        assertTrue(automatic.getBooleanOr("active", false));
+        assertEquals(90, value(automatic, "General", "heading").getDoubleOr("value", 0));
+        for (var module : new CompoundTag[] {manual, automatic}) {
+            assertEquals(2, value(module, "Movement & Phasing", "limited-speed").getDoubleOr("value", 0), "Travel used the smaller cap");
+            assertEquals(1.5, value(module, "Movement & Phasing", "adaptive-phase-speed").getDoubleOr("value", 0));
+            assertEquals(.2, value(module, "Movement & Phasing", "in-block-speed").getDoubleOr("value", 0), 1e-9);
+        }
+        var once = root.copy();
+        HighwayFlyConfigMigration.splitBoatFly(root);
+        assertEquals(once, root, "A config that already has Auto Boat Fly is never split again");
+    }
+
+    @Test void savedHorizontalSpeedAloneIsCappedByTheOldDefaultLimit() {
+        var root = root(module("boat-fly", false, "Movement & Phasing", number("horizontal-speed", 2.8)));
+        HighwayFlyConfigMigration.splitBoatFly(root);
+        assertEquals(.99, value(find(root, "auto-boat-fly"), "Speed", "limited-speed").getDoubleOr("value", 0), 1e-9);
+    }
+
+    @Test void boatSettingsFollowTheirNewSections() {
+        var root = root(module("auto-boat-fly", false, "General", number("heading", -90), number("limited-speed", 1.2)));
+        HighwayFlyConfigMigration.regroupSettings(root, "auto-boat-fly", Map.of("heading", "Trip", "limited-speed", "Speed"));
+        var automatic = find(root, "auto-boat-fly");
+        assertEquals(-90, value(automatic, "Trip", "heading").getDoubleOr("value", 0));
+        assertEquals(1.2, value(automatic, "Speed", "limited-speed").getDoubleOr("value", 0), 1e-9);
+    }
+
+    @Test void bothOldDashboardsMoveToFlightDashboardWithHighwaySettingsWinning() {
+        var highway = module("highway-fly", false, "Dashboard", boolSetting("dashboard-enabled", false), number("dashboard-port", 9000));
+        var boat = module("boat-fly", false, "Dashboard", boolSetting("dashboard-enabled", true), number("dashboard-port", 8735),
+            setting("dashboard-access-token", "secret"));
+        var root = root(highway, boat);
+        HighwayFlyConfigMigration.migrateFlightDashboard(root);
+        var dashboard = find(root, "flight-dashboard");
+        assertTrue(dashboard.getBooleanOr("active", false), "Either old dashboard being on keeps the page served");
+        assertEquals(9000, value(dashboard, "General", "port").getDoubleOr("value", 0));
+        assertEquals("secret", value(dashboard, "General", "access-token").getStringOr("value", ""));
+        assertTrue(group(find(root, "highway-fly"), "Dashboard").getListOrEmpty("settings").isEmpty());
+        assertTrue(group(find(root, "boat-fly"), "Dashboard").getListOrEmpty("settings").isEmpty());
+        var once = root.copy();
+        HighwayFlyConfigMigration.migrateFlightDashboard(root);
+        assertEquals(once, root);
+    }
+
+    @Test void configsWithoutAnOldDashboardGetNoFlightDashboardRecord() {
+        var root = root(module("highway-fly", true, "Route", setting("destination", "x")));
+        HighwayFlyConfigMigration.migrateFlightDashboard(root);
+        assertEquals(1, root.getListOrEmpty("modules").size());
+    }
+
     private static CompoundTag setting(String name, String text) {
         CompoundTag tag = new CompoundTag();
         tag.putString("name", name);

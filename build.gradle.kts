@@ -110,6 +110,8 @@ tasks {
         from("LICENSE")
         from("LICENSE-CC0")
         from("LICENSE-NoTextureRotations")
+        from("LICENSE-Inter")
+        from("LICENSE-Lucide")
         from("THIRD_PARTY_NOTICES.md")
     }
 
@@ -149,7 +151,7 @@ val sourceDistribution = tasks.register<Zip>("sourceDistribution") {
     // Meteor build 82 resolves only from here, since upstream pruned it.
     from("vendor") { into("vendor") }
     from("gradlew", "gradlew.bat", "build.gradle.kts", "settings.gradle.kts", "gradle.properties",
-        "LICENSE", "LICENSE-CC0", "LICENSE-NoTextureRotations", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md", "CONTRIBUTING.md")
+        "LICENSE", "LICENSE-CC0", "LICENSE-NoTextureRotations", "LICENSE-Inter", "LICENSE-Lucide", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md", "CONTRIBUTING.md")
 }
 
 tasks.named("build") { dependsOn(sourceDistribution) }

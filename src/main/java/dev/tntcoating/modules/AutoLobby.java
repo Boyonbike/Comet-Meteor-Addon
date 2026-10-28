@@ -13,6 +13,7 @@ import dev.tntcoating.core.LobbyLogin;
 import dev.tntcoating.core.LobbyLocation;
 import dev.tntcoating.core.LobbyPortalFinder;
 import dev.tntcoating.core.LobbyRecoveryStore;
+import dev.tntcoating.core.LobbyRecoveryDecisions;
 import dev.tntcoating.core.PortalLookahead;
 import java.io.IOException;
 import java.util.Optional;
@@ -20,6 +21,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.nio.file.Files;
 import meteordevelopment.meteorclient.MeteorClient;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.movement.AutoWalk;
+import net.minecraft.world.entity.vehicle.boat.AbstractBoat;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
@@ -43,9 +48,9 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-/** Recovers an existing saved trip; general standalone lobby recovery is deferred. */
+/** Recovers saved Highway Fly trips and mounted Quiettee BoatPhase/AutoWalk travel. */
 public final class AutoLobby extends HighwayHelper {
-    public AutoLobby() { super("auto-lobby", "Recover a saved Highway Fly trip through the lobby."); }
+    public AutoLobby() { super("auto-lobby", "Recover Highway Fly or a mounted BoatPhase and AutoWalk trip through the lobby."); }
 
     private static final int RESUME_DELAY_TICKS = 20;
     private static final int PATH_START_GRACE_TICKS = 20;
@@ -67,9 +72,14 @@ public final class AutoLobby extends HighwayHelper {
         .visible(() -> reconnect.get())
         .onChanged(value -> highway().prepareReconnectDelay()).build());
 
+    private final Setting<String> targetDimension = sgGeneral.add(new StringSetting.Builder()
+        .name("target-dimension")
+        .description("Dimension to reach when AutoLobby runs without a saved flight. Saved trips keep their own dimension.")
+        .defaultValue("minecraft:the_nether").build());
+
     private final Setting<Boolean> resumeFlight = sgGeneral.add(new BoolSetting.Builder()
         .name("resume-flight")
-        .description("Turn Highway Fly back on after reaching the target dimension.")
+        .description("Resume Highway Fly or boat AutoWalk after reaching the target dimension.")
         .defaultValue(true)
         .build());
 
@@ -203,6 +213,11 @@ public final class AutoLobby extends HighwayHelper {
 
     private Stage stage = Stage.IDLE;
     private boolean armed;
+    private boolean boatTrip;
+    private boolean standaloneTrip;
+    private String boatModule = "boat-phase";
+    private float boatYaw;
+    private boolean warnedBoatBridge;
     private Object recoveryWorld;
     private LobbyLocation location = LobbyLocation.NONE;
     private boolean loginStarted;
@@ -233,7 +248,9 @@ public final class AutoLobby extends HighwayHelper {
     boolean resumePending() {
         stopWalking();
         resetTransientState();
+        if (nativeBoatTrip() && !nativeRecoveryAuthorized()) { releaseNativeBoatRuntime(); return false; }
         Optional<LobbyRecoveryStore.Recovery> saved = recoveryStore.load();
+        if (saved.isPresent() && LobbyRecoveryStore.NATIVE_BOAT.equals(saved.get().boatModule()) && !nativeRecoveryAuthorized()) return false;
         waitingForTripRecord = saved.isEmpty()
             && Files.exists(MeteorClient.FOLDER.toPath().resolve("auto-lobby-recovery.json"));
         if (waitingForTripRecord) {
@@ -242,6 +259,10 @@ public final class AutoLobby extends HighwayHelper {
         }
         if (!highway().session.recovering() && saved.isPresent()) {
             LobbyRecoveryStore.Recovery recovery = saved.get();
+            boatTrip = recovery.boatYaw() != null;
+            standaloneTrip = false;
+            boatModule = boatTrip ? recovery.boatModule() : "boat-phase";
+            if (boatTrip) boatYaw = recovery.boatYaw();
             highway().session.recover(recovery.dimension(), recovery.server());
             highway().durableTripAvailable = true;
             if (recovery.destination() != null) {
@@ -256,10 +277,14 @@ public final class AutoLobby extends HighwayHelper {
         resumeDimension = highway().session.dimension();
         resumeServer = highway().session.server();
         armed = true;
+        if (boatTrip) {
+            if (highway().session.recoveryAllowed(serverAddress())) pauseBoatWalk();
+            else setBoatPaused(false);
+        }
         stage = Stage.SETTLING;
         if (highway().session.recoveryAllowed(serverAddress())) {
-            info("Recovering the interrupted Highway Fly trip.");
-            highway().notifyWebhook(HighwayWebhook.Event.RECOVERY,
+            info("Recovering the interrupted %s trip.", boatTrip ? "boat" : "Highway Fly");
+            notifyTrip(HighwayWebhook.Event.RECOVERY,
                 "Found the saved trip and is recovering it before resuming flight.");
         }
         recoveryWorld = null;
@@ -276,7 +301,8 @@ public final class AutoLobby extends HighwayHelper {
         stopWalking();
         stage = Stage.AWAITING_JOIN;
         stageTicks = 0;
-        info("Highway Fly trip paused; it will resume on the next join.");
+        if (boatTrip) pauseBoatWalk();
+        info("Travel paused; it will resume on the next join.");
     }
 
     private void beginLogin() {
@@ -287,7 +313,7 @@ public final class AutoLobby extends HighwayHelper {
         stageTicks = 0;
         if (LobbyLogin.command(loginPassword.get()) == null) {
             warning("Set login-password or log in manually before portal recovery can continue.");
-            highway().notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
+            notifyTrip(HighwayWebhook.Event.NEEDS_HELP,
                 "Login is required, but login-password is blank; set it or log in manually.");
             return;
         }
@@ -366,7 +392,7 @@ public final class AutoLobby extends HighwayHelper {
             if (!warnedLoginRejected) {
                 warning("The server rejected /login: %s",
                     LobbyLogin.redact(ChatSender.plain(raw).strip(), loginPassword.get()));
-                highway().notifyWebhook(HighwayWebhook.Event.LOGIN_FAILED,
+                notifyTrip(HighwayWebhook.Event.LOGIN_FAILED,
                     "The server rejected the login password; portal recovery is waiting for a manual login.");
                 warnedLoginRejected = true;
             }
@@ -380,9 +406,52 @@ public final class AutoLobby extends HighwayHelper {
     @EventHandler(priority = -100)
     private void onTick(TickEvent.Pre event) {
         if (loadingProfile() || highway().profileLoading || mc.player == null || mc.level == null) return;
-        if (!highway().isActive() && !highway().session.recovering()) {
-            if (mc.player.tickCount % 100 == 0) resumePending();
+        if (nativeBoatTrip() && !nativeRecoveryAuthorized()) { releaseNativeBoatRuntime(); return; }
+        AutoBoatFly nativeBoat = Modules.get().get(AutoBoatFly.class);
+        if (nativeBoat != null && nativeBoat.isActive() && !nativeBoat.isAutomaticTravel() && mountedBoat()) {
+            stopWalking();
             return;
+        }
+        if (standaloneTrip && nativeBoatActive()) {
+            standaloneTrip = false;
+            boatTrip = true;
+            boatModule = LobbyRecoveryStore.NATIVE_BOAT;
+            boatYaw = mc.player.getYRot();
+            pauseBoatWalk();
+            saveRecovery();
+        }
+        if (!highway().isActive() && !highway().session.recovering()) {
+            if (boatTrip && highway().session.flying()) {
+                if (!sameBoatServer()) return;
+                if (!resumeDimension.equals(dimensionId()) || detectedLocation() != LobbyLocation.NONE) {
+                    highway().session.recover(resumeDimension, resumeServer);
+                    armed = true;
+                    pauseBoatWalk();
+                    stage = Stage.SETTLING;
+                    recoveryWorld = null;
+                } else {
+                    if (!dev.tntcoating.core.BoatRecoveryPolicy.keepTrip(nativeBoatTrip(), nativeBoatActive(), boatWalking())) {
+                        cancelRecovery();
+                        boatTrip = false;
+                    } else {
+                        if (!boatReady()) { pauseBoatWalk(); return; }
+                        float desiredYaw = nativeBoatTrip() && nativeBoat != null ? (float) nativeBoat.heading() : mc.player.getYRot();
+                        if (mc.player.tickCount % 20 == 0 && boatYaw != desiredYaw) {
+                            boatYaw = desiredYaw;
+                            saveRecovery();
+                        }
+                        highway().prepareReconnectDelay();
+                    }
+                    return;
+                }
+            } else {
+                if (Files.exists(MeteorClient.FOLDER.toPath().resolve("auto-lobby-recovery.json"))) {
+                    resumePending();
+                    return;
+                }
+                if (!armBoatTrip() && (stage != Stage.DONE || recoveryWorld != mc.level)) armStandaloneRecovery();
+                return;
+            }
         }
         if (!highway().session.recoveryAllowed(serverAddress()) || !armed) return;
         if (!highway().isActive()) highway().prepareReconnectDelay();
@@ -403,8 +472,8 @@ public final class AutoLobby extends HighwayHelper {
                 stopWalking();
                 stage = Stage.RESUMING;
                 stageTicks = 0;
-                info("Back in %s; resuming Highway Fly.", dimensionLabel());
-                highway().notifyWebhook(HighwayWebhook.Event.DIMENSION,
+                info("Back in %s; resuming %s.", dimensionLabel(), boatTrip ? "boat travel" : "Highway Fly");
+                notifyTrip(HighwayWebhook.Event.DIMENSION,
                     "Back in " + dimensionLabel() + "; resuming the route.");
             }
             tickResuming();
@@ -445,32 +514,67 @@ public final class AutoLobby extends HighwayHelper {
             return;
         }
         if (insidePortal()) {
+            if (boatTrip && mc.player.isPassenger()) {
+                if (boatReady()) {
+                    setBoatPaused(false);
+                    mc.player.setYRot(boatYaw);
+                    mc.options.keyUp.setDown(true);
+                    inputActive = true;
+                } else releaseMovement();
+                return;
+            }
             tickPortalExit();
             return;
         }
         releaseMovement();
         portalExitTarget = null;
-        if (mc.player.isPassenger() || mc.player.isInWater() || mc.player.isInLava()
+        if (boatTrip ? !boatReady() : !standaloneTrip && mc.player.isPassenger() || mc.player.isInWater() || mc.player.isInLava()
             || mc.player.isDeadOrDying()) {
             if (!warnedCantResume) {
-                warning("Cannot resume Highway Fly here; waiting.");
-                highway().notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
+                warning("Cannot resume travel here; waiting for %s.", boatTrip ? "the boat driver seat" : "a safe position");
+                notifyTrip(HighwayWebhook.Event.NEEDS_HELP,
                     "Cannot resume Highway Fly here; waiting for a safe, supported position.");
                 warnedCantResume = true;
             }
             return;
         }
-        if (!resumeFlight.get()) {
+        var arrival = LobbyRecoveryDecisions.arrived(standaloneTrip, resumeFlight.get());
+        if (arrival == LobbyRecoveryDecisions.Arrival.COMPLETE_STANDALONE) {
+            finishRecovery();
+            highway().session.stop();
+            standaloneTrip = false;
+            highway().releaseReconnect();
+            info("Lobby recovery complete.");
+            return;
+        }
+        if (arrival == LobbyRecoveryDecisions.Arrival.STOP_TRIP) {
             info("Back in %s; resume-flight is off, ending the trip.", dimensionLabel());
-            highway().notifyWebhook(HighwayWebhook.Event.STOPPED,
+            notifyTrip(HighwayWebhook.Event.STOPPED,
                 "Back in " + dimensionLabel() + ", but resume-flight is off; the trip was ended.");
+            boolean nativeTrip = nativeBoatTrip();
             cancelRecovery();
+            stage = Stage.DONE;
+            recoveryWorld = mc.level;
+            if (nativeTrip) {
+                AutoBoatFly nativeBoat = Modules.get().get(AutoBoatFly.class);
+                if (nativeBoat != null && nativeBoat.isActive()) nativeBoat.disable();
+            }
             if (highway().isActive()) highway().disable();
             return;
         }
-        // Clear only this server's marker, then hand movement back to the flight controller.
+        // Hand movement back to the controller that owns the saved trip.
         finishRecovery();
-        highway().resumeRecoveredFlight();
+        if (boatTrip) {
+            mc.player.setYRot(boatYaw);
+            highway().session.start(resumeDimension, resumeServer);
+            setBoatPaused(false);
+            AutoBoatFly nativeBoat = Modules.get().get(AutoBoatFly.class);
+            if (!nativeBoatTrip() || nativeBoat != null && nativeBoat.autoWalkEnabled())
+                Modules.get().get(AutoWalk.class).enable();
+            highway().releaseReconnect();
+            saveRecovery();
+            info("Boat travel resumed.");
+        } else highway().resumeRecoveredFlight();
     }
 
     private void tickPortalExit() {
@@ -478,7 +582,8 @@ public final class AutoLobby extends HighwayHelper {
         if (portalExitTarget == null) {
             if (portalExitTicks++ % 100 != 0) return;
             BlockPos target = highway().destination.get();
-            Vec3 desired = new Vec3(target.getX()-mc.player.getX(),0,target.getZ()-mc.player.getZ());
+            Vec3 desired = standaloneTrip || boatTrip ? Vec3.directionFromRotation(0, boatTrip ? boatYaw : mc.player.getYRot())
+                : new Vec3(target.getX()-mc.player.getX(),0,target.getZ()-mc.player.getZ());
             portalExitTarget = HighwayRecoveryTargets.portalExit(mc.player.getBoundingBox(), mc.player.position(),
                 desired, new HighwayRecoveryTargets.ExitProbe() {
                     public boolean clear(AABB box) { return safeExitSweep(box); }
@@ -492,7 +597,7 @@ public final class AutoLobby extends HighwayHelper {
                 releaseMovement();
                 if (!warnedCantResume) {
                     warning("Waiting for a loaded, supported exit from the destination portal.");
-                    highway().notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
+                    notifyTrip(HighwayWebhook.Event.NEEDS_HELP,
                         "Waiting for a loaded, supported exit from the destination portal.");
                     warnedCantResume = true;
                 }
@@ -550,7 +655,7 @@ public final class AutoLobby extends HighwayHelper {
         BlockPos target = found.get().pos();
         startWalking(target);
         info("Walking to the Nether portal at %d, %d, %d.", target.getX(), target.getY(), target.getZ());
-        highway().notifyWebhook(HighwayWebhook.Event.PORTAL,
+        notifyTrip(HighwayWebhook.Event.PORTAL,
             "Found the Nether portal; walking to it.",
             new HighwayWebhook.Field("🌀 Portal", target.getX() + " " + target.getY() + " "
                 + target.getZ(), true, true));
@@ -580,7 +685,7 @@ public final class AutoLobby extends HighwayHelper {
         stageTicks = 0;
         if (!warnedNoPortal) {
             warning(message);
-            highway().notifyWebhook(needsHelp ? HighwayWebhook.Event.NEEDS_HELP : HighwayWebhook.Event.RECOVERY,
+            notifyTrip(needsHelp ? HighwayWebhook.Event.NEEDS_HELP : HighwayWebhook.Event.RECOVERY,
                 message);
             warnedNoPortal = true;
         } else if (debug.get()) {
@@ -597,7 +702,8 @@ public final class AutoLobby extends HighwayHelper {
         pathing = false;
         lastWalkPosition = mc.player.position();
 
-        if (!useBaritone.get() || PathManagers.get() instanceof NopPathManager) return;
+        if (recoveryMovement() == LobbyRecoveryDecisions.Movement.BOAT || !useBaritone.get()
+            || PathManagers.get() instanceof NopPathManager) return;
         try {
             PathManagers.get().moveTo(target);
             pathing = true;
@@ -629,17 +735,17 @@ public final class AutoLobby extends HighwayHelper {
             releaseMovement();
             if (!warnedAirborne) {
                 warning("Land before walking into the portal.");
-                highway().notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
+                notifyTrip(HighwayWebhook.Event.NEEDS_HELP,
                     "Land before walking into the Nether portal; recovery is waiting.");
                 warnedAirborne = true;
             }
             return;
         }
-        if (mc.player.isPassenger()) {
+        if (recoveryMovement() == LobbyRecoveryDecisions.Movement.WAIT) {
             releaseMovement();
             if (!warnedCantResume) {
                 warning("Get out of the vehicle first.");
-                highway().notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
+                notifyTrip(HighwayWebhook.Event.NEEDS_HELP,
                     "Get out of the vehicle so portal recovery can walk to the Nether portal.");
                 warnedCantResume = true;
             }
@@ -657,10 +763,8 @@ public final class AutoLobby extends HighwayHelper {
             }
             boolean timedOut = pathTicks > PATH_TIMEOUT_TICKS;
             if (!close && !stopped && !timedOut) return;
-            if (!close && (stopped || timedOut)) {
-                failPortalCandidate();
-                return;
-            }
+            if (!close && (stopped || timedOut) && debug.get())
+                info("Baritone did not reach the portal; trying direct walking.");
             stopPathing();
         }
 
@@ -672,12 +776,15 @@ public final class AutoLobby extends HighwayHelper {
         if (target == null) return;
         Vec3 center = Vec3.atCenterOf(target);
         mc.player.setYRot(HighwayCourse.yaw(mc.player.position(), center));
+        boolean boatSteering = recoveryMovement() == LobbyRecoveryDecisions.Movement.BOAT;
+        if (boatTrip) setBoatPaused(!boatSteering);
         mc.options.keyUp.setDown(true);
         inputActive = true;
 
-        boolean jump = mc.player.onGround()
+        boolean jump = boatSteering ? center.y > mc.player.getY() + .3 : mc.player.onGround()
             && (mc.player.horizontalCollision || center.y > mc.player.getY() + 1.1);
         mc.options.keyJump.setDown(jump);
+        if (boatTrip) mc.options.keySprint.setDown(boatSteering && center.y < mc.player.getY() - .3);
 
         Vec3 position = mc.player.position();
         if (position.distanceToSqr(lastWalkPosition) >= MOVEMENT_EPSILON_SQ) {
@@ -686,7 +793,7 @@ public final class AutoLobby extends HighwayHelper {
         } else if (++stuckTicks > WALK_STUCK_TICKS) {
             if (!warnedStuck) {
                 warning("Cannot reach the portal; move closer or turn on use-baritone.");
-                highway().notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
+                notifyTrip(HighwayWebhook.Event.NEEDS_HELP,
                     "Cannot reach the portal; move closer or turn on use-baritone.");
                 warnedStuck = true;
             }
@@ -723,10 +830,10 @@ public final class AutoLobby extends HighwayHelper {
         }
         if (stageTicks == 1) {
             info("In the portal; waiting for the Nether.");
-            highway().notifyWebhook(HighwayWebhook.Event.PORTAL, "In the Nether portal; waiting for the dimension change.");
+            notifyTrip(HighwayWebhook.Event.PORTAL, "In the Nether portal; waiting for the dimension change.");
         } else if (stageTicks == PORTAL_WAIT_WARNING_TICKS) {
             warning("The portal has not transported us yet; still waiting.");
-            highway().notifyWebhook(HighwayWebhook.Event.NEEDS_HELP,
+            notifyTrip(HighwayWebhook.Event.NEEDS_HELP,
                 "The portal has not transported us after ten seconds; recovery is still waiting.");
         }
     }
@@ -800,18 +907,27 @@ public final class AutoLobby extends HighwayHelper {
     }
 
     private void releaseMovement() {
+        if (boatTrip && highway().session.recovering()) setBoatPaused(true);
         if (!inputActive) return;
         mc.options.keyUp.setDown(false);
         mc.options.keyJump.setDown(false);
+        if (boatTrip) mc.options.keySprint.setDown(false);
         inputActive = false;
     }
 
     void saveRecovery() {
+        if (standaloneTrip) return;
+        // A newly started Highway Fly trip takes ownership of the shared recovery marker.
+        if (highway().isActive() && boatTrip) {
+            boatTrip = false;
+            setBoatPaused(false);
+        }
         try {
             String tripDimension = highway().session.dimension() == null ? resumeDimension : highway().session.dimension();
             String tripServer = highway().session.dimension() == null ? resumeServer : highway().session.server();
             if (tripDimension == null) return;
-            if (highway().tripDestination != null) recoveryStore.save(tripDimension,tripServer,highway().tripDestination,highway().tripTargetY);
+            if (boatTrip) recoveryStore.saveBoat(tripDimension, tripServer, boatYaw, boatModule);
+            else if (highway().tripDestination != null) recoveryStore.save(tripDimension,tripServer,highway().tripDestination,highway().tripTargetY);
             else recoveryStore.save(tripDimension,tripServer);
             highway().durableTripAvailable = true;
         } catch (IOException | RuntimeException e) {
@@ -820,6 +936,8 @@ public final class AutoLobby extends HighwayHelper {
     }
 
     private String serverAddress() {
+        AutoBoatFly boat = Modules.get().get(AutoBoatFly.class);
+        if (boat != null && (nativeBoatTrip() || nativeBoatActive())) return boat.recoveryServer();
         return mc.getCurrentServer() == null ? null : mc.getCurrentServer().ip;
     }
 
@@ -838,9 +956,12 @@ public final class AutoLobby extends HighwayHelper {
 
     void cancelRecovery() {
         highway().session.stop();
+        if (boatTrip) setBoatPaused(false);
         Optional<LobbyRecoveryStore.Recovery> saved = recoveryStore.load();
         if (mc.level == null || saved.isEmpty() || saved.get().isForServer(serverAddress())) clearRecoveryFile();
         resetRecovery();
+        boatTrip = false;
+        standaloneTrip = false;
         highway().durableTripAvailable = false;
         highway().tripDestination = null;
     }
@@ -896,11 +1017,196 @@ public final class AutoLobby extends HighwayHelper {
         };
     }
 
+    void cancelNativeBoatRecovery() {
+        if (nativeBoatTrip()) { cancelRecovery(); return; }
+        var saved = recoveryStore.load();
+        if (saved.isPresent() && LobbyRecoveryStore.NATIVE_BOAT.equals(saved.get().boatModule())) clearRecoveryFile();
+    }
+
+    /** Explicitly selecting Auto Boat Fly transfers an old external boat marker without losing its route identity. */
+    void claimNativeBoatController() {
+        if (!nativeBoatActive()) return;
+        if (!boatTrip && !standaloneTrip && highway().session.recovering()) {
+            cancelRecovery();
+            armBoatTrip();
+        }
+        if (!boatTrip || nativeBoatTrip()) return;
+        boatModule = LobbyRecoveryStore.NATIVE_BOAT;
+        if (highway().session.recoveryAllowed(serverAddress())) pauseBoatWalk();
+        saveRecovery();
+    }
+
+    private boolean nativeRecoveryAuthorized() {
+        AutoBoatFly boat = Modules.get().get(AutoBoatFly.class);
+        return boat != null && boat.permitsSavedRecovery();
+    }
+
+    /** End in-memory ownership without erasing a marker needed by another profile/server. */
+    void releaseNativeBoatRuntime() {
+        if (!nativeBoatTrip()) return;
+        highway().session.stop();
+        resetRecovery(); boatTrip = standaloneTrip = false;
+        reconnectAfterLoss = false;
+        highway().releaseReconnect();
+    }
+
+    Optional<LobbyRecoveryStore.Recovery> savedNativeBoatTrip() {
+        return recoveryStore.load().filter(marker -> LobbyRecoveryStore.NATIVE_BOAT.equals(marker.boatModule()) && marker.boatYaw() != null);
+    }
+
+    /** A new explicit boat trip replaces the shared marker before helpers can load stale trips. */
+    boolean startNativeBoatTrip(String dimension, String server, float yaw) {
+        cancelRecovery();
+        boatTrip = true; standaloneTrip = false; boatModule = LobbyRecoveryStore.NATIVE_BOAT;
+        boatYaw = yaw; resumeDimension = dimension; resumeServer = server;
+        highway().session.start(dimension, server);
+        stage = Stage.DONE; recoveryWorld = mc.level;
+        highway().durableTripAvailable = false;
+        saveRecovery();
+        return dev.tntcoating.core.BoatRecoveryPolicy.saveActive(savedNativeBoatTrip().orElse(null),
+            server, dimension, yaw, true, true);
+    }
+
+    boolean restoreNativeBoatTrip() {
+        if (savedNativeBoatTrip().isEmpty()) return false;
+        highway().session.stop(); resetRecovery(); boatTrip = standaloneTrip = false;
+        return resumePending() && nativeBoatTrip();
+    }
+
+    void nativeBoatHeading(float yaw) {
+        if (!nativeBoatTrip() || boatYaw == yaw) return;
+        boatYaw = yaw; saveRecovery();
+    }
+
+    String nativeBoatDimension() { return nativeBoatTrip() ? resumeDimension : null; }
+    String nativeBoatServer() { return resumeServer == null || resumeServer.startsWith("local:") ? "Singleplayer" : resumeServer; }
+
+    public boolean nativeBoatTrip() { return boatTrip && LobbyRecoveryStore.NATIVE_BOAT.equals(boatModule); }
+    public boolean isBoatRecovering() { return boatTrip && highway().session.recovering(); }
+    public boolean isNativeBoatRecovering() { return nativeBoatTrip() && highway().session.recovering(); }
+
+    private boolean nativeBoatActive() {
+        AutoBoatFly nativeBoat = Modules.get().get(AutoBoatFly.class);
+        return nativeBoat != null && nativeBoat.wantsLobbyRecovery();
+    }
+
+    private void notifyTrip(HighwayWebhook.Event event, String description, HighwayWebhook.Field... fields) {
+        notifyTrip(event, description, java.util.List.of(fields));
+    }
+
+    private void notifyTrip(HighwayWebhook.Event event, String description, java.util.List<HighwayWebhook.Field> fields) {
+        AutoBoatFly nativeBoat = Modules.get().get(AutoBoatFly.class);
+        if (nativeBoatTrip() && nativeBoat != null && nativeBoat.isActive()) nativeBoat.notifyTrip(event, description, fields);
+        else highway().notifyWebhook(event, description, fields);
+    }
+
+    /** Enabled AutoLobby can recover a fresh join without a Highway Fly marker. */
+    private boolean armStandaloneRecovery() {
+        if (!isActive() || mc.player == null || mc.level == null || mc.getConnection() == null
+            || highway().isActive() || waitingForTripRecord
+            || !LobbyRecoveryDecisions.standaloneAllowed(independentlyEnabled(), nativeBoatActive(),
+                detectedLocation() != LobbyLocation.NONE)) return false;
+        standaloneTrip = true;
+        boatTrip = false;
+        resumeDimension = targetDimension.get().strip();
+        if (resumeDimension.isBlank()) resumeDimension = "minecraft:the_nether";
+        resumeServer = serverAddress();
+        highway().session.recover(resumeDimension, resumeServer);
+        armed = true;
+        stage = Stage.SETTLING;
+        recoveryWorld = null;
+        resetTransientState();
+        resetLogin();
+        highway().prepareReconnectDelay();
+        return true;
+    }
+
+    private boolean mountedBoat() {
+        return mc.player != null && mc.player.isAlive()
+            && mc.player.getRootVehicle() instanceof AbstractBoat boat
+            && boat.getControllingPassenger() == mc.player;
+    }
+
+    private LobbyRecoveryDecisions.Movement recoveryMovement() {
+        return LobbyRecoveryDecisions.movement(boatTrip, mc.player.isPassenger(), boatReady());
+    }
+
+    private boolean boatReady() {
+        Module phase = Modules.get().get(boatModule);
+        return mountedBoat() && phase != null && phase.isActive()
+            && (!(phase instanceof AutoBoatFly nativeBoat) || nativeBoat.isAutomaticTravel());
+    }
+
+    private boolean boatWalking() {
+        return boatReady() && (nativeBoatActive() || Modules.get().isActive(AutoWalk.class));
+    }
+
+    boolean boatHomesAllowed() {
+        return !boatTrip || highway().session.flying() && sameBoatServer()
+            && java.util.Objects.equals(resumeDimension, dimensionId())
+            && detectedLocation() == LobbyLocation.NONE;
+    }
+
+    private boolean sameBoatServer() {
+        return resumeServer == null ? serverAddress() == null
+            : resumeServer.equalsIgnoreCase(serverAddress());
+    }
+
+    private boolean armBoatTrip() {
+        if (!independentlyEnabled() && !nativeBoatActive() || detectedLocation() != LobbyLocation.NONE
+            || waitingForTripRecord) return false;
+        boatModule = nativeBoatActive() ? LobbyRecoveryStore.NATIVE_BOAT : "boat-phase";
+        if (!boatWalking()) return false;
+        boatTrip = true;
+        standaloneTrip = false;
+        AutoBoatFly nativeBoat = Modules.get().get(AutoBoatFly.class);
+        boatYaw = nativeBoatActive() && nativeBoat != null ? (float) nativeBoat.heading() : mc.player.getYRot();
+        resumeDimension = dimensionId();
+        resumeServer = serverAddress();
+        highway().session.start(resumeDimension, resumeServer);
+        saveRecovery();
+        highway().prepareReconnectDelay();
+        return true;
+    }
+
+    private void pauseBoatWalk() {
+        Modules.get().get(AutoWalk.class).disable();
+        setBoatPaused(true);
+    }
+
+    /** Optional addon bridge: Comet must also load without Quiettee installed. */
+    private void setBoatPaused(boolean paused) {
+        Module phase = Modules.get().get(boatModule);
+        if (phase == null) return;
+        if (phase instanceof AutoBoatFly nativeBoat) {
+            nativeBoat.pauseAutomation(nativeBoat.isAutomaticTravel() && paused,
+                nativeBoat.isAutomaticTravel() && boatTrip && highway().session.recoveryAllowed(serverAddress()));
+            return;
+        }
+        try {
+            phase.getClass().getMethod("pauseAutomation", boolean.class, boolean.class)
+                .invoke(phase, paused, boatTrip && highway().session.recoveryAllowed(serverAddress()));
+        } catch (ReflectiveOperationException e) {
+            if (!warnedBoatBridge) {
+                warning("Update Quiettee Utils for boat lobby recovery; its automation bridge is missing.");
+                warnedBoatBridge = true;
+            }
+        }
+    }
+
     @Override protected void started() {
-        if (!highway().isActive() && !highway().profileLoading) resumePending();
+        if (nativeBoatTrip() && nativeBoatActive() && highway().session.flying()) {
+            highway().prepareReconnectDelay(); return;
+        }
+        if (!highway().isActive() && !highway().profileLoading && !resumePending() && !armBoatTrip()) armStandaloneRecovery();
     }
     @Override protected void stopped() {
         stopWalking();
+        if (boatTrip) {
+            boatTrip = false;
+            setBoatPaused(false);
+            if (!loadingProfile() && !highway().profileLoading) clearRecoveryFile();
+        }
         if (!highway().profileLoading) {
             highway().releaseReconnect();
             if (!highway().isActive()) {
@@ -915,12 +1221,13 @@ public final class AutoLobby extends HighwayHelper {
     @EventHandler private void joined(GameJoinedEvent event) {
         if (!loadingProfile() && !highway().profileLoading && !highway().isActive()) {
             highway().releaseReconnect();
-            resumePending();
+            if (!resumePending() && !armBoatTrip()) armStandaloneRecovery();
             highway().prepareReconnectDelay();
         }
     }
     @EventHandler private void left(GameLeftEvent event) {
-        if (!highway().isActive() && highway().session.recovering()) {
+        if (!highway().isActive() && (highway().session.recovering() || boatTrip && highway().session.flying())) {
+            highway().session.disconnected(true);
             pauseForDisconnect();
             if (reconnectAfterLoss) highway().armReconnect();
             else highway().releaseReconnect();
@@ -929,7 +1236,7 @@ public final class AutoLobby extends HighwayHelper {
 
     private boolean reconnectAfterLoss;
     void onClientDisconnect(boolean transferring, boolean unexpected) {
-        if (transferring || !highway().session.recovering()) return;
+        if (transferring || !highway().session.recovering() && !(boatTrip && highway().session.flying())) return;
         reconnectAfterLoss = unexpected;
         if (!unexpected) highway().releaseReconnect();
     }

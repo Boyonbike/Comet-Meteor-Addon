@@ -27,6 +27,11 @@ public final class LobbyRecoveryStore {
     private static final int MIN_Y = -2048;
     private static final int MAX_Y = 2047;
 
+    /** Saved owner of a native fixed-heading boat trip (the Auto Boat Fly module name). */
+    public static final String NATIVE_BOAT = "auto-boat-fly";
+    /** Owner name written before Boat Fly was split into manual and automatic modules. */
+    static final String LEGACY_NATIVE_BOAT = "boat-fly";
+
     private final Path file;
 
     public LobbyRecoveryStore(Path file) {
@@ -34,12 +39,26 @@ public final class LobbyRecoveryStore {
     }
 
     /** A pending trip and the server it belongs to (null means singleplayer). */
-    public record Recovery(String dimension, String server, BlockPos destination, Integer targetY) {
+    public record Recovery(String dimension, String server, BlockPos destination, Integer targetY, Float boatYaw, String boatModule) {
         public Recovery(String dimension, String server) {
-            this(dimension, server, null, null);
+            this(dimension, server, null, null, null, null);
+        }
+
+        public Recovery(String dimension, String server, BlockPos destination, Integer targetY) {
+            this(dimension, server, destination, targetY, null, null);
+        }
+
+        public Recovery(String dimension, String server, BlockPos destination, Integer targetY, Float boatYaw) {
+            this(dimension, server, destination, targetY, boatYaw, boatYaw == null ? null : "boat-phase");
         }
 
         public Recovery {
+            if (LEGACY_NATIVE_BOAT.equals(boatModule)) boatModule = NATIVE_BOAT;
+            if (boatYaw == null && boatModule != null) throw new IllegalArgumentException("boat owner without heading");
+            if (boatYaw != null && !NATIVE_BOAT.equals(boatModule) && !"boat-phase".equals(boatModule))
+                throw new IllegalArgumentException("unknown boat controller");
+            if (boatYaw != null && (!Float.isFinite(boatYaw) || destination != null))
+                throw new IllegalArgumentException("invalid boat trip");
             validateRoute(destination, targetY);
             if (destination != null) destination = destination.immutable();
         }
@@ -83,7 +102,9 @@ public final class LobbyRecoveryStore {
                     integerValue(position, "z"));
                 targetY = integerValue(root, "targetY");
             }
-            return Optional.of(new Recovery(dimension, server, destination, targetY));
+            Float boatYaw = root.has("boatYaw") ? root.get("boatYaw").getAsFloat() : null;
+            String boatModule = boatYaw == null ? null : root.has("boatModule") ? stringValue(root, "boatModule") : "boat-phase";
+            return Optional.of(new Recovery(dimension, server, destination, targetY, boatYaw, boatModule));
         } catch (IOException e) {
             // A temporary read failure must not erase the only durable copy of a trip.
             return Optional.empty();
@@ -98,6 +119,19 @@ public final class LobbyRecoveryStore {
     }
 
     public void save(String dimension, String server, BlockPos destination, Integer targetY) throws IOException {
+        save(dimension, server, destination, targetY, null, null);
+    }
+
+    public void saveBoat(String dimension, String server, float yaw) throws IOException {
+        saveBoat(dimension, server, yaw, "boat-phase");
+    }
+
+    public void saveBoat(String dimension, String server, float yaw, String module) throws IOException {
+        new Recovery(dimension, server, null, null, yaw, module);
+        save(dimension, server, null, null, yaw, module);
+    }
+
+    private void save(String dimension, String server, BlockPos destination, Integer targetY, Float boatYaw, String boatModule) throws IOException {
         validateRoute(destination, targetY);
         Objects.requireNonNull(dimension, "dimension");
         String trimmedDimension = dimension.trim();
@@ -116,6 +150,10 @@ public final class LobbyRecoveryStore {
             position.addProperty("z", destination.getZ());
             root.add("destination", position);
             root.addProperty("targetY", targetY);
+        }
+        if (boatYaw != null) {
+            root.addProperty("boatYaw", boatYaw);
+            root.addProperty("boatModule", boatModule);
         }
         root.addProperty("savedAt", System.currentTimeMillis());
         Path parent = file.toAbsolutePath().getParent();

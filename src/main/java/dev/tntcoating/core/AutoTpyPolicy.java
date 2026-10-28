@@ -6,10 +6,16 @@ import java.util.stream.Collectors;
 
 /** Admission is separate from priority: friends only bypass the whitelist when explicitly enabled. */
 public record AutoTpyPolicy(Set<String> whitelist, Set<String> blocklist, boolean whitelistOnly,
-                            boolean allowFriends, boolean acceptToMe, boolean acceptToThem) {
+                            boolean allowFriends, boolean acceptToMe, boolean acceptToThem,
+                            Set<String> roleMembers, boolean filterByRole) {
     public AutoTpyPolicy {
         whitelist = keys(whitelist);
         blocklist = keys(blocklist);
+        roleMembers = keys(roleMembers);
+    }
+    public AutoTpyPolicy(Set<String> whitelist, Set<String> blocklist, boolean whitelistOnly,
+                         boolean allowFriends, boolean acceptToMe, boolean acceptToThem) {
+        this(whitelist, blocklist, whitelistOnly, allowFriends, acceptToMe, acceptToThem, Set.of(), false);
     }
     public static String key(String name) { return name.strip().toLowerCase(Locale.ROOT); }
     public static Set<String> keys(Set<String> names) {
@@ -19,6 +25,6 @@ public record AutoTpyPolicy(Set<String> whitelist, Set<String> blocklist, boolea
         if (player == null || !ChatMessages.validName(player.strip())) return false;
         String key = key(player);
         return !blocklist.contains(key) && (toThem ? acceptToThem : acceptToMe)
-            && (!whitelistOnly || whitelist.contains(key) || allowFriends && friend);
+            && (filterByRole ? roleMembers.contains(key) : !whitelistOnly || whitelist.contains(key) || allowFriends && friend);
     }
 }

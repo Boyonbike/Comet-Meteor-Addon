@@ -44,11 +44,15 @@ public final class AngleCalculator extends Module {
             toggle();
             return;
         }
+        AutoBoatFly boat = meteordevelopment.meteorclient.systems.modules.Modules.get().get(AutoBoatFly.class);
+        if (boat != null && boat.isActive()) return;
         if (!turnTowardsDestination()) {
             info("Already at the target coordinate; angle-calculator is off.");
             toggle();
         }
     }
+
+    public BlockPos destination() { return destination.get(); }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
@@ -56,6 +60,10 @@ public final class AngleCalculator extends Module {
             toggle();
             return;
         }
+        AutoBoatFly boat = meteordevelopment.meteorclient.systems.modules.Modules.get().get(AutoBoatFly.class);
+        if (boat != null && boat.isActive()) return;
+        AutoLobby lobby = meteordevelopment.meteorclient.systems.modules.Modules.get().get(AutoLobby.class);
+        if (lobby != null && lobby.isBoatRecovering()) return;
         if (!turnTowardsDestination()) {
             info("Reached the target coordinate; angle-calculator is off.");
             toggle();

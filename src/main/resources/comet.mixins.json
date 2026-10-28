@@ -5,8 +5,8 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "GameModeInvoker",
-    "AllayInvoker",
     "MinecraftAccessor",
+    "FontAccessor",
     "EntityArgumentAccessor",
     "ChatScreenMixin",
     "GUIMoveMixin",
@@ -50,7 +50,11 @@
     "SpeedminePredictionAccessor",
     "ProxiesScreenMixin",
     "ScreenProxyUrlMixin",
-    "DisconnectedScreenMixin"
+    "DisconnectedScreenMixin",
+    "BoatFlyMovementMixin",
+    "BoatFlyVehicleCorrectionMixin",
+    "BoatFlyPlayerCorrectionMixin",
+    "BoatFlyDismountInputMixin"
   ],
   "injectors": {
     "defaultRequire": 1

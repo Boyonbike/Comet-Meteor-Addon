@@ -12,6 +12,8 @@ public final class SetHomeScheduler {
     private static final long MAX_COOLDOWN = 86_400_000;
     private static final Pattern TELEPORT_REPLY = Pattern.compile(
         "^you have to wait (\\d+)m (\\d{1,2})s to teleport again\\.$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern WAIT = Pattern.compile("\\bwait\\b");
+    private static final Pattern COOLDOWN_CUE = Pattern.compile("\\bcooldown\\b");
     private static final Pattern SUCCESS = Pattern.compile("^successfully moved home:\\s*(.+?)\\s*$", Pattern.CASE_INSENSITIVE);
     public enum Reply { IGNORED, COOLDOWN, REFUSED, SUCCESS }
     public record Location(double x, double y, double z, String dimension) {
@@ -40,12 +42,17 @@ public final class SetHomeScheduler {
     }
     public record Status(String phase, long waitMillis, long cooldownMillis, long bufferMillis,
                          long intervalMillis, long retryMillis, long nextAttemptAt, long learnedMillis,
-                         boolean waiting, long responseMillis) {}
+                         boolean waiting, long responseMillis, boolean estimatedCooldown) {}
     private record Attempt(String home, long sentAt, long actionAt, Location location, boolean dialog, long deadline) {}
 
     private final LongSupplier clock;
     private State state;
     private Attempt pending;
+    // Only an uninterrupted, observed success can anchor the next cooldown sample.
+    // Restored timestamps and missed replies must never turn offline time into a cooldown.
+    private long learningActionAt;
+    private long learningUntil;
+    private long discoveryIntervalMillis = 60_000;
     public SetHomeScheduler(LongSupplier clock, State restored) {
         this.clock = Objects.requireNonNull(clock);
         state = Objects.requireNonNull(restored);
@@ -54,13 +61,18 @@ public final class SetHomeScheduler {
     public boolean waiting() { return pending != null; }
     public boolean waitingForDialog() { return pending != null && pending.dialog(); }
     public String requestedHome() { return pending == null ? null : pending.home(); }
-    public void cancel() { pending = null; }
-    public void expire() { if (pending != null && now() >= pending.deadline()) pending = null; }
+    public void cancel() { pending = null; learningActionAt = 0; }
+    public void expire() { if (pending != null && now() >= pending.deadline()) cancel(); }
 
     public void sent(String home, Location location, boolean override, long dialogTimeoutMillis) {
+        sent(home, location, override, dialogTimeoutMillis, 60_000);
+    }
+    public void sent(String home, Location location, boolean override, long dialogTimeoutMillis, long intervalMillis) {
         String valid = ChatHomeNames.valid(home);
         if (valid == null) throw new IllegalArgumentException("Invalid home name");
         long now = now();
+        if (now > learningUntil) learningActionAt = 0;
+        discoveryIntervalMillis = Math.clamp(intervalMillis, 1_000, 3_600_000);
         pending = new Attempt(valid, now, now, location, override,
             now + (override ? Math.max(1_000, dialogTimeoutMillis) : 15_000));
         state = new State(now, state.lastSuccessAt(), state.successActionAt(), state.learnedMillis(),
@@ -84,6 +96,8 @@ public final class SetHomeScheduler {
             entries.add(new Entry(pending.home(), pending.sentAt(), now, pending.location()));
             entries.addAll(state.history().subList(0, Math.min(99, state.history().size())));
             long actionAt = pending.actionAt();
+            learningActionAt = actionAt;
+            learningUntil = actionAt + Math.max(state.learnedMillis(), discoveryIntervalMillis) + 15_000;
             state = new State(state.lastSentAt(), now, actionAt, state.learnedMillis(),
                 state.learnedMillis() > 0 ? actionAt + state.learnedMillis() : 0, 0, entries);
             pending = null;
@@ -99,22 +113,33 @@ public final class SetHomeScheduler {
         var durations = ChatTeleportState.durations(lower);
         if ((exactTeleport || homeCooldown && (lower.contains("wait") || lower.contains("cooldown")
             || lower.contains("again"))) && !durations.isEmpty()) {
-            long remaining = Math.min(MAX_COOLDOWN, durations.getLast().millis());
+            var cue = WAIT.matcher(lower);
+            if (!cue.find()) {
+                cue = COOLDOWN_CUE.matcher(lower);
+                if (!cue.find()) cue = null;
+            }
+            int afterCue = cue == null ? 0 : cue.end();
+            long remaining = Math.min(MAX_COOLDOWN, durations.stream()
+                .filter(duration -> duration.start() >= afterCue).findFirst()
+                .orElse(durations.getFirst()).millis());
             if (remaining == 0) {
+                learningActionAt = 0;
                 state = new State(state.lastSentAt(), state.lastSuccessAt(), state.successActionAt(),
                     state.learnedMillis(), now, now + Math.max(1_000, retryMillis), state.history());
                 pending = null;
                 return Reply.REFUSED;
             }
-            long learned = Math.max(state.learnedMillis(), remaining);
-            if (state.successActionAt() > 0 && now >= state.successActionAt())
-                learned = Math.max(learned, Math.min(MAX_COOLDOWN, now - state.successActionAt() + remaining));
+            long learned = remaining;
+            if (learningActionAt > 0 && now >= learningActionAt)
+                learned = Math.min(MAX_COOLDOWN, now - learningActionAt + remaining);
+            learningActionAt = 0;
             state = new State(state.lastSentAt(), state.lastSuccessAt(), state.successActionAt(),
                 learned, now + remaining, 0, state.history());
             pending = null;
             return Reply.COOLDOWN;
         }
         if (homeCooldown && lower.matches(".*\\b(?:cannot|unable|denied|failed|limit|maximum|already)\\b.*")) {
+            learningActionAt = 0;
             state = new State(state.lastSentAt(), state.lastSuccessAt(), state.successActionAt(),
                 state.learnedMillis(), state.cooldownEnd(), now + Math.max(1_000, retryMillis), state.history());
             pending = null;
@@ -146,7 +171,8 @@ public final class SetHomeScheduler {
             : Math.max(0, next - now) > 0 ? "INTERVAL" : "READY";
         if (pending != null) next = Math.max(next, pending.deadline());
         return new Status(phase, Math.max(0, next - now), cooldown, buffer, interval, retry,
-            Math.max(now, next), state.learnedMillis(), pending != null, pending == null ? 0 : Math.max(0, pending.deadline() - now));
+            Math.max(now, next), state.learnedMillis(), pending != null, pending == null ? 0 : Math.max(0, pending.deadline() - now),
+            cooldownEnd > 0 && state.lastSuccessAt() >= state.lastSentAt());
     }
     private long now() {
         // A backwards clock adjustment must not make confirmation precede dispatch or authorise an early retry.

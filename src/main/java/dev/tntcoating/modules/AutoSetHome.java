@@ -164,7 +164,7 @@ public final class AutoSetHome extends HighwayHelper {
         }
         invalidHomeWarning = false;
         // Record and persist before dispatch so even a crash after sending retains the attempt timestamp.
-        scheduler.sent(name, location(), override.get(), timeoutSeconds.get() * 1_000L);
+        scheduler.sent(name, location(), override.get(), timeoutSeconds.get() * 1_000L, intervalMillis());
         save();
         mc.getConnection().sendCommand(HomeOverride.command(name));
     }
@@ -191,7 +191,10 @@ public final class AutoSetHome extends HighwayHelper {
                 fields.add(new HighwayWebhook.Field("Home position", entry.location().x() + ", " + entry.location().y() + ", " + entry.location().z(), true));
                 fields.add(new HighwayWebhook.Field("Home dimension", entry.location().dimension(), true));
                 fields.add(new HighwayWebhook.Field("Health", String.valueOf(mc.player.getHealth()), true));
-                highway().notifyWebhook(HighwayWebhook.Event.HOME_REPLACED, "Successfully replaced home " + entry.home() + ".", fields);
+                AutoBoatFly boat = meteordevelopment.meteorclient.systems.modules.Modules.get().get(AutoBoatFly.class);
+                if (boat != null && boat.isActive()) boat.notifyTrip(HighwayWebhook.Event.HOME_REPLACED,
+                    "Successfully replaced home " + entry.home() + ".", fields);
+                else highway().notifyWebhook(HighwayWebhook.Event.HOME_REPLACED, "Successfully replaced home " + entry.home() + ".", fields);
             }
         });
     }
