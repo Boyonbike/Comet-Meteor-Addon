@@ -23,6 +23,8 @@ import dev.tntcoating.core.HighwayFlySession;
 import dev.tntcoating.core.HighwayFlyConfigMigration;
 import dev.tntcoating.core.HighwayPathfinder;
 import dev.tntcoating.core.HighwayNavigation;
+import dev.tntcoating.core.HighwayFlightProfile;
+import dev.tntcoating.core.HighwayRouteFailures;
 import dev.tntcoating.core.HighwayPortalCrossing;
 import dev.tntcoating.core.HighwayFlightSafety;
 import dev.tntcoating.core.HighwayLavaSafety;
@@ -195,7 +197,6 @@ public final class HighwayFly extends Module {
     private final SettingGroup lobbyGroup = integrations;
     private final SettingGroup camera = settings.createGroup("Camera & Controls", false);
     private final SettingGroup compatibility = camera;
-    final SettingGroup dashboardGroup = settings.createGroup("Dashboard", false);
     private final SettingGroup webhookGroup = settings.createGroup("Webhooks", false);
     private final SettingGroup webhookEvents = webhookGroup;
     private final SettingGroup webhookTiming = webhookGroup;
@@ -362,7 +363,7 @@ public final class HighwayFly extends Module {
         .build());
     private final Setting<Integer> noProgressTimeout = safety.add(new IntSetting.Builder()
         .name("no-progress-timeout")
-        .description("Seconds without getting closer to the destination before trying Baritone, or logging out if recovery also cannot advance.")
+        .description("Seconds without progress during takeoff or chunk waits, or along the recovery walk. Stalled flight tries Baritone after 5 seconds.")
         .defaultValue(30).min(10).max(300).sliderRange(10, 120)
         .build());
     private final Setting<Boolean> passEndCrystals = safety.add(new BoolSetting.Builder()
@@ -377,14 +378,8 @@ public final class HighwayFly extends Module {
         .build());
     private final Setting<Boolean> walkFallback = walking.add(new BoolSetting.Builder()
         .name("walk-fallback")
-        .description("After the elytra attempts fail, land and let Baritone walk part of the blocked stretch before taking off again.")
+        .description("After one failed elytra attempt, land and let Baritone walk part of the blocked stretch before taking off again.")
         .defaultValue(true)
-        .build());
-    private final Setting<Integer> flightAttempts = walking.add(new IntSetting.Builder()
-        .name("flight-attempts")
-        .description("Consecutive elytra path attempts before the Baritone walk fallback.")
-        .defaultValue(3).min(1).max(10).sliderRange(1, 10)
-        .visible(walkFallback::get)
         .build());
     private final Setting<Integer> walkDistance = walking.add(new IntSetting.Builder()
         .name("walk-distance")
@@ -424,6 +419,7 @@ public final class HighwayFly extends Module {
     private final ElytraTakeoff takeoff = new ElytraTakeoff();
     private final AtomicReference<ClientboundPlayerPositionPacket> correction = new AtomicReference<>();
     private final HighwayNavigation navigation = new HighwayNavigation();
+    private final HighwayRouteFailures routeFailures = new HighwayRouteFailures();
     private final HighwayReconnectBackoff reconnectBackoff = new HighwayReconnectBackoff();
     private final AtomicInteger blockRevision = new AtomicInteger();
     private record ProbeBlock(BlockState state, AABB collision) {}
@@ -499,6 +495,7 @@ public final class HighwayFly extends Module {
     private boolean deathNotified;
     private final AtomicBoolean deathPending = new AtomicBoolean();
     private final HighwayTravelSafety travelSafety = new HighwayTravelSafety();
+    private final HighwayTravelSafety flightStallSafety = new HighwayTravelSafety();
     private final HighwayWalkingProgress walkingProgress = new HighwayWalkingProgress();
     private final HighwayHealthUpdates healthUpdates = new HighwayHealthUpdates(travelSafety);
     private boolean walkRecoveryAttempted;
@@ -585,6 +582,8 @@ public final class HighwayFly extends Module {
     @Override public void onActivate() {
         stoppingTrip = false;
         if (profileLoading) return;
+        // One flight controller at a time: elytra flight replaces manual or automatic boat flight.
+        for (var boat : dev.tntcoating.modules.boatfly.BoatFlyEngine.engines()) if (boat.isActive()) boat.disable();
         syncHelpers();
         cancelPendingModuleRestore();
         leavingWorld = false;
@@ -1017,6 +1016,19 @@ public final class HighwayFly extends Module {
             || event.screen instanceof JoinMultiplayerScreen)) releaseReconnect();
     }
 
+    /** Preserve the validated native marker while the boat controller takes ownership. */
+    void yieldToBoatRecovery() {
+        boolean loading = profileLoading;
+        profileLoading = true;
+        try { disable(); } finally { profileLoading = loading; }
+    }
+
+    void resetBoatReconnectBackoff() {
+        if (isActive()) return;
+        reconnectBackoff.reset();
+        prepareReconnectDelay();
+    }
+
     /** Restore the user's preference when the join finishes, the trip stops, or the helper is disabled. */
     void releaseReconnect() {
         if (!reconnectLeased) return;
@@ -1059,8 +1071,8 @@ public final class HighwayFly extends Module {
         // Requests are temporary and absent from saved helper active flags.
         syncHelpers();
         if (isActive()) {
-            if (!lobbyEnabled() || !lobby().resumePending()) {
-                warning("No saved trip identity; enable Highway Fly in the intended world to start a new trip.");
+            if (lobby().savedNativeBoatTrip().isPresent() || !lobbyEnabled() || !lobby().resumePending()) {
+                warning("No saved highway trip identity; enable Highway Fly in the intended world to start a new trip.");
                 // Still loading: disabling must not erase a recovery file from another server.
                 profileLoading = true;
                 disable();
@@ -1071,7 +1083,6 @@ public final class HighwayFly extends Module {
         }
         syncHelpers();
         prepareReconnectDelay();
-        dashboard.sync();
     }
 
     /** Current setting locations let old profiles follow settings moved between sections. */
@@ -1085,7 +1096,6 @@ public final class HighwayFly extends Module {
         super(TntCoatingAddon.CATEGORY, "highway-fly",
             "Highway elytra flight with lobby recovery, automatic homes and portal protection.");
         runInMainMenu = true;
-        MeteorClient.EVENT_BUS.subscribe(dashboard);
     }
 
     /** True while the autopilot should handle mouse look. */
@@ -1124,13 +1134,15 @@ public final class HighwayFly extends Module {
     @Override
     public WWidget getWidget(GuiTheme theme) {
         var list = theme.verticalList();
+        var rows = list.add(theme.table()).expandX().widget();
         for (Class<? extends HighwayHelper> type : List.of(AntiPortal.class, AutoSetHome.class, AutoLobby.class)) {
             HighwayHelper helper = Modules.get().get(type);
-            list.add(theme.label(helper.title + ": " + helper.activationLabel()));
-            list.add(theme.button("Open " + helper.title + " settings")).widget().action =
-                () -> mc.gui.setScreen(theme.moduleScreen(helper));
+            rows.add(theme.label(helper.title));
+            rows.add(theme.label(helper.activationLabel())).expandX().widget().color = theme.textSecondaryColor();
+            rows.add(theme.button("Settings")).widget().action = () -> mc.gui.setScreen(theme.moduleScreen(helper));
+            rows.row();
         }
-        list.add(dashboard.getWidget(theme));
+        FlightDashboard.addStatusRow(theme, rows);
         list.add(theme.button("Send test webhook")).widget().action = this::sendTestWebhook;
         list.add(theme.label("Posts one test message with the URL above; trip events are unchanged."))
             .widget().color = theme.textSecondaryColor();
@@ -1455,6 +1467,7 @@ public final class HighwayFly extends Module {
         session.start(dimension, serverAddress());
         beginRuntime(resuming);
         travelSafety.resetProgress(-course.distanceToDestination(mc.player.position()));
+        flightStallSafety.resetProgress(-course.distanceToDestination(mc.player.position()));
         tripDestination = target.immutable();
         tripTargetY = (int) Math.round(desiredY);
         connectedSince = System.nanoTime();
@@ -1552,11 +1565,23 @@ public final class HighwayFly extends Module {
             }
         }
         if (portalCrossing != null && tickPortalCrossing()) return;
+        int progressTimeout = progressTimeoutSeconds(state, noProgressTimeout.get());
+        boolean stalledFlight = false;
+        if (course != null) {
+            double progress = -course.distanceToDestination(mc.player.position());
+            if (progressTimeout < noProgressTimeout.get()) {
+                stalledFlight = flightStallSafety.noProgress(progress, progressTimeout * 20);
+            } else {
+                flightStallSafety.resetProgress(progress);
+            }
+        }
         if (state != State.LANDING && state != State.WALKING && course != null
-            && travelSafety.noProgress(-course.distanceToDestination(mc.player.position()), noProgressTimeout.get() * 20)) {
-            if (state == State.WALKING || walkRecoveryAttempted) {
-                logOut("Flight and Baritone recovery could not make forward progress for " + noProgressTimeout.get() + " seconds.");
-            } else if (!startWalkFallback("No forward progress for " + noProgressTimeout.get() + " seconds.")) {
+            && (travelSafety.noProgress(-course.distanceToDestination(mc.player.position()), noProgressTimeout.get() * 20)
+                || stalledFlight)) {
+            int stalledSeconds = stalledFlight ? progressTimeout : noProgressTimeout.get();
+            if (walkRecoveryAttempted) {
+                logOut("Flight and Baritone recovery could not make forward progress for " + stalledSeconds + " seconds.");
+            } else if (!startWalkFallback("No forward progress for " + stalledSeconds + " seconds.")) {
                 logOut("Flight could not advance and Baritone recovery is unavailable.");
             }
             return;
@@ -1633,17 +1658,12 @@ public final class HighwayFly extends Module {
                 case COVERED, GAVE_UP -> {
                     if (!warnedTakeoff) {
                         warnedTakeoff = true;
-                        warning("No room to open the elytra; keeping the flight active and retrying.");
+                        warning("No room to open the elytra; trying Baritone recovery.");
                     }
-                    if (++takeoffAttempts >= flightAttempts.get()) {
-                        takeoffAttempts = 0;
-                        if (startWalkFallback("No room to open the elytra.", walkDistance.get())) {
-                            return;
-                        }
-                        logOut("The elytra could not take off and Baritone recovery is unavailable.");
-                        return;
-                    }
-                    takeoff.reset(true);
+                    takeoffAttempts++;
+                    if (startWalkFallback("No room to open the elytra.", walkDistance.get())) return;
+                    logOut("The elytra could not take off and Baritone recovery is unavailable.");
+                    return;
                 }
                 case WAIT -> {}
             }
@@ -1709,7 +1729,8 @@ public final class HighwayFly extends Module {
                 guardUncontrolledLavaMove(event);
                 return;
             }
-            AdaptiveFlightEngine.Settings profile = adaptive.baritoneFlightSettings();
+            AdaptiveFlightEngine.Settings profile = HighwayFlightProfile.create(adaptive.baritoneFlightSettings(),
+                (int) Math.ceil(probeDistance.get()), turnRate.get());
             if (controller == null) controller = new BaritoneFlight(profile);
             BaritoneFlight.Settings config;
             ClientboundPlayerPositionPacket packet = correction.getAndSet(null);
@@ -1720,6 +1741,11 @@ public final class HighwayFly extends Module {
                 if (rubberband(target)) {
                     zeroHorizontal(event);
                     return;
+                }
+                Vec3 rejected = navigation.nextWaypoint();
+                if (rejected != null) {
+                    routeFailures.record(rejected, mc.player.tickCount);
+                    navigation.reset();
                 }
                 navigation.setback();
                 controller.setback(target.distanceToSqr(lastControlledPosition) > SETBACK_STOP_DISTANCE * SETBACK_STOP_DISTANCE);
@@ -1763,7 +1789,7 @@ public final class HighwayFly extends Module {
                     movement -> resolveCollision(mc.player.getBoundingBox(), movement));
             } else {
                 HighwayCourse.Waypoint aim = course.waypoint(mc.player.position(), lookahead.get(), LATERAL_GAIN);
-                float baseYaw = smoothYaw(aim.yaw());
+                float baseYaw = aim.yaw();
                 AABB body = mc.player.getBoundingBox();
 
                 boolean routeClear = directClear(body, aim.yaw());
@@ -1773,11 +1799,14 @@ public final class HighwayFly extends Module {
                 }
                 if (pathfind.get() && (state == State.CRUISE || state == State.PATHING)) {
                     guidance = navigation.update(mc.player.tickCount, mc.player.position(), body, natural,
-                        routeClear, speedBps.get(), strictProbe);
+                        routeClear, speedBps.get(), turnRate.get(), profile.braking(), strictProbe);
                     if (guidance.needsPath()) {
-                        planPath(body);
+                        if (!planPath(body)) {
+                            failFlight("No flying route clears the obstacle.", event);
+                            return;
+                        }
                         guidance = navigation.update(mc.player.tickCount, mc.player.position(), body, natural,
-                            routeClear, speedBps.get(), strictProbe);
+                            routeClear, speedBps.get(), turnRate.get(), profile.braking(), strictProbe);
                     }
                     path = navigation.points();
                     if (guidance.followingPath()) state = State.PATHING;
@@ -1841,17 +1870,24 @@ public final class HighwayFly extends Module {
                 } else if (state == State.DETOUR) {
                     yaw = smoothYaw(baseYaw + detourYawOffset);
                 } else {
-                    yaw = baseYaw;
+                    yaw = smoothYaw(baseYaw);
                 }
                 double y = mc.player.getY();
                 float pitch = AltitudeHold.pitch(activeY, y, natural.y * 20, horizontalBps,
                     new AltitudeHold.Config(ALTITUDE_GAIN, ALTITUDE_DAMPING, verticalSpeedBps.get(),
                         verticalSpeedBps.get(), ALTITUDE_DEADBAND, ALTITUDE_MAX_PITCH));
+                if (state == State.PATHING && guidance != null && guidance.target() != null) {
+                    pitch = HighwayNavigation.steeringPitch(mc.player.position(), guidance.target());
+                }
                 setFlightLook(yaw, pitch);
                 ServerGlide.Context glide = glide(natural, 0, yaw, pitch);
-                double cap = state == State.PATHING ? pathSpeed() : speedBps.get();
+                double cap = state == State.PATHING ? pathSpeed(guidance == null ? null : guidance.target()) : speedBps.get();
                 if (guidance != null && guidance.followingPath()) cap = Math.min(cap, guidance.speedLimit());
                 config = BaritoneFlight.approach(flightConfig(profile, cap), course.distanceToDestination(mc.player.position()));
+                if (state == State.PATHING) {
+                    config = new BaritoneFlight.Settings(config.speedBps(), Math.min(config.verticalSpeedBps(), cap),
+                        config.rampStep(), config.verticalRampStep());
+                }
                 output = controller.move(profile, config, mc.player.tickCount, yaw, pitch, true,
                     natural.length(), event.movement.length(), mc.player.getBoundingBox(), moveProbe,
                     () -> floorClearance(profile.margin()), glide,
@@ -1904,18 +1940,19 @@ public final class HighwayFly extends Module {
         }
     }
 
+    static int progressTimeoutSeconds(State phase, int configuredSeconds) {
+        return switch (phase) {
+            case CRUISE, PATHING, DETOUR, BLOCKED -> Math.min(5, configuredSeconds);
+            default -> configuredSeconds;
+        };
+    }
+
     private void failFlight(String message, PlayerMoveEvent event) {
         blockedAttempts++;
         zeroHorizontal(event);
         // This is reached only after the airborne pathfinder/detour has tried to pass.
         if (stopBeforeLava.get() && lavaAhead()) {
             avoidLava();
-            return;
-        }
-        if (blockedAttempts < flightAttempts.get()) {
-            state = State.BLOCKED;
-            retryTicks = 0;
-            warning("%s Retrying elytra flight (%d/%d).", message, blockedAttempts, flightAttempts.get());
             return;
         }
         if (startWalkFallback(message)) return;
@@ -2062,6 +2099,7 @@ public final class HighwayFly extends Module {
             walkRecoveryAttempted = true;
             walkingProgress.reset();
             travelSafety.resetProgress(-course.distanceToDestination(mc.player.position()));
+            flightStallSafety.resetProgress(-course.distanceToDestination(mc.player.position()));
         }
         state = State.WALKING;
         warning("%s Landing for a Baritone walk %d blocks ahead.", reason, walkBlocks);
@@ -2084,13 +2122,16 @@ public final class HighwayFly extends Module {
                 return;
             }
             if (mc.player.onGround()) {
-                Optional<BlockPos> grounded = HighwayRecoveryTargets.standingTarget(walkTarget,
-                    Mth.floor(mc.player.getY()), feet -> walkingLine.onLine(feet) && standable(feet));
+                Optional<BlockPos> grounded = HighwayRecoveryTargets.takeoffTarget(walkingLine, mc.player.position(),
+                    Mth.floor(mc.player.getY()), walkBlocks, Math.min(200, walkBlocks + 32), this::standable,
+                    this::safeTakeoffTarget);
                 if (grounded.isEmpty()) {
-                    retryWalk("No loaded, standable walking target was found.");
+                    retryWalk("No loaded walking target with clear takeoff space was found.");
                     return;
                 }
                 walkTarget = grounded.get();
+                walkBlocks = Math.min(200, (int)Math.ceil(Math.hypot(
+                    walkTarget.getX()+.5-mc.player.getX(),walkTarget.getZ()+.5-mc.player.getZ())));
                 try {
                     walkBaritone.walkToExact(walkTarget.getX(), walkTarget.getY(), walkTarget.getZ());
                     walkStarted = true;
@@ -2175,6 +2216,20 @@ public final class HighwayFly extends Module {
             && !HighwayLavaSafety.intersects(standing, Vec3.ZERO, lavaProbe)
             && !mc.level.getFluidState(feet).is(FluidTags.LAVA)
             && !mc.level.getFluidState(feet).is(FluidTags.WATER);
+    }
+
+    private boolean safeTakeoffTarget(BlockPos feet) {
+        Vec3 start = new Vec3(feet.getX()+.5, feet.getY(), feet.getZ()+.5);
+        if (course.arrived(start)) return true;
+        AABB standing = new AABB(start.x-.3, start.y, start.z-.3, start.x+.3, start.y+1.8, start.z+.3);
+        FlightCorridor.Result launch = FlightCorridor.inspect(standing, new Vec3(0,1,0), HEADROOM, strictProbe);
+        if (launch.reason() != FlightCorridor.Reason.CLEAR) return false;
+        Vec3 ahead = walkingLine.target(start, 6).subtract(start);
+        Vec3 forward = new Vec3(ahead.x,0,ahead.z);
+        double distance = forward.length();
+        if (distance < 1e-6) return true;
+        AABB flying = new AABB(start.x-.3,start.y+1,start.z-.3,start.x+.3,start.y+1.6,start.z+.3);
+        return FlightCorridor.inspect(flying,forward,distance,strictProbe).reason() == FlightCorridor.Reason.CLEAR;
     }
 
     private double centerOffsetAt(Vec3 at) {
@@ -2345,18 +2400,15 @@ public final class HighwayFly extends Module {
         return extra > 0 ? body.inflate(extra, 0, extra) : body;
     }
 
-    private double pathSpeed() {
-        if (path.size() < 2) return speedBps.get();
+    private double pathSpeed(Vec3 target) {
+        if (target == null) return 0;
         Vec3 position = mc.player.position();
         AABB body = mc.player.getBoundingBox();
-        for (Vec3 point : path) {
-            if (Math.abs(point.y - preferredY) > .5) return Math.min(speedBps.get(), pathSpeedBps.get());
-            AABB at = body.move(point.subtract(position));
-            if (!strictProbe.clear(at.expandTowards(0, .75, 0).inflate(.2, 0, .2))) {
-                return Math.min(speedBps.get(), pathSpeedBps.get());
-            }
-        }
-        return speedBps.get();
+        Vec3 delta = target.subtract(position);
+        AABB clearance = body.expandTowards(0, .35, 0).inflate(.2, 0, .2);
+        FlightCorridor.Result room = FlightCorridor.inspect(clearance, delta, delta.length(), strictProbe);
+        return room.reason() == FlightCorridor.Reason.CLEAR ? speedBps.get()
+            : Math.min(speedBps.get(), pathSpeedBps.get());
     }
 
     private double cruiseY() {
@@ -2404,15 +2456,25 @@ public final class HighwayFly extends Module {
         return HighwayDetour.clearAt(body, cruiseY(), yaw, probeDistance.get(), strictProbe);
     }
 
-    private void planPath(AABB body) {
+    /** False means a known obstacle dead end, rather than a route to unloaded space. */
+    private boolean planPath(AABB body) {
+        routeFailures.record(navigation.takeFailedWaypoint(), mc.player.tickCount);
+        FlightCorridor.Probe routeProbe = new FlightCorridor.Probe() {
+            @Override public boolean loaded(int x, int z) { return strictProbe.loaded(x, z); }
+            @Override public boolean clear(AABB swept) {
+                return !routeFailures.blocked(swept, mc.player.tickCount) && strictProbe.clear(swept);
+            }
+        };
         HighwayPathfinder.Path found = HighwayPathfinder.find(body, mc.player.position(), course.direction(),
             preferredY, new HighwayPathfinder.Config(corridorWidth.get(), corridorHeight.get(), PATH_FORWARD_STEPS,
-                PATH_FORWARD_STEP, PATH_LATERAL_STEP, PATH_VERTICAL_STEP, minY.get(), maxY.get()), strictProbe);
-        navigation.commit(found);
+                PATH_FORWARD_STEP, PATH_LATERAL_STEP, PATH_VERTICAL_STEP, minY.get(), maxY.get()), routeProbe);
+        boolean usable = found.complete() || found.reason() == HighwayPathfinder.Reason.CHUNKS;
+        if (usable) navigation.commit(found);
         path = navigation.points();
         if (debug.get()) {
-            info("Path %s: %d points, %d steps.", found.reason(), path.size(), found.progress());
+            info("Path %s: %d points, %d steps, complete=%s.", found.reason(), path.size(), found.progress(), found.complete());
         }
+        return usable;
     }
 
     /** Ends the trip and disables reconnect before a safety disconnect. */
@@ -2600,6 +2662,7 @@ public final class HighwayFly extends Module {
         portalCrossingTicks = 0;
         portalWalkPaused = false;
         probeCache.clear();
+        routeFailures.clear();
         navigation.reset();
         failedSwaps = 0;
         lastYawStep = 0;
@@ -2641,7 +2704,6 @@ public final class HighwayFly extends Module {
         takeoff.reset(false);
     }
 
-    private final HighwayDashboard dashboard = new HighwayDashboard(this);
     AutoSetHome homes() { return Modules.get().get(AutoSetHome.class); }
     AntiPortal portalGuard() { return Modules.get().get(AntiPortal.class); }
     AutoLobby lobby() { return Modules.get().get(AutoLobby.class); }
@@ -2671,7 +2733,8 @@ public final class HighwayFly extends Module {
     }
 
     boolean homesAllowed() {
-        return !profileLoading && !session.recovering() && (!isActive()
+        AutoBoatFly boat = Modules.get().get(AutoBoatFly.class);
+        return (boat == null || boat.homesAllowed()) && !profileLoading && !session.recovering() && lobby().boatHomesAllowed() && (!isActive()
             || session.setHomeAllowed(true, dimensionId(), serverAddress()));
     }
 

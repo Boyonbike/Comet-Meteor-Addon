@@ -2,7 +2,6 @@ package dev.tntcoating.mixin;
 
 import dev.tntcoating.core.InventorySlotLoan;
 import dev.tntcoating.core.InventoryWeaponAttack;
-import dev.tntcoating.modules.AllayShulkerKiller;
 import meteordevelopment.meteorclient.events.entity.player.AttackEntityEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
@@ -75,9 +74,7 @@ public abstract class AutoWeaponMixin {
     private boolean comet$switchWeapon(int slot, boolean swapBack, AttackEntityEvent event) {
         if (slot < 9) return InvUtils.swap(slot, swapBack);
         // A marginal upgrade is not worth delaying the hit: use Meteor's own hotbar choice instead.
-        // So is any upgrade for a hit that must land in the air, before the player lands and a sword would sweep.
-        boolean instant = AllayShulkerKiller.isSweepFreeHit();
-        if (event.entity instanceof LivingEntity target && (instant || comet$minimumGain.get() > 0)) {
+        if (event.entity instanceof LivingEntity target && comet$minimumGain.get() > 0) {
             int hotbar;
             comet$hotbarOnly = true;
             try {
@@ -88,7 +85,7 @@ public abstract class AutoWeaponMixin {
             var inventory = mc.player.getInventory();
             double gain = DamageUtils.getAttackDamage(mc.player, target, inventory.getItem(slot))
                 - DamageUtils.getAttackDamage(mc.player, target, inventory.getItem(hotbar));
-            if (instant || gain < comet$minimumGain.get()) return InvUtils.swap(hotbar, swapBack);
+            if (gain < comet$minimumGain.get()) return InvUtils.swap(hotbar, swapBack);
         }
         var previous = mc.player.getMainHandItem().copy();
         var weapon = mc.player.getInventory().getItem(slot).copy();

@@ -55,4 +55,13 @@ class AutoTpyIntegrationTest {
         c.tick(4000,3,cmd->c.commandSent(cmd,4000,3)); c.message("Teleport request accepted.",4001);
         assertTrue(c.queue().entries(4001).stream().noneMatch(e->e.state()==AutoTpyQueue.State.Accepted));
     }
+    @Test void revokedRoleCancelsQueuedAndRetryingRequestsBeforeEmission() {
+        var c=c();
+        c.configure(new AutoTpyPolicy(Set.of(),Set.of(),true,true,true,false,Set.of("Alice"),true),Set.of("alice"),1024,4,3,3000,1000,500,false,50,5000);
+        c.offer(new AutoTpyQueue.Request("Alice",false,120000,"/tpy Alice"),0);
+        c.configure(new AutoTpyPolicy(Set.of("Alice"),Set.of(),false,true,true,false,Set.of(),true),Set.of("alice"),1024,4,3,3000,1000,500,false,50,5000);
+        c.tick(0,1,cmd->fail("Revoked role sent a queued request"));
+        assertEquals(0,c.queue().stats(0).live());
+        assertEquals(AutoTpyQueue.State.Cancelled,c.queue().entries(0).getFirst().state());
+    }
 }

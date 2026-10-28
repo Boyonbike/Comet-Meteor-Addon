@@ -39,4 +39,13 @@ class HelperActivationTest {
         assertFalse(activation.managed());
         assertFalse(activation.independent());
     }
+    @org.junit.jupiter.api.Test void flightOwnersCanReleaseTheirRequestsIndependently() {
+        var activation = new HelperActivation();
+        activation.managed(true);
+        activation.managed("boat-fly", true);
+        activation.managed(false);
+        org.junit.jupiter.api.Assertions.assertTrue(activation.effective());
+        activation.managed("boat-fly", false);
+        org.junit.jupiter.api.Assertions.assertFalse(activation.effective());
+    }
 }

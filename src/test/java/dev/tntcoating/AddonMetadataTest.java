@@ -20,7 +20,7 @@ class AddonMetadataTest {
     }
 
     @Test void ownVersionLookupsUseTheRegisteredModId() throws Exception {
-        for (String module : new String[] { "HighwayDashboard", "CometScaffold" }) {
+        for (String module : new String[] { "FlightDashboard", "CometScaffold" }) {
             var node = new org.objectweb.asm.tree.ClassNode();
             try (var stream = getClass().getResourceAsStream("/dev/tntcoating/modules/" + module + ".class")) {
                 assertNotNull(stream);

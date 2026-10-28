@@ -14,7 +14,9 @@ import java.util.regex.Pattern;
  */
 public final class ChatWhisperQueue {
     public record Whisper(String player, String text, String command) {}
-    private record Entry(Whisper whisper, int retries) {}
+    /** A whisper still waiting, with how long until it is due to send. */
+    public record Queued(long id, Whisper whisper, long eta) {}
+    private record Entry(long id, Whisper whisper, int retries) {}
     public static final int MAX_QUEUED = 20;
     private static final Pattern REFUSAL = Pattern.compile(
         "^please\\s+wait\\s+(\\d{1,3})\\s+seconds?\\s+before\\s+sending\\s+another\\s+(?:whisper|private\\s+message)\\b.*$", Pattern.CASE_INSENSITIVE);
@@ -29,7 +31,10 @@ public final class ChatWhisperQueue {
     private static final int MAX_RETRIES = 3;
     private final ArrayDeque<Entry> queued = new ArrayDeque<>();
     private Entry inFlight;
-    private long sentAt, nextAt, delay;
+    private long sentAt, nextAt, delay, minimum, nextId;
+
+    /** The configured spacing between whispers; a longer delay learned from the server still wins. */
+    public void minimum(long millis) { minimum = Math.max(0, millis); }
 
     /** Whether a command sends a private message: the usual verbs, or the verb of the configured message command. */
     public static boolean isWhisper(String command, String template) {
@@ -51,7 +56,7 @@ public final class ChatWhisperQueue {
 
     public boolean add(Whisper whisper) {
         if (queued.size() >= MAX_QUEUED) return false;
-        queued.addLast(new Entry(whisper, 0));
+        queued.addLast(new Entry(++nextId, whisper, 0));
         return true;
     }
 
@@ -87,7 +92,7 @@ public final class ChatWhisperQueue {
         Entry refused = inFlight;
         inFlight = null;
         if (refused == null || now - sentAt > REFUSAL_WINDOW || refused.retries() >= MAX_RETRIES) return false;
-        queued.addFirst(new Entry(refused.whisper(), refused.retries() + 1));
+        queued.addFirst(new Entry(refused.id(), refused.whisper(), refused.retries() + 1));
         return true;
     }
 
@@ -104,6 +109,19 @@ public final class ChatWhisperQueue {
         return result;
     }
 
+    /** Waiting whispers, oldest first, each with the time left until it sends. */
+    public List<Queued> entries(long now) {
+        List<Queued> result = new ArrayList<>(queued.size());
+        long eta = Math.max(0, nextAt - now), step = spacing();
+        for (Entry entry : queued) {
+            result.add(new Queued(entry.id(), entry.whisper(), eta));
+            eta += step;
+        }
+        return result;
+    }
+
+    public boolean cancel(long id) { return queued.removeIf(entry -> entry.id() == id); }
+
     /** How long the next waiting whisper still has to wait, or 0 when none is waiting. */
     public long waiting(long now) { return queued.isEmpty() ? 0 : Math.max(0, nextAt - now); }
 
@@ -113,7 +131,7 @@ public final class ChatWhisperQueue {
         sentAt = nextAt = delay = 0;
     }
 
-    private long spacing() { return delay == 0 ? 0 : delay + MARGIN; }
+    private long spacing() { return Math.max(minimum, delay == 0 ? 0 : delay + MARGIN); }
 
     private static String verb(String command) {
         String text = withoutSlash(command).strip();

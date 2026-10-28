@@ -8,7 +8,6 @@ Open Meteor's **Comet** category. Modules appear in this order, grouped by purpo
 - **Rendering, storage, waypoints and chat:** **fast-storage-esp**, **dub-counter**, **shulker-icons**, **no-hurt-cam**, **anti-coords**, **xaero-waypoints**, **waypoint-delete**, **chat-tools**, **call-to-arms**, **stash-report**.
 - **Building:** **scaffold**, **comet-scaffold**, **block-coat**, **smart-sponge**, **speedmine**, **safe-fast-use**, **anti-spawn-set**.
 - **Combat and inventory:** **auto-tool**, **auto-weapon**, **inventory-tweaks**, **auto-replenish**.
-- **Allays:** **allay-farm**, **allay-shulker-killer**. See [Allays](allay-behaviour.md#allay-interaction-and-coordination).
 - **HUD elements** (Meteor's HUD editor, **Comet** group): **adaptive-elytra-fly-engine**, **player-speed**, **speed-3d**, **tp-home-countdown**, **auto-set-home-timer**, **highway-fly-status**, **highway-fly-runtime** and **dub-counter**. See [HUD elements](hud.md#hud-elements).
 
 **Scaffold**, **Auto Tool**, **Auto Weapon**, **Inventory Tweaks** and **Auto Replenish** are available in both Comet and their original Meteor categories. Both entries open and toggle the same module, sharing settings, keybinds and enabled state. Other Comet upgrades are also linked from a **Comet** dropdown inside the original module's settings:

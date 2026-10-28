@@ -5,7 +5,7 @@
 [![Minecraft](https://img.shields.io/badge/Minecraft-26.2-3c8527.svg)](https://www.minecraft.net/)
 [![Meteor Client](https://img.shields.io/badge/Meteor%20Client-build%2035-8e44ad.svg)](https://meteorclient.com/)
 
-Comet **0.26.26** is a Meteor Client addon for **Minecraft 26.2** with
+Comet **0.26.27** is a Meteor Client addon for **Minecraft 26.2** with
 elytra flight, building tools, storage rendering, chat automation and inventory upgrades.
 
 ## Built for 6b6t
@@ -35,16 +35,21 @@ Baritone Elytra needs Meteor’s Baritone build. See [installation](docs/guides/
 
 ## Modules
 
-- **Flight:** Adaptive Elytra Fly, Highway Fly, DEVILS Auto Wasp and Baritone Elytra.
+- **Flight:** Adaptive Elytra Fly, Highway Fly, Boat Fly, Auto Boat Fly, DEVILS Auto Wasp and Baritone Elytra,
+  with one live [Flight Dashboard](docs/modules/flight-dashboard.md) for Highway Fly and Auto Boat Fly.
 - **Travel helpers:** independent Anti Portal, Auto Set Home and Auto Lobby integration.
 - **Building:** Comet Scaffold, Block Coat, Smart Sponge, Speedmine and Meteor Scaffold upgrades.
 - **Storage and rendering:** Fast Storage ESP, Shulker Icons, Dub Counter and Anti Coords.
-- **Chat:** homes, teleport requests, clan management and [buffered Auto TPY](docs/modules/auto-tpy.md)
-  with priority retries, CSV whitelist import, a blocklist and optional adaptive timing.
-- **Inventory and utilities:** Auto Tool/Weapon, Inventory Tweaks, Auto Replenish, allay tools,
-  waypoint tools, Discord reports and HUD elements.
+- **Chat:** homes, teleport requests, clan management, [buffered Auto TPY](docs/modules/auto-tpy.md)
+  with priority retries, CSV whitelist import, a blocklist and optional adaptive timing, plus
+  [Discord #ign sync](docs/modules/discord-ign-sync.md) for the clan list and whitelist.
+- **Inventory and utilities:** Auto Tool/Weapon, Inventory Tweaks, Auto Replenish, waypoint
+  tools, Discord reports and HUD elements.
 
 **[Browse every module and its settings →](docs/README.md)**
+
+Steer a flying boat yourself with [Boat Fly](docs/modules/boat-fly.md); for fixed-heading AFK boat
+travel with managed helpers and safety logout, see [Auto Boat Fly](docs/modules/auto-boat-fly.md).
 
 For Highway Fly, start with its [guide](docs/modules/highway-fly.md) and configure each helper
 in its own module. Auto TPY defaults off; configure its whitelist before enabling it.
@@ -53,9 +58,9 @@ in its own module. Auto TPY defaults off; configure its whitelist before enablin
 
 | Minecraft branch | Java | Tested Meteor build | Release JAR |
 | --- | --- | --- | --- |
-| [26.1.2](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.1.2) | 25 | 42 | `comet-0.26.26-mc26.1.2.jar` |
-| [26.2](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.2) | 25 | 35 | `comet-0.26.26-mc26.2.jar` |
-| [1.21.11](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/1.21.11) | 21 | 82 (vendored) | `comet-0.26.26-mc1.21.11.jar` |
+| [26.1.2](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.1.2) | 25 | 42 | `comet-0.26.27-mc26.1.2.jar` |
+| [26.2](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.2) | 25 | 35 | `comet-0.26.27-mc26.2.jar` |
+| [1.21.11](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/1.21.11) | 21 | 82 (vendored) | `comet-0.26.27-mc1.21.11.jar` |
 
 Each branch builds independently with pinned dependencies and the same release number.
 See [Meteor compatibility](docs/guides/module-settings.md) for how changed hooks are handled.

@@ -16,7 +16,7 @@ Enable **Auto Set Home** independently to update a named home without Highway Fl
 - **button-match** (default `override`) is the text the button label must contain. **Cancel** does not match it.
 - **timeout-seconds** (default 10) is how long to wait for the dialog after each command. If no matching dialog appears, the module sends again at the next interval, or when the server's sethome cooldown ends.
 
-The helper recognises `You have to wait 4m 54s to teleport again.` only while a sethome request is pending. It learns the full delay from the previous successful replacement time plus the remaining wait reported by the server. `0m 00s` is still a refusal: automatic mode starts a fresh buffer and waits for the longer of that buffer or **retry-delay-seconds**. Fixed mode continues at the chosen interval regardless of server cooldowns; pending dialogs/responses and open screens prevent overlapping requests.
+The helper recognises `You have to wait 4m 54s to teleport again.` only while a sethome request is pending. It learns the full delay only from a fresh, uninterrupted confirmed replacement cycle plus the remaining wait reported by the server. Offline time, paused helpers, missed replies and long-open screens cannot extend that estimate. A new stated wait replaces stale learned values, and the wait duration takes precedence over promotional durations in the same reply. `0m 00s` is still a refusal: automatic mode starts a fresh buffer and waits for the longer of that buffer or **retry-delay-seconds**. Fixed mode continues at the chosen interval regardless of server cooldowns; pending dialogs/responses and open screens prevent overlapping requests.
 
 The existing **Override** dialog click remains automatic. Clicking is not success: `Successfully moved Home: Test` must match the requested home before a replacement is recorded. The dialog timeout uses real seconds; after a click the helper waits up to 15 seconds for the reply. Home names use the same single-argument validation as Chat Tools.
 
@@ -27,3 +27,9 @@ The dashboard and **auto-set-home-timer** HUD show separate cooldown and buffer 
 ## Independent and trip-managed activation
 
 Enable this helper independently in Comet or allow Highway Fly to request it through Integrations. Stopping Highway Fly releases its request and preserves independent activation. **Keep enabled independently** retains a trip-managed helper after the trip; explicitly disabling one also disables its Highway Fly integration. See [Highway Fly](highway-fly.md).
+
+## Estimates and saved-state upgrades
+
+The HUD labels measured waits as **Server cooldown** and predicted waits as **Estimated cooldown**. The dashboard marks predictions with **(estimate)**. Both use the same scheduler snapshot for the next attempt, buffer, retry and confirmation countdowns.
+
+On the first load of an older version-1 state file, the helper discards learned values and predicted deadlines that may have accumulated offline time. Confirmed home history, last attempt times and actual server-reported deadlines remain intact. New saves use version 2, so this repair does not repeat. Real long cooldowns explicitly reported by the server are still respected.

@@ -4,15 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Comet Highway Fly — live dashboard</title>
+  <title>Comet Flight Dashboard</title>
   <link rel="stylesheet" href="app.css">
 </head>
-<body>
+<body data-mode="highway">
   <header class="top">
     <div class="brand">
-      <span class="logo" aria-hidden="true">HF</span>
+      <span id="brand-logo" class="logo" aria-hidden="true">HF</span>
       <div>
-        <h1>Highway Fly</h1>
+        <h1 id="brand-title">Highway Fly</h1>
         <p class="sub">Comet addon · Live flight dashboard</p>
       </div>
     </div>
@@ -25,7 +25,7 @@
   <main>
     <p id="error-banner" class="banner" role="alert" hidden></p>
 
-    <section class="grid" aria-label="Highway Fly dashboard">
+    <section class="grid" aria-label="Flight dashboard">
       <article class="card flight-panel">
         <h2 class="panel-title">Current flight</h2>
         <h3 id="flight-state">—</h3>
@@ -42,7 +42,7 @@
         </div>
       </article>
 
-      <article class="card route-panel">
+      <article class="card route-panel" data-only="highway">
         <h2 class="panel-title">Route</h2>
         <div class="progress" role="progressbar" aria-label="Route progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div id="progress-bar" class="progress-fill"></div>
@@ -58,6 +58,23 @@
           <div><dt>Target altitude</dt><dd id="route-target-y">—</dd></div>
           <div><dt>Active altitude</dt><dd id="route-active-y">—</dd></div>
           <div><dt>Heading</dt><dd id="route-yaw">—</dd></div>
+        </dl>
+      </article>
+
+      <article class="card route-panel" data-only="boat">
+        <h2 class="panel-title">Heading &amp; travel</h2>
+        <div class="stat-row">
+          <span id="boat-speed" class="big-number">—</span>
+          <span class="label">blocks / second</span>
+        </div>
+        <dl class="kv">
+          <div><dt>Travel heading</dt><dd id="boat-heading">—</dd></div>
+          <div><dt>Facing</dt><dd id="boat-yaw">—</dd></div>
+          <div><dt>Controller</dt><dd id="boat-controller">—</dd></div>
+          <div><dt>Seat</dt><dd id="boat-mounted">—</dd></div>
+          <div><dt>Distance travelled</dt><dd id="boat-distance">—</dd></div>
+          <div><dt>Speed mode</dt><dd id="boat-speed-mode">—</dd></div>
+          <div><dt>Server corrections</dt><dd id="boat-corrections">—</dd></div>
         </dl>
       </article>
 
@@ -86,7 +103,7 @@
         <p id="player-extra" class="sub">—</p>
       </article>
 
-      <article class="card safety-panel">
+      <article class="card safety-panel" data-only="highway">
         <h2 class="panel-title">Safety &amp; equipment</h2>
         <dl class="kv compact">
           <div><dt>Min health (logout)</dt><dd id="safety-minimum-health" class="mono">—</dd></div>
@@ -103,11 +120,26 @@
         <div id="safety-flags" class="chips"></div>
       </article>
 
+      <article class="card safety-panel" data-only="boat">
+        <h2 class="panel-title">Supplies &amp; safety</h2>
+        <div class="stat-row">
+          <span id="boat-egaps" class="big-number">—</span>
+          <span class="label">enchanted golden apples</span>
+        </div>
+        <dl class="kv compact">
+          <div><dt>Food</dt><dd id="boat-food" class="mono">—</dd></div>
+          <div><dt>AutoEat</dt><dd id="boat-eating">—</dd></div>
+          <div><dt>Min health (logout)</dt><dd id="boat-minimum-health" class="mono">—</dd></div>
+          <div><dt>eGap reserve (logout)</dt><dd id="boat-egap-reserve" class="mono">—</dd></div>
+        </dl>
+        <div id="boat-flags" class="chips"></div>
+      </article>
+
       <article class="card automation-panel">
         <h2 class="panel-title">Recovery &amp; automation</h2>
         <dl class="kv compact">
           <div><dt>Recovery</dt><dd id="recovery-state">—</dd></div>
-          <div><dt>Recovery allowed</dt><dd id="recovery-allowed">—</dd></div>
+          <div data-only="highway"><dt>Recovery allowed</dt><dd id="recovery-allowed">—</dd></div>
           <div><dt>Lobby</dt><dd id="lobby-info">—</dd></div>
           <div><dt>Auto set home</dt><dd id="home-state">—</dd></div>
           <div><dt>Home timer</dt><dd id="home-waiting">—</dd></div>
@@ -117,8 +149,10 @@
           <div><dt>Retry</dt><dd id="home-retry" class="mono">—</dd></div>
           <div><dt>Webhook</dt><dd id="webhook-state">—</dd></div>
         </dl>
-        <p class="label">Paused modules</p>
-        <p id="paused-modules" class="chips-value">—</p>
+        <p class="label" data-only="highway">Paused modules</p>
+        <p id="paused-modules" class="chips-value" data-only="highway">—</p>
+        <p class="label" data-only="boat">Helpers</p>
+        <div id="boat-helpers" class="chips" data-only="boat"></div>
       </article>
 
       <article class="card events-panel">
@@ -145,7 +179,7 @@
         <p id="home-history-empty" class="sub">No confirmed replacements yet. Homes appear after the server confirms a replacement.</p>
       </article>
 
-      <details class="card diagnostics-panel">
+      <details class="card diagnostics-panel" data-only="highway">
         <summary>Flight diagnostics <span class="sub">Path, obstacles and retry counters</span></summary>
         <dl class="kv compact">
           <div><dt>State</dt><dd id="counter-state" class="mono">—</dd></div>
@@ -167,11 +201,11 @@
 
       <article class="card settings-panel">
         <div class="card-head">
-          <h2 class="panel-title">Highway Fly settings</h2>
-          <input aria-label="Filter Highway Fly settings" id="settings-filter" type="search" placeholder="Filter settings…" autocomplete="off">
+          <h2 id="settings-title" class="panel-title">Highway Fly settings</h2>
+          <input aria-label="Filter settings" id="settings-filter" type="search" placeholder="Filter settings…" autocomplete="off">
         </div>
         <div id="settings-list" class="settings-list"></div>
-        <p id="settings-empty" class="sub">Settings appear while Highway Fly is loaded.</p>
+        <p id="settings-empty" class="sub">Settings appear once the game has loaded.</p>
       </article>
 
       <article class="card server-panel">
@@ -188,7 +222,7 @@
   </main>
 
   <footer>
-    Highway Fly <span>Read-only · Live on your local network</span>
+    <span id="footer-title">Highway Fly</span> <span>Read-only · Live on your local network</span>
   </footer>
 
   <script src="app.js" defer></script>

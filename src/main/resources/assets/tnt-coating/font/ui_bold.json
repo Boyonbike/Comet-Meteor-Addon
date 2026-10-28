@@ -1,0 +1,6 @@
+{
+  "providers": [
+    {"type": "ttf", "file": "tnt-coating:inter-600.ttf", "size": 9.6, "oversample": 4.0, "shift": [0, 0]},
+    {"type": "reference", "id": "minecraft:default"}
+  ]
+}

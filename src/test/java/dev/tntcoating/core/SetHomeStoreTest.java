@@ -33,4 +33,25 @@ class SetHomeStoreTest {
         Files.writeString(file, "x".repeat(4_194_305));
         assertEquals(SetHomeScheduler.State.empty(), new SetHomeStore(file).load("a", "server"));
     }
+    @Test void upgradesLegacyEstimatesWithoutLosingHistoryOrReportedWaits() throws Exception {
+        Path file = directory.resolve("legacy.json");
+        var scheduler = new SetHomeScheduler(() -> 1_000_000L, SetHomeScheduler.State.empty());
+        scheduler.sent("Test", new SetHomeScheduler.Location(1, 2, 3, "minecraft:the_nether"), false, 10_000);
+        scheduler.message("Successfully moved Home: Test", 60_000);
+        var history = scheduler.state().history();
+        var estimate = new SetHomeScheduler.State(1_000_000, 1_000_000, 1_000_000,
+            43_200_000, 44_200_000, 0, history);
+        var reported = new SetHomeScheduler.State(1_060_000, 1_000_000, 1_000_000,
+            43_200_000, 1_354_000, 0, history);
+        var document = java.util.Map.of("version", 1, "records", java.util.Map.of(
+            "alice|server", estimate, "bob|server", reported));
+        Files.writeString(file, new com.google.gson.Gson().toJson(document));
+        var store = new SetHomeStore(file);
+        assertEquals(0, store.load("alice", "server").learnedMillis());
+        assertEquals(0, store.load("alice", "server").cooldownEnd());
+        assertEquals(history, store.load("alice", "server").history());
+        assertEquals(1_354_000, store.load("bob", "server").cooldownEnd());
+        assertEquals(0, store.load("bob", "server").learnedMillis());
+    }
+
 }

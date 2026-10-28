@@ -1,6 +1,6 @@
 # Comet documentation
 
-Guides for Comet **0.26.26**, Minecraft **26.2**. [Project README](../README.md).
+Guides for Comet **0.26.27**, Minecraft **26.2**. [Project README](../README.md).
 
 Open Meteor’s **Comet** category, right-click a module, and expand its settings groups. Meteor upgrades share their toggle and configuration with their original category entries. See [settings and compatibility](guides/module-settings.md).
 
@@ -8,6 +8,9 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 
 - [Adaptive Elytra Fly](modules/adaptive-elytra-fly.md)
 - [Highway Fly](modules/highway-fly.md)
+- [Boat Fly](modules/boat-fly.md)
+- [Auto Boat Fly](modules/auto-boat-fly.md)
+- [Flight Dashboard](modules/flight-dashboard.md)
 - [Anti Portal](modules/anti-portal.md)
 - [Auto Set Home](modules/auto-set-home.md)
 - [Auto Lobby](modules/auto-lobby.md)
@@ -28,6 +31,7 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 - [Chat Tools](modules/chat-tools.md)
 - [Call to Arms](modules/call-to-arms.md)
 - [Stash Report](modules/stash-report.md)
+- [Discord IGN Sync](modules/discord-ign-sync.md)
 
 ## Building and block use
 
@@ -46,11 +50,6 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 - [Inventory Tweaks](modules/inventory-tweaks.md)
 - [Auto Replenish](modules/auto-replenish.md)
 
-## Allays
-
-- [Allay Farm](modules/allay-farm.md)
-- [Allay Shulker Killer](modules/allay-shulker-killer.md)
-
 ## Chat Tools features
 
 - [Buffered Auto TPY](modules/auto-tpy.md) — buffer, priority retries, friends, whitelist CSV import, blocklist and adaptive timing.
@@ -60,11 +59,9 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 - [Installation](guides/installation.md)
 - [Module settings and Meteor compatibility](guides/module-settings.md)
 - [HUD elements](guides/hud.md)
-- [Live Highway Fly dashboard](guides/dashboard.md)
 - [Proxy tools](guides/proxy-tools.md)
 - [Inventory loans](guides/inventory-loans.md)
 - [Discord reports and webhooks](guides/discord-webhooks.md)
-- [Allay interaction and coordination](guides/allay-behaviour.md)
 - [Server pacing and packets](guides/server-pacing.md)
 - [Performance](guides/performance.md)
 - [Upgrading from 0.6.1](guides/upgrading.md)
