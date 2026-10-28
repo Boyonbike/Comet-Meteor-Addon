@@ -4,10 +4,7 @@ import java.util.List;
 
 /** Game-thread ownership of one asynchronous read. Cancelled or stale reads cannot publish results. */
 public final class DiscordIgnSyncState {
-    public record Settings(String token, String guildId, String channelId,
-                           boolean clan, boolean whitelist) {
-        @Override public String toString() { return "Discord IGN settings (token redacted)"; }
-    }
+    public record Settings(String relay, boolean clan, boolean whitelist) {}
 
     public record Ticket(long revision, Settings settings, List<String> clan, List<String> whitelist) {
         public Ticket {

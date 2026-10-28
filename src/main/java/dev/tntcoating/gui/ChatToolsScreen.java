@@ -29,7 +29,6 @@ import meteordevelopment.meteorclient.settings.StringSetting;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
-import net.minecraft.network.chat.Style;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -89,7 +88,7 @@ public final class ChatToolsScreen extends Screen {
     private Page conversationBack = Page.Players;
     private String recipient, selectedPlayer;
     private EditBox input, homeSearch, playerSearch, autoListField, visibleSearch, settingsSearch, dialogField;
-    private EditBox discordGuild, discordChannel, discordToken;
+    private EditBox discordRelay;
     private final List<EditBox> visibleFields = new ArrayList<>();
     private boolean discordFormLoaded;
     private int autoSection, clanSection, settingsSection;
@@ -141,10 +140,7 @@ public final class ChatToolsScreen extends Screen {
             autoListField.setResponder(ignored -> { scroll = 0; hits.clear(); });
             settingsSearch = field("Search every setting", 64);
             settingsSearch.setResponder(ignored -> { scroll = 0; hits.clear(); });
-            discordGuild = field("Discord server ID", 32);
-            discordChannel = field("IGN channel ID", 32);
-            discordToken = field("Paste a bot token", 512);
-            discordToken.addFormatter((value, offset) -> FormattedCharSequence.forward("•".repeat(value.length()), Style.EMPTY));
+            discordRelay = field("https://comet-ign-relay.example.workers.dev", 256);
             dialogField = field("", 256);
             dialogField.setResponder(ignored -> dialogTouched = true);
             homeSearch.setResponder(ignored -> hits.clear());
@@ -786,7 +782,7 @@ public final class ChatToolsScreen extends Screen {
         var sync = discordSync();
         syncBar(sync);
         segmented(cx, cursor, new String[] {"Members", "Discord connection"},
-            new String[] {"Members and roles from Discord", "Server, channel and bot token used for the sync"},
+            new String[] {"Members and roles from Discord", "The clan relay link used for the sync"},
             clanSection, choice -> { clanSection = choice; scroll = 0; hits.clear(); if (choice == 1 && !discordFormLoaded) loadDiscordForm(); });
         cursor += CONTROL + PAD;
         if (clanSection == 1) { discord(delta); return; }
@@ -812,13 +808,13 @@ public final class ChatToolsScreen extends Screen {
         round(graphics, cx + 14, top + 21, 7, 7, 3, dot);
         boolean failed = sync.isActive() && sync.syncFailed();
         String title = sync.syncBusy() ? "Reading Discord members and #ign…" : failed ? "Last sync failed"
-            : sync.lastSuccessfulSync() > 0 ? "Synced " + ago(sync.lastSuccessfulSync()) : sync.hasBotToken() ? "Ready to sync" : "Not set up yet";
+            : sync.lastSuccessfulSync() > 0 ? "Synced " + ago(sync.lastSuccessfulSync()) : sync.hasRelay() ? "Ready to sync" : "Not set up yet";
         String detail = sync.lastSuccessfulSync() > 0 && !failed && !sync.syncBusy()
-            ? sync.syncedAccounts() + " linked accounts" + (sync.isActive() && sync.intervalMinutes() > 0 ? DOT + "syncs every " + sync.intervalMinutes() + " min" : DOT + "automatic sync is off")
+            ? sync.syncedAccounts() + " linked accounts" + (sync.isActive() && sync.intervalHours() > 0 ? DOT + "syncs every " + sync.intervalHours() + " h" : DOT + "syncs at game start")
             : sync.syncStatus();
         var actions = new Actions(cx + cw - 10, top + 12)
             .add(sync.syncBusy() ? "Syncing…" : "Sync now", Icon.REFRESH, "Read Discord and update members and roles", Tone.Primary, !sync.syncBusy(), this::syncDiscordNow);
-        if ((failed || !sync.hasBotToken()) && clanSection != 1) actions.add("Fix connection", null, "Open the Discord connection", Tone.Ghost, true,
+        if ((failed || !sync.hasRelay()) && clanSection != 1) actions.add("Fix connection", null, "Open the Discord connection", Tone.Ghost, true,
             () -> { clanSection = 1; scroll = 0; if (!discordFormLoaded) loadDiscordForm(); });
         int tw = actions.left() - GAP - cx - 30;
         bold(graphics, title, cx + 30, top + 11, tw, TEXT, bodyScale());
@@ -834,8 +830,7 @@ public final class ChatToolsScreen extends Screen {
     private void loadDiscordForm() {
         var sync = discordSync();
         if (sync != null) {
-            discordGuild.setValue(sync.configuredGuildId());
-            discordChannel.setValue(sync.configuredChannelId());
+            discordRelay.setValue(sync.configuredRelay());
             discordFormLoaded = true;
         }
     }
@@ -843,9 +838,8 @@ public final class ChatToolsScreen extends Screen {
     private boolean saveDiscordForm() {
         var sync = discordSync();
         if (sync == null) { notice("Discord sync is unavailable."); return false; }
-        String problem = sync.configureConnection(discordToken.getValue(), discordGuild.getValue(), discordChannel.getValue());
+        String problem = sync.configureConnection(discordRelay.getValue());
         if (problem != null) { notice(problem); return false; }
-        discordToken.setValue("");
         return true;
     }
     private void saveDiscordConnection() { if (saveDiscordForm()) notice("Discord connection saved. Press Sync now to read members."); }
@@ -864,17 +858,15 @@ public final class ChatToolsScreen extends Screen {
         var sync = discordSync();
         if (sync == null) { emptyRow("Discord sync unavailable", "The Discord IGN Sync module could not be found."); return; }
         if (!discordFormLoaded) loadDiscordForm();
-        caption("Connection", sync.hasBotToken() ? "Token saved" : "Setup needed", null, null, null);
-        formField("Discord server ID", discordGuild, delta);
-        formField("#ign channel ID", discordChannel, delta);
-        formField(sync.hasBotToken() ? "Bot token (leave blank to keep the saved one)" : "Bot token", discordToken, delta);
+        caption("Connection", sync.hasRelay() ? "Relay saved" : "Setup needed", null, null, null);
+        formField("Clan relay URL", discordRelay, delta);
         new Actions(cx + cw, cursor)
-            .add("Save and sync", Icon.REFRESH, "Save these fields and read Discord now", Tone.Primary, !sync.syncBusy(), this::syncDiscordNow)
-            .add("Save connection", null, "Save these fields; a blank token keeps the saved token", Tone.Secondary, true, this::saveDiscordConnection);
+            .add("Save and sync", Icon.REFRESH, "Save the relay URL and read Discord now", Tone.Primary, !sync.syncBusy(), this::syncDiscordNow)
+            .add("Save connection", null, "Save the relay URL", Tone.Secondary, true, this::saveDiscordConnection);
         cursor += CONTROL + PAD + 4;
         caption("Keeping in sync", null, null, null, null);
-        toggleRow("Sync automatically", "Read Discord when enabled and on the interval below", sync.isActive(), this::toggleDiscordSync, true, false);
-        numberRow("Sync every", "minutes (0 syncs only when you press Sync now)", sync.intervalMinutes(), 1, 0, 120, sync::setIntervalMinutes, false, false);
+        toggleRow("Sync automatically", "Read Discord once when the game starts and on the interval below", sync.isActive(), this::toggleDiscordSync, true, false);
+        numberRow("Sync every", "hours (0 syncs only at game start and when you press Sync now)", sync.intervalHours(), 1, 0, 24, sync::setIntervalHours, false, false);
         toggleRow("Keep the clan list in step", "Members who leave Discord are removed; names you added stay", sync.appliesToClan(), () -> sync.appliesToClan(!sync.appliesToClan()), false, false);
         toggleRow("Keep the Auto TPY whitelist in step", "Linked accounts are added to the whitelist; the blocklist still wins", sync.appliesToAutoTpy(), () -> sync.appliesToAutoTpy(!sync.appliesToAutoTpy()), false, true);
         cursor += PAD;
@@ -1179,7 +1171,7 @@ public final class ChatToolsScreen extends Screen {
             moduleSettings(tools, query, null);
             var sync = discordSync();
             if (sync != null) moduleSettings(sync, query, null);
-            if (cursor == before) emptyRow("No settings match", "Try another word, such as cooldown, colour or token.");
+            if (cursor == before) emptyRow("No settings match", "Try another word, such as cooldown, colour or relay.");
             return;
         }
         if (settingsPath.isEmpty()) {
@@ -1835,7 +1827,7 @@ public final class ChatToolsScreen extends Screen {
     // Input.
 
     private void focus(EditBox box) {
-        for (EditBox field : List.of(input, homeSearch, playerSearch, autoListField, settingsSearch, dialogField, discordGuild, discordChannel, discordToken))
+        for (EditBox field : List.of(input, homeSearch, playerSearch, autoListField, settingsSearch, dialogField, discordRelay))
             field.setFocused(field == box);
     }
     private EditBox focusedField() {
@@ -1927,7 +1919,7 @@ public final class ChatToolsScreen extends Screen {
         }
         if (enter) {
             EditBox focused = focusedField();
-            if (page == Page.Clan && clanSection == 1 && (focused == discordGuild || focused == discordChannel || focused == discordToken)) saveDiscordConnection();
+            if (page == Page.Clan && clanSection == 1 && focused == discordRelay) saveDiscordConnection();
             else if (visibleSearch == autoListField && autoListField.isFocused()) addAutoTpyNames();
             else if (focused == settingsSearch) focus(input);
             else if (visibleSearch != null && visibleSearch.isFocused()) findPlayer(visibleSearch.getValue());
@@ -1951,7 +1943,7 @@ public final class ChatToolsScreen extends Screen {
     }
     @Override public void tick() { if (!tools.isActive() || Minecraft.getInstance().getConnection() == null) Minecraft.getInstance().gui.setScreen(null); }
     @Override public void removed() {
-        discordToken.setValue(""); autoImportRevision++; saveDraft(); dragging = resizing = false; capturing = null; dialog = null;
+        autoImportRevision++; saveDraft(); dragging = resizing = false; capturing = null; dialog = null;
         if (input != null) focus(null);
     }
     @Override public void onClose() { Minecraft.getInstance().gui.setScreen(Minecraft.getInstance().level == null ? null : parent); }

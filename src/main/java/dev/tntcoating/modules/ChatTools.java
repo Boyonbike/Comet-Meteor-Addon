@@ -331,18 +331,17 @@ public final class ChatTools extends Module {
     public void toggleAutoTpyToMe() { autoToMe.set(!autoToMe.get());syncAutoTpy(); }
     public boolean autoTpyToThem() { return autoToThem.get(); }
     public void toggleAutoTpyToThem() { autoToThem.set(!autoToThem.get());syncAutoTpy(); }
-    /** Role access follows the live connection, so a changed guild or channel cannot keep old permissions. */
+    /** Role access follows the live connection, so a changed relay cannot keep old permissions. */
     private void refreshAutoTpyRoles() {
         Map<String, List<DiscordRoles.Role>> roster = discordRoleRoster();
         Set<String> selected = Set.copyOf(autoDiscordRoleIds.get());
         DiscordIgnSync sync = Modules.get().get(DiscordIgnSync.class);
-        String guild = sync == null ? "" : sync.configuredGuildId();
-        String channel = sync == null ? "" : sync.configuredChannelId();
-        String source = DiscordRoles.source(guild, channel);
+        String relay = sync == null ? "" : sync.configuredRelay();
+        String source = DiscordRoles.source(relay);
         boolean rosterChanged = roster != autoRoleRoster;
         if (rosterChanged) autoAvailableRoles = DiscordRoles.availableRoles(roster);
         if (rosterChanged || !selected.equals(autoRoleSelection) || !source.equals(autoRoleSource)) {
-            autoRoleMembers = DiscordRoles.authorizedMembers(roster, selected, savedDiscordRoleSource.get(), guild, channel);
+            autoRoleMembers = DiscordRoles.authorizedMembers(roster, selected, savedDiscordRoleSource.get(), relay);
             autoRoleSelection = selected;
             autoRoleRoster = roster;
             autoRoleSource = source;
@@ -448,7 +447,7 @@ public final class ChatTools extends Module {
     }
     /** Re-evaluate Auto TPY admission after the Discord connection changes. */
     public void refreshAutoTpyPolicy() { syncAutoTpy(); }
-    /** Saved roles describe one guild and channel; a different connection hides them until the next sync. */
+    /** Saved roles describe one relay; a different connection hides them until the next sync. */
     private Map<String, List<DiscordRoles.Role>> discordRoleRoster() {
         String data = savedDiscordRoles.get();
         if (!data.equals(cachedDiscordRoleData)) {
@@ -457,10 +456,10 @@ public final class ChatTools extends Module {
         }
         return savedDiscordRoleSource.get().equals(discordSource()) ? cachedDiscordRoles : Map.of();
     }
-    /** Guild and channel the connection is configured for right now. */
+    /** Relay the connection is configured for right now. */
     private String discordSource() {
         DiscordIgnSync sync = Modules.get().get(DiscordIgnSync.class);
-        return sync == null ? "" : DiscordRoles.source(sync.configuredGuildId(), sync.configuredChannelId());
+        return sync == null ? "" : DiscordRoles.source(sync.configuredRelay());
     }
     public ChatClan.Groups clanGroups() { return ChatClan.groups(clanMembers(), this::isFriend, this::online); }
     public boolean inClan(String player) { return ChatClan.contains(clanMembers.get(), player); }

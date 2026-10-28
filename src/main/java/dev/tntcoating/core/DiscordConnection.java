@@ -1,25 +1,32 @@
 package dev.tntcoating.core;
 
-/** Validation shared by the Discord settings form and sync entry point. Never echoes credentials. */
+import java.net.URI;
+import java.net.URISyntaxException;
+
+/**
+ * Validation shared by the Discord settings form and sync entry point. The connection is one public relay URL; the
+ * relay holds the bot token and fixes the guild and channel, so nothing secret is stored here.
+ */
 public final class DiscordConnection {
     private DiscordConnection() {}
 
-    public static String problem(String token, String guild, String channel) {
-        if (token == null || token.isBlank()) return "Paste the bot token first.";
-        if (guild == null || !guild.matches("[0-9]+")) return "guild-id must be the server ID (numbers only).";
-        if (channel == null || !channel.matches("[0-9]+")) return "ign-channel-id must be the channel ID (numbers only).";
+    public static String problem(String relay) {
+        if (relay == null || relay.isBlank()) return "Paste the clan's relay URL first.";
+        if (relay(relay).isEmpty()) return "The relay URL must be a plain https:// link, such as https://comet-ign-relay.example.workers.dev.";
         return null;
     }
 
-    public static String token(String input) {
-        String token = input == null ? "" : input.strip();
-        if (token.equalsIgnoreCase("bot")) return "";
-        if (token.regionMatches(true, 0, "bot ", 0, 4)) token = token.substring(4).strip();
-        return token;
-    }
-
-    /** The form intentionally keeps the stored token when its password field is empty. */
-    public static String replacementToken(String input, String existing) {
-        return token(input == null || input.isBlank() ? existing : input);
+    /** The relay's base URL without trailing slashes, or "" when it is not a plain https URL. */
+    public static String relay(String input) {
+        String relay = input == null ? "" : input.strip();
+        while (relay.endsWith("/")) relay = relay.substring(0, relay.length() - 1);
+        try {
+            URI uri = new URI(relay);
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getRawUserInfo() != null
+                || uri.getRawQuery() != null || uri.getRawFragment() != null) return "";
+            return relay;
+        } catch (URISyntaxException exception) {
+            return "";
+        }
     }
 }
