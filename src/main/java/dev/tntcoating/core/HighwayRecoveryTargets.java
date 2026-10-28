@@ -24,6 +24,28 @@ public final class HighwayRecoveryTargets {
         }
         return Optional.ofNullable(best);
     }
+    public static Optional<BlockPos> takeoffTarget(HighwayRouteLine line, Vec3 position, int feetY,
+            int minimumDistance, int maximumDistance, Predicate<BlockPos> standable, Predicate<BlockPos> launchable) {
+        if (minimumDistance < 0 || maximumDistance < minimumDistance || maximumDistance > 200) {
+            throw new IllegalArgumentException("Recovery distance must be bounded to [0, 200].");
+        }
+        BlockPos previous = null;
+        for (int distance = minimumDistance; distance <= maximumDistance; distance++) {
+            Vec3 projected = line.target(position, distance);
+            BlockPos column = BlockPos.containing(projected.x, feetY, projected.z);
+            if (column.equals(previous)) continue;
+            previous = column;
+            for (int offset = 0; offset <= 4; offset++) {
+                for (int sign : offset == 0 ? new int[]{1} : new int[]{1,-1}) {
+                    BlockPos candidate = column.offset(0,offset*sign,0);
+                    if (line.onLine(candidate) && standable.test(candidate) && launchable.test(candidate)) {
+                        return Optional.of(candidate);
+                    }
+                }
+            }
+        }
+        return Optional.empty();
+    }
     public static Optional<Vec3> portalExit(AABB body, Vec3 position, Vec3 preferred, ExitProbe probe) {
         Vec3 heading = new Vec3(preferred.x,0,preferred.z);
         if (heading.lengthSqr()<1e-6) heading = new Vec3(0,0,1);

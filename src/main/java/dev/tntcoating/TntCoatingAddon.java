@@ -7,12 +7,13 @@ import dev.tntcoating.modules.CometScaffold;
 import dev.tntcoating.core.InventoryWeaponAttack;
 import dev.tntcoating.modules.AdaptiveElytraFly;
 import dev.tntcoating.modules.HighwayFly;
+import dev.tntcoating.modules.AutoBoatFly;
+import dev.tntcoating.modules.BoatFly;
+import dev.tntcoating.modules.FlightDashboard;
 import dev.tntcoating.modules.AntiPortal;
 import dev.tntcoating.modules.AutoSetHome;
 import dev.tntcoating.modules.AutoLobby;
 import dev.tntcoating.modules.AutoWasp;
-import dev.tntcoating.modules.AllayFarm;
-import dev.tntcoating.modules.AllayShulkerKiller;
 import dev.tntcoating.modules.AngleCalculator;
 import dev.tntcoating.modules.AntiCoords;
 import dev.tntcoating.modules.AntiSpawnSet;
@@ -24,6 +25,7 @@ import dev.tntcoating.modules.DubCounter;
 import dev.tntcoating.modules.ElytraLog;
 import dev.tntcoating.modules.CallToArms;
 import dev.tntcoating.modules.StashReport;
+import dev.tntcoating.modules.DiscordIgnSync;
 import dev.tntcoating.modules.FastStorageESP;
 import dev.tntcoating.modules.SafeFastUse;
 import dev.tntcoating.modules.ShulkerIcons;
@@ -76,6 +78,9 @@ public final class TntCoatingAddon extends MeteorAddon {
         // Flight and flight safety.
         ordered.add(new AdaptiveElytraFly());
         ordered.add(new HighwayFly());
+        ordered.add(new BoatFly());
+        ordered.add(new AutoBoatFly());
+        ordered.add(new FlightDashboard());
         ordered.add(new AntiPortal());
         ordered.add(new AutoSetHome());
         ordered.add(new AutoLobby());
@@ -94,6 +99,7 @@ public final class TntCoatingAddon extends MeteorAddon {
         ordered.add(new ChatTools());
         ordered.add(new CallToArms());
         ordered.add(new StashReport());
+        ordered.add(new DiscordIgnSync());
         // Building and block use.
         upgraded(ordered, modules.get(Scaffold.class), "ScaffoldMixin");
         ordered.add(new CometScaffold());
@@ -107,9 +113,6 @@ public final class TntCoatingAddon extends MeteorAddon {
         upgraded(ordered, modules.get(AutoWeapon.class), "AutoWeaponMixin");
         upgraded(ordered, modules.get(InventoryTweaks.class), "InventoryTweaksMixin");
         upgraded(ordered, modules.get(AutoReplenish.class), "AutoReplenishMixin");
-        // Allays.
-        ordered.add(new AllayFarm());
-        ordered.add(new AllayShulkerKiller());
         orderedModules = List.copyOf(ordered);
         orderedModules.forEach(module -> {
             if (module.category == CATEGORY) {

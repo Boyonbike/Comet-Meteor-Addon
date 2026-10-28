@@ -1,9 +1,8 @@
 package dev.tntcoating.hud;
 
-import dev.tntcoating.core.ChatTeleportState;
+import dev.tntcoating.core.AutoSetHomeHudText;
 import dev.tntcoating.modules.HighwayFly;
 import dev.tntcoating.modules.AutoSetHome;
-import java.util.ArrayList;
 import java.util.List;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
@@ -37,28 +36,6 @@ public final class AutoSetHomeHud extends HudElement {
     }
 
     private static List<String> lines(HighwayFly.AutoSetHomeStatus status) {
-        List<String> lines = new ArrayList<>(5);
-        lines.add("Mode: " + status.mode());
-        lines.add((status.waiting() ? "Confirm: " : "Next: ") + remaining(status.waiting() ? status.schedule().responseMillis() : status.waitMillis()));
-        lines.add("Home: " + (status.home().isEmpty() ? "not set" : status.home()));
-
-        var schedule = status.schedule();
-        if (status.paused()) lines.add("Paused: countdown continues");
-        lines.add("State: " + schedule.phase().toLowerCase(java.util.Locale.ROOT).replace('_', ' '));
-        if (status.fixedTimer()) {
-            lines.add("Interval: " + remaining(schedule.intervalMillis()));
-            lines.add("Server cooldown: " + remaining(schedule.cooldownMillis()) + " (informational)");
-        } else {
-            lines.add("Cooldown: " + (schedule.learnedMillis() == 0 && schedule.cooldownMillis() == 0
-                ? "learning" : remaining(schedule.cooldownMillis())));
-            lines.add("Buffer: " + remaining(schedule.bufferMillis())
-                + (schedule.cooldownMillis() > 0 ? " (after cooldown)" : ""));
-            if (schedule.retryMillis() > 0) lines.add("Retry: " + remaining(schedule.retryMillis()));
-        }
-        return lines;
-    }
-
-    private static String remaining(long millis) {
-        return millis <= 0 ? "now" : ChatTeleportState.remaining(millis);
+        return AutoSetHomeHudText.lines(status.mode(), status.home(), status.fixedTimer(), status.paused(), status.schedule());
     }
 }

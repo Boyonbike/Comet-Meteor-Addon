@@ -7,6 +7,7 @@ package dev.tntcoating.modules;
 
 import dev.tntcoating.TntCoatingAddon;
 import dev.tntcoating.core.HelperActivation;
+import dev.tntcoating.core.LobbyRecoveryStore;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -34,6 +35,11 @@ public abstract class HighwayHelper extends Module {
         reconcile();
     }
 
+    final void boatManaged(boolean requested) {
+        activation.managed(LobbyRecoveryStore.NATIVE_BOAT, requested);
+        reconcile();
+    }
+
     private void reconcile() {
         if (!activation.needsTransition(isActive(), toggling)) return;
         internalChange = true;
@@ -56,9 +62,12 @@ public abstract class HighwayHelper extends Module {
 
     @Override public final void onDeactivate() {
         if (!internalChange) {
-            boolean wasManaged = activation.managed();
+            boolean wasManaged = activation.managedBy("highway-fly");
+            boolean wasBoatManaged = activation.managedBy(LobbyRecoveryStore.NATIVE_BOAT);
             activation.disable();
             if (wasManaged && !profileLoading) highway().helperDisabled(this);
+            AutoBoatFly boat = Modules.get().get(AutoBoatFly.class);
+            if (wasBoatManaged && !profileLoading && boat != null) boat.helperDisabled(this);
         }
         stopped();
     }
@@ -86,8 +95,10 @@ public abstract class HighwayHelper extends Module {
     }
 
     public final String activationLabel() {
-        if (activation.managed()) return activation.independent()
-            ? "Independently enabled; also used by Highway Fly" : "Managed by Highway Fly";
+        if (activation.managed()) {
+            String owner = activation.managedBy(LobbyRecoveryStore.NATIVE_BOAT) ? "Auto Boat Fly" : "Highway Fly";
+            return activation.independent() ? "Independently enabled; also used by " + owner : "Managed by " + owner;
+        }
         return activation.independent() ? "Independently enabled" : "Off";
     }
 

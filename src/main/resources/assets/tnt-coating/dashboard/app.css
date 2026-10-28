@@ -13,6 +13,8 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+/* One page serves both flight modules; the snapshot's mode picks which panels show. */
+body[data-mode="boat"] [data-only="highway"], body[data-mode="highway"] [data-only="boat"] { display: none !important; }
 html { scroll-behavior: smooth; }
 body {
   margin: 0;
@@ -82,6 +84,7 @@ main { max-width: 1400px; margin: auto; padding: 28px 20px 40px; }
 .stat-row { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-top: 12px; }
 #progress-percent { font-size: 1.65rem; font-weight: 700; color: var(--accent); letter-spacing: -.04em; }
 #progress-remaining { color: var(--muted); font-size: .8rem; }
+.big-number { font-size: 1.65rem; font-weight: 700; color: var(--accent); letter-spacing: -.04em; }
 .bar-line { display: grid; grid-template-columns: 48px minmax(30px, 1fr) auto; gap: 10px; align-items: center; margin-top: 14px; color: var(--muted); font-size: .8rem; }
 .bar { height: 7px; border-radius: 8px; background: #080f14; overflow: hidden; }
 .bar-fill { width: 0; height: 100%; border-radius: inherit; transition: width .25s ease; }

@@ -135,4 +135,86 @@ class SetHomeSchedulerTest {
         assertEquals(4_000, s.snapshot(true, 5_000, 10_000).waitMillis());
         assertEquals(59_000, s.snapshot(true, 60_000, 10_000).waitMillis());
     }
+    @Test void restoredOldSuccessDoesNotTurnAShortReplyIntoTwelveHours() {
+        var s = new SetHomeScheduler(clock::get,
+            new SetHomeScheduler.State(1, 1, 1, 43_200_000, 0, 0, java.util.List.of()));
+        clock.set(43_100_000);
+        s.sent("Test", location, false, 10_000);
+        s.message("You have to wait 4m 54s to teleport again.", 60_000);
+        assertEquals(294_000, s.state().learnedMillis());
+        assertEquals(304_000, s.snapshot(false, 60_000, 10_000).waitMillis());
+        clock.addAndGet(304_000);
+        s.sent("Test", location, false, 10_000);
+        s.message("Successfully moved Home: Test", 60_000);
+        assertEquals(304_000, s.snapshot(false, 60_000, 10_000).waitMillis());
+    }
+
+    @Test void pausingInvalidatesTheOldCycleForLearning() {
+        var s = fresh();
+        s.sent("Test", location, false, 10_000);
+        s.message("Successfully moved Home: Test", 60_000);
+        s.cancel();
+        clock.addAndGet(43_000_000);
+        s.sent("Test", location, false, 10_000);
+        s.message("You have to wait 4m 54s to teleport again.", 60_000);
+        assertEquals(294_000, s.state().learnedMillis());
+    }
+
+    @Test void aMissedReplyInvalidatesTheOldCycleForLearning() {
+        var s = fresh();
+        s.sent("Test", location, false, 10_000);
+        s.message("Successfully moved Home: Test", 60_000);
+        clock.addAndGet(60_000);
+        s.sent("Test", location, false, 10_000);
+        clock.addAndGet(15_001); s.expire();
+        clock.addAndGet(43_000_000);
+        s.sent("Test", location, false, 10_000);
+        s.message("You have to wait 4m 54s to teleport again.", 60_000);
+        assertEquals(294_000, s.state().learnedMillis());
+    }
+
+    @Test void promotionalDurationsDoNotReplaceTheServersWait() {
+        var s = fresh(); s.sent("Test", location, false, 10_000);
+        s.message("Wait 4m 54s to set a home again. VIP cooldown: 12h", 60_000);
+        assertEquals(294_000, s.snapshot(false, 60_000, 10_000).cooldownMillis());
+    }
+
+    @Test void aLongOpenScreenCannotBecomePartOfTheLearnedCooldown() {
+        var s = fresh(); s.sent("Test", location, false, 10_000);
+        s.message("Successfully moved Home: Test", 60_000);
+        clock.addAndGet(43_000_000);
+        s.sent("Test", location, false, 10_000);
+        s.message("You have to wait 4m 54s to teleport again.", 60_000);
+        assertEquals(294_000, s.state().learnedMillis());
+    }
+
+    @Test void anUnambiguousWaitOutranksAnEarlierPromotionalDuration() {
+        var s = fresh(); s.sent("Test", location, false, 10_000);
+        s.message("VIP home cooldown 12h. Wait 4m 54s to set a home again.", 60_000);
+        assertEquals(294_000, s.state().learnedMillis());
+    }
+
+    @Test void configuredDiscoveryIntervalStillLearnsTheFullFreshCycle() {
+        var s = fresh(); s.sent("Test", location, false, 10_000, 120_000);
+        s.message("Successfully moved Home: Test", 60_000);
+        clock.addAndGet(120_000);
+        s.sent("Test", location, false, 10_000, 120_000);
+        s.message("You have to wait 3m 00s to teleport again.", 60_000);
+        assertEquals(300_000, s.state().learnedMillis());
+    }
+
+    @Test void explicitLongServerCooldownsRemainValid() {
+        var s = fresh(); s.sent("Test", location, false, 10_000);
+        s.message("Wait 12h before setting a home again.", 60_000);
+        assertEquals(43_200_000, s.state().learnedMillis());
+        assertEquals(43_210_000, s.snapshot(false, 60_000, 10_000).waitMillis());
+        assertFalse(s.snapshot(false, 60_000, 10_000).estimatedCooldown());
+    }
+
+    @Test void aHomeNameThatLooksLikeADurationDoesNotReplaceItsCooldown() {
+        var s = fresh(); s.sent("12h", location, false, 10_000);
+        s.message("Home 12h sethome cooldown: 4m 54s", 60_000);
+        assertEquals(294_000, s.state().learnedMillis());
+    }
+
 }

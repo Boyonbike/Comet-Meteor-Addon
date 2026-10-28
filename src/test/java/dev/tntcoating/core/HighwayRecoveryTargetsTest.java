@@ -13,6 +13,22 @@ class HighwayRecoveryTargetsTest {
             p -> p.equals(new BlockPos(20,64,0))).orElseThrow();
         assertEquals(new BlockPos(20,64,0), target);
     }
+    @Test void recoveryWalkContinuesPastBlockedTakeoffSpotOnTheStableLine() {
+        HighwayRouteLine line = HighwayRouteLine.from(new Vec3(.5,64,.5),new Vec3(100.5,64,.5));
+        var target = HighwayRecoveryTargets.takeoffTarget(line, new Vec3(.5,64,.5),64,20,40,
+            p -> p.getY()==64, p -> p.getX()>=26).orElseThrow();
+        assertEquals(new BlockPos(26,64,0),target);
+        assertTrue(line.onLine(target));
+    }
+    @Test void recoveryTakeoffSearchIsBoundedAndCannotPassDestination() {
+        HighwayRouteLine line = HighwayRouteLine.from(new Vec3(.5,64,.5),new Vec3(25.5,64,.5));
+        AtomicInteger probes = new AtomicInteger();
+        assertTrue(HighwayRecoveryTargets.takeoffTarget(line,new Vec3(.5,64,.5),64,20,60,
+            p -> { probes.incrementAndGet(); assertTrue(p.getX()<=25); return p.getY()==64; },
+            p -> false).isEmpty());
+        assertTrue(probes.get()<=41*9);
+    }
+
     @Test void absentWalkTargetHasABoundedSearch() {
         AtomicInteger calls=new AtomicInteger();
         assertTrue(HighwayRecoveryTargets.standingTarget(new BlockPos(20,120,0),64,

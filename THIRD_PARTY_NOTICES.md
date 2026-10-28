@@ -5,7 +5,9 @@ under CC0 1.0 (`LICENSE-CC0`). The JAR and source archive combine that code with
 GPL-3.0-only adaptations, so the combined work is distributed under **GNU GPL
 version 3 only (GPL-3.0-only)**, whose full text is `LICENSE`. The "or any later
 version" option in the GPL's example notice is not used. The Apache-2.0 text
-for the NoTextureRotations adaptation is `LICENSE-NoTextureRotations`. Every
+for the NoTextureRotations adaptation is `LICENSE-NoTextureRotations`; the
+bundled Inter typeface and Lucide icon font carry `LICENSE-Inter` (SIL OFL 1.1)
+and `LICENSE-Lucide` (ISC). Every
 third-party component is listed below with its licence, source and the files it
 covers.
 
@@ -21,6 +23,9 @@ Copyright (c) 2026 Boyonabike and Comet contributors.
 | NoTextureRotations (Anti Coords) | Apache-2.0 | Adapted source; see `LICENSE-NoTextureRotations` |
 | VolytraFly | CC0-1.0 | Boost-curve behaviour, credited |
 | Majkey's DubCounter | No upstream licence; included with permission | Adapted source |
+| Quiettee Utils (Boat Fly) | GPL-3.0-only | Adapted source; see `LICENSE` |
+| Inter typeface | SIL OFL-1.1 | Bundled Chat Tools font; see `LICENSE-Inter` |
+| Lucide icons | ISC | Bundled Chat Tools icon font (subset); see `LICENSE-Lucide` |
 | Meteor Client | GPL-3.0-only | Runtime dependency and API; not bundled |
 | Baritone | LGPL-3.0-only | Optional compile-only API; not bundled |
 | Xaero's Minimap / World Map | Proprietary | Optional compile-only API; not bundled |
@@ -175,6 +180,39 @@ a second instead of every tick, adds cached totals and HUD lines, and registers
 as part of Comet. Remove the standalone `DubCounter-1.0.0-mc26.1.2.jar` when
 installing Comet, because both register `dub-counter`.
 
+## Boat Fly — Quiettee Utils
+
+The native Boat Fly engine, motion, travel, remount and speed measurement
+helpers and boat mixin hooks are adapted from the local Quiettee Utils 26.1.2
+source by Quiettee, licensed GPL-3.0-only. Upstream repository:
+https://github.com/FragmentZero6b6t/quiettee-utils, base revision
+`361f9da0520731432d5e155b11eab539c8513f3a`, with the local Minecraft
+26.1.2 mapping and automation adaptations. Original Quiettee licence text remains
+in the upstream project; Comet's `LICENSE` includes the same GPLv3 terms. Comet
+adds native module registration, trip helper ownership, Angle Calculator recovery
+coordination, the shared Flight Dashboard and eGap webhook reporting. BoatShot combat
+and follow behaviour is not included. Corresponding modified source and build
+inputs are included in Comet's source distribution.
+
+Files: `modules/BoatFly.java`, `modules/AutoBoatFly.java`, `modules/boatfly/`
+(except `BoatModuleRestoreGate.java`), `events/BoatPlayerCorrectionEvent.java`,
+`mixin/BoatFlyMovementMixin.java`, `mixin/BoatFlyPlayerCorrectionMixin.java` and
+`mixin/BoatFlyVehicleCorrectionMixin.java`.
+
+## Inter typeface
+
+- Source: https://github.com/rsms/inter (Latin subset, weights 400 and 600, via Fontsource)
+- Licence: SIL Open Font License 1.1, full text in `LICENSE-Inter`
+- Files: `src/main/resources/assets/tnt-coating/font/inter-400.ttf`, `inter-600.ttf`
+- Use: the Chat Tools window's text. The font is unmodified apart from subsetting and is not sold on its own.
+
+## Lucide icons
+
+- Source: https://github.com/lucide-icons/lucide (`lucide-static` 1.62.0 icon font)
+- Licence: ISC, full text in `LICENSE-Lucide`
+- Files: `src/main/resources/assets/tnt-coating/font/lucide-icons.ttf` (subset to the icons Chat Tools uses)
+- Use: the Chat Tools window's icons.
+
 ## Meteor Client
 
 Comet is built for and loaded by Meteor Client, Copyright (c) Meteor Development:
@@ -234,8 +272,8 @@ removed:
 
 ## Source distribution and GPL compliance
 
-`./gradlew build` packages `LICENSE`, `LICENSE-CC0`, `LICENSE-NoTextureRotations`
-and this notice inside the JAR. It also produces
+`./gradlew build` packages `LICENSE`, `LICENSE-CC0`, `LICENSE-NoTextureRotations`,
+`LICENSE-Inter`, `LICENSE-Lucide` and this notice inside the JAR. It also produces
 `build/distributions/comet-<version>-mc26.1.2-source.zip`, containing the complete
 modified source, Gradle build inputs, licence texts and this notice. Distribute
 that matching source archive alongside the compiled JAR under GPL-3.0-only terms.
@@ -246,5 +284,5 @@ not part of the source archive.
 
 The third-party code and Comet's adaptations are provided without any warranty,
 including merchantability or fitness for a particular purpose. See the full
-licence texts in `LICENSE`, `LICENSE-CC0` and
-`LICENSE-NoTextureRotations` for the applicable terms.
+licence texts in `LICENSE`, `LICENSE-CC0`, `LICENSE-NoTextureRotations`,
+`LICENSE-Inter` and `LICENSE-Lucide` for the applicable terms.

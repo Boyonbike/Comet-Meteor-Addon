@@ -101,11 +101,16 @@ public final class HighwayWebhook {
      */
     public static void send(String url, Event event, String description, Context context, List<Field> extra,
         String mention) {
+        sendBranded(url, event, description, context, extra, mention, FOOTER);
+    }
+
+    static void sendBranded(String url, Event event, String description, Context context, List<Field> extra,
+        String mention, String brand) {
         if (!configured(url)) return;
-        JsonObject payload = payload(event, description, context, extra, Instant.now(), mention);
+        JsonObject payload = payload(event, description, context, extra, Instant.now(), mention, brand);
         HttpRequest request = HttpRequest.newBuilder(DiscordWebhook.confirmedUri(url))
             .timeout(TIMEOUT)
-            .header("User-Agent", FOOTER)
+            .header("User-Agent", brand)
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(payload.toString()))
             .build();
@@ -125,8 +130,13 @@ public final class HighwayWebhook {
 
     static JsonObject payload(Event event, String description, Context context, List<Field> extra, Instant time,
         String mention) {
+        return payload(event, description, context, extra, time, mention, FOOTER);
+    }
+
+    static JsonObject payload(Event event, String description, Context context, List<Field> extra, Instant time,
+        String mention, String brand) {
         JsonObject payload = new JsonObject();
-        payload.addProperty("username", FOOTER);
+        payload.addProperty("username", brand);
         JsonObject mentions = new JsonObject();
         mentions.add("parse", new JsonArray());
         Mention target = parseMention(mention);
@@ -139,7 +149,8 @@ public final class HighwayWebhook {
         payload.add("allowed_mentions", mentions);
 
         JsonObject embed = new JsonObject();
-        embed.addProperty("title", event.title());
+        embed.addProperty("title", FOOTER.equals(brand) ? event.title()
+            : event.title().replace("Flight", "Boat travel").replace("Route", "Boat trip"));
         embed.addProperty("description", DiscordWebhook.escape(description == null ? "" : description));
         embed.addProperty("color", event.color());
 
@@ -171,7 +182,7 @@ public final class HighwayWebhook {
         if (!fields.isEmpty()) embed.add("fields", fields);
 
         JsonObject footer = new JsonObject();
-        footer.addProperty("text", FOOTER + (context == null || context.server() == null || context.server().isBlank()
+        footer.addProperty("text", brand + (context == null || context.server() == null || context.server().isBlank()
             ? "" : " · " + DiscordWebhook.escape(context.server())));
         embed.add("footer", footer);
         embed.addProperty("timestamp", time.toString());

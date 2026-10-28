@@ -44,7 +44,7 @@ corresponding source. Public module documentation under `docs/` is included; int
 ## Releases
 
 Tag the commit on the matching branch as `v<version>-mc<minecraft>`, for example
-`v0.26.26-mc26.1.2`, and attach both `build/libs/comet-<version>-mc<minecraft>.jar`
+`v0.26.27-mc26.1.2`, and attach both `build/libs/comet-<version>-mc<minecraft>.jar`
 and `build/distributions/comet-<version>-mc<minecraft>-source.zip` to the GitHub
 release. Tags matching `v*` run the branch build workflow.
 
