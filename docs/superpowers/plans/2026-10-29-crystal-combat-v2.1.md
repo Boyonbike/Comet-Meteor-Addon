@@ -75,6 +75,7 @@ Safety invariants are hard rules: no profile, tactic, override or emergency may 
 ### Hard invariants
 
 1. One packet-sending path for combat-owned work. Only `CombatRuntime.dispatch` sends interaction, attack, swing, slot or rotation packets, including delegated mining and rotation requests. Planners never send.
+   - Exceptions: (1) CrystalCombat never calls `InventorySlotLoan.prepare()`, `Speedmine.requestBreak` or `InventoryWeaponAttack` **in a way that sends**; (2) rotation requests to Meteor `Rotations` may be issued only from inside `CombatRuntime.dispatch` and count as part of the single path; (3) Meteor `CrystalAura`'s send paths are suppressed in **P2c**; (4) other modules' sends are out of scope.
 2. Verified attacks need a real current-world crystal identified by entity ID and UUID within the current connection epoch.
 3. Self and friend safety cannot be bypassed by faceplace, lethal override, hurt-sync, cleanup, defence or any profile. No self-lethal totem gambling.
 4. Every crystal placement and every attack acquires a risk reservation atomically with its action, slot and rotation reservations. Placement reserves because another actor can detonate our crystal before we attack it.
