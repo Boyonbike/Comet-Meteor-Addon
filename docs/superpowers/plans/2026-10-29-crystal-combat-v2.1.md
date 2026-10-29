@@ -110,8 +110,8 @@ Borrowing means one of three things, and each file states which:
 | Source | Use for | Mode | Pin |
 | --- | --- | --- | --- |
 | Meteor 26.2 build | Damage, faceplace, Weakness, pauses, inventory semantics; test baseline | Ported where needed | `26.2-20261009.074120-35` |
-| Lambda (new rewrite) | Shared InteractionSettings/RotationSettings/Targeting split; opportunity concepts | Reimplemented | `e8eb261c…` plus the CrystalAura PR revision used |
-| THM | 26.2 integration points only | Reimplemented | `21140a37…`; recheck lineage before use |
+| Lambda (new rewrite) | Shared InteractionSettings/RotationSettings/Targeting split; opportunity concepts | Reimplemented | `e8eb261c…`; CrystalAura PR #101 merge `3eb57a77…` |
+| THM | 26.2 integration points only | Reimplemented | `21140a37…`; lineage checked 2026-10-29: not the flagged ThunderHack rename; Lambda is the true upstream; confirm GPL attribution before borrowing |
 | Coyduck | Hurt-aware arrival timing, gap fill, defensive pass, budgets | Ported selectively | `20d01a51…` |
 | LiquidBounce | Event-driven invalidation, rotation queue, movement simulation | Reimplemented | Pin a 26.2 revision (v0.40.0 tag) before reading code |
 | BlackOut | Piston geometry and ordering; real displaced-crystal attacks | Ported selectively | `4c18af3f…` plus the fork it comes from |
@@ -387,7 +387,7 @@ Before any planner exists, record what 26.2 actually sends during crystal combat
 
 - [ ] Record exact 26.2 Mojmap signatures and source paths for: entity add/remove packets, block update packets (single and section), block-change acknowledgement, explosion packet, health/food packet, entity data (health, absorption), effect add/remove, equipment, damage event, entity status (totem pop), player position/setback, respawn, dimension change and bundle delimiters.
 - [ ] Confirm which of these Meteor exposes as events, on which thread, and whether before or after vanilla applies the packet. Build 35's Receive fires before handling; find or add an after-application hook.
-- [ ] Read the 26.2 `LivingEntity` hurt path. Record the invulnerability timer, the immunity window `W`, that the previous raw hit is subtracted before mitigation, which damage types bypass the cooldown, and whether a stronger in-window hit broadcasts a damage event.
+- [ ] Read the 26.2 `LivingEntity` hurt path. Record the invulnerability timer, the immunity window `W`, that the previous raw hit is subtracted before mitigation, which damage types bypass the cooldown, and whether a stronger in-window hit broadcasts a damage event. Until 0.4 records the trace, `CombatMotionModel` must assume an in-window stronger hit may still cause knockback (conservative for target envelopes and self bounds).
 - [ ] Read `CombatRules` mitigation and confirm the nondecreasing damage-to-input ratio under fixed armour, toughness and protection (a grouping proof obligation).
 - [ ] Read `EndCrystal.hurtServer`: confirm a crystal damaged by an explosion-tagged source is removed without a second explosion.
 - [ ] Read the 26.2 explosion: entity search radius (expected 12 for power 6), three-dimensional knockback including vertical, and block destruction rules by blast resistance.
@@ -428,7 +428,7 @@ Use a local server with a scripted fake target (a second account or a server-sid
 - [ ] A crystal placed where the server rejects it; a crystal attacked out of reach.
 - [ ] A sequenced interaction sent after an applied explosion: record acknowledgement timing relative to any health packet.
 - [ ] A server stall (pause the server process for 3 s) mid-sequence.
-- [ ] Piston push of a crystal in each of four directions, feet and eye height, torch and redstone block power.
+- [ ] Piston push of a crystal in each of four directions, feet and eye height, torch and redstone block power. Record the server-logged crystal position for each layout and compare it with the computed position (2-tick extension, 0.51 + 0.01 blocks per tick); any disagreement makes that layout unsupported.
 - [ ] Totem pop on the target; friend health metadata while tracking a friend.
 - [ ] Death and respawn in the same world with crystals present; disconnect and reconnect; dimension change.
 
@@ -444,12 +444,13 @@ Repeat at added one-way delay of 0, 40 and 100 ms each way (80 and 200 ms RTT) w
   4. Does a block-change acknowledgement sent after an explosion reliably follow any health sync it caused? This decides whether the processing barrier (safety rule 3) exists.
   5. How many ticks does a piston push of a crystal take, and where does it end?
   6. Is a holed target pushed vertically by a crystal explosion?
+  7. For every piston layout, does the computed pushed position match the server-logged position within tolerance?
 - [ ] Store traces under `src/test/resources/combat/traces/` as fixtures, with the server-side log beside each.
 
 ### Exit gate
 
 - [ ] Audit file reviewed, with artifact hashes.
-- [ ] All six questions in 0.5 answered from traces, not from memory.
+- [ ] All seven questions in 0.5 answered from traces, not from memory.
 - [ ] `W`, raw-before-mitigation subtraction and crystal-explosion semantics confirmed for 26.2.
 - [ ] Processing-barrier question answered. If no barrier exists, Conservative keeps zero-damage risk as debt and the plan records that limitation.
 - [ ] Provenance pins recorded.
@@ -542,6 +543,7 @@ Wraps the audited 26.2 exposure and mitigation code behind a pure `ExposureView`
   - **Target lower bound**: treats uncertain cover as blocking, so soft cover never inflates lethal eligibility.
   - **Self/friend upper bound**: treats uncertain cover as open. Meteor's default (ignoring blocks below 600 blast resistance) is acceptable here only.
 - [ ] Return `RawDamage` and `MitigatedDamage` separately; never subtract absorption inside an estimate.
+- [ ] `DamageUtils` truncates raw damage to `int`; `CombatDamageAdapter` must compute unrounded values or round self/friend upper bounds up.
 - [ ] Mitigation envelope: compute bounds with armour pieces that could break and effects that could expire before the latest arrival removed.
 - [ ] Differential test against a fixed pinned-Minecraft fixture (not a second copy of the formula): no Resistance vs Resistance I/II, armour tiers, Blast Protection levels, toughness, difficulty.
 - [ ] Overlay test: a planned obsidian block changes exposure as the fixture says.
@@ -905,8 +907,8 @@ enum PistonPhase { SEARCH, RESERVE, SUPPORTS, PISTON, CRYSTAL, POWER, WAIT_PUSH,
 3. **PISTON.** Rotate to give the correct facing, place, and wait for the block observation. Verify the observed facing; wrong facing → abort and clean up.
 4. **CRYSTAL.** Place the crystal. Wait for a unique matching spawn; bind its ID and UUID.
 5. **POWER.** Place the torch or redstone block. Wait for the block observation.
-6. **WAIT\_PUSH.** Wait for the bound crystal's move observation to the expected pushed region, within the measured push time plus latency.
-7. **ATTACK.** Re-run damage and risk at the actual observed position. Attack the bound entity only.
+6. **WAIT\_PUSH.** Do not wait for a server move observation: the crystal entity type suppresses position sync (`updateInterval = Integer.MAX_VALUE`). Compute the final server-side position from the authoritative piston block events plus the audited push rules (2-tick extension, 0.51 + 0.01 blocks per tick); the client's own piston simulation is a cross-check, not evidence. Confirm the computed position within a small tolerance before ATTACK.
+7. **ATTACK.** Re-run damage and risk at the computed pushed position (within tolerance). Attack the bound entity only.
 8. **WAIT\_REMOVE.** Wait for removal; hand risk resolution to the budget.
 9. **CLEANUP.** Remove owned power first; optionally mine the owned piston; leave harmless supports.
 10. **COOLDOWN.** 10 ticks before the next trap.
@@ -919,7 +921,9 @@ Power-before-crystal is a known-bad ordering from HongShi/Alien; a test must rej
 - [ ] Structural placements may retry up to 2 times. An unresolved crystal placement is never retried.
 - [ ] Ambiguous spawn (two plausible crystals) → quarantine, abort, no further piston trap until resolved.
 - [ ] Target leaves the geometry envelope → abort before POWER; after POWER, complete the push only if the attack still passes safety.
-- [ ] Damage estimate at the actual pushed position fails policy → do not attack; keep the crystal protected; enter CLEANUP.
+- [ ] Damage estimate at the computed pushed position (tolerance-checked) fails policy → do not attack; keep the crystal protected; enter CLEANUP.
+- [ ] `WAIT_PUSH` never waits for a server move observation. The final position is computed from authoritative piston block events plus the audited push rules (2-tick extension, 0.51 + 0.01 blocks per tick); the client's own piston simulation is a cross-check, not evidence.
+- [ ] Damage, reach and the attack use the computed position with a small tolerance. Phase 0.4 must confirm computed vs server-logged positions for every layout; any layout that disagrees is unsupported and must be listed as such.
 - [ ] Trap deadline 100 ticks; cleanup deadline 40 ticks.
 - [ ] Deadlines and timeouts change retry and backoff only; they never retire risk. At a deadline: release broad locks, keep spatial and entity exclusions and all risk reservations, set MANUAL\_CLEANUP and show it in the info string. No new piston trap until reconciled. Direct combat elsewhere may continue.
 
