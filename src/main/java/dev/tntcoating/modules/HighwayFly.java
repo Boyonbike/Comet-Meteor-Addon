@@ -855,7 +855,7 @@ public final class HighwayFly extends Module {
         List<Module> conflicts = new ArrayList<>();
         // Controllers come before their dependencies, so dependent modules restore last.
         for (Class<? extends Module> type : List.<Class<? extends Module>>of(
-            BaritoneElytra.class, AutoWasp.class,
+            BaritoneElytra.class, AutoWasp.class, ElytraLog.class,
             meteordevelopment.meteorclient.systems.modules.movement.AutoWasp.class,
             AdaptiveElytraFly.class, ElytraFly.class, AutoWalk.class, Flight.class,
             AirJump.class, LongJump.class, Speed.class,
@@ -1440,6 +1440,11 @@ public final class HighwayFly extends Module {
                 toggle();
                 return;
             }
+            if (elytraRemaining(mc.player.getItemBySlot(EquipmentSlot.CHEST)) <= Math.max(2, minDurability.get())) {
+                error("A usable spare was found, but it could not be equipped. Check the chest slot and inventory.");
+                toggle();
+                return;
+            }
             info("Put on an elytra with %d durability left.", swapped);
         }
         recenterCourseAt(mc.player.position());
@@ -1731,7 +1736,7 @@ public final class HighwayFly extends Module {
             }
             AdaptiveFlightEngine.Settings profile = HighwayFlightProfile.create(adaptive.baritoneFlightSettings(),
                 (int) Math.ceil(probeDistance.get()), turnRate.get());
-            if (controller == null) controller = new BaritoneFlight(profile);
+            if (controller == null) controller = new BaritoneFlight(profile, 0);
             BaritoneFlight.Settings config;
             ClientboundPlayerPositionPacket packet = correction.getAndSet(null);
             if (packet != null && lastControlledPosition != null) {
@@ -1751,7 +1756,6 @@ public final class HighwayFly extends Module {
                 controller.setback(target.distanceToSqr(lastControlledPosition) > SETBACK_STOP_DISTANCE * SETBACK_STOP_DISTANCE);
             }
             Vec3 natural = mc.player.getDeltaMovement();
-            double horizontalBps = Math.hypot(natural.x, natural.z) * 20;
             Motion output;
             if (state == State.WALKING) {
                 if (walkStarted) return;
@@ -1873,7 +1877,7 @@ public final class HighwayFly extends Module {
                     yaw = smoothYaw(baseYaw);
                 }
                 double y = mc.player.getY();
-                float pitch = AltitudeHold.pitch(activeY, y, natural.y * 20, horizontalBps,
+                float pitch = AltitudeHold.pitch(activeY, y, controller.output(),
                     new AltitudeHold.Config(ALTITUDE_GAIN, ALTITUDE_DAMPING, verticalSpeedBps.get(),
                         verticalSpeedBps.get(), ALTITUDE_DEADBAND, ALTITUDE_MAX_PITCH));
                 if (state == State.PATHING && guidance != null && guidance.target() != null) {
@@ -2514,10 +2518,11 @@ public final class HighwayFly extends Module {
     }
 
     /**
-     * Puts the most durable spare elytra from the hotbar, main inventory or offhand into the chest slot. A single swap
-     * click exchanges both items, so the displaced item stays in the spare's slot even with a full inventory.
+     * Requests the most durable spare elytra from the hotbar, main inventory or offhand for the chest slot.
+     * The displaced item stays in the spare's slot even with a full inventory. Callers verify the equipped item;
+     * a rejected click is not evidence that no usable spare exists.
      *
-     * @return the remaining durability of the elytra put on, or -1 when no spare above the threshold is reachable
+     * @return the selected spare's remaining durability, or -1 when no spare above the threshold is reachable
      */
     private int swapInElytra(int threshold) {
         if (!canUseInventory()) return -1;
@@ -2546,7 +2551,6 @@ public final class HighwayFly extends Module {
         boolean chestplate = !worn.isEmpty() && !worn.is(Items.ELYTRA)
             && mc.player.getEquipmentSlotForItem(worn) == EquipmentSlot.CHEST;
         InvUtils.move().from(slot).toArmor(2);
-        if (elytraRemaining(mc.player.getItemBySlot(EquipmentSlot.CHEST)) <= threshold) return -1;
         if (chestplate && chestplateSlot < 0) chestplateSlot = slot;
         return spares[slot];
     }

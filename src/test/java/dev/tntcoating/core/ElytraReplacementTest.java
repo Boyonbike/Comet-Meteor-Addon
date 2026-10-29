@@ -23,6 +23,13 @@ class ElytraReplacementTest {
         assertEquals(-1, ElytraReplacement.best(new int[] {10, 5, 1}, 10));
         assertEquals(1, ElytraReplacement.best(new int[] {10, 11}, 10));
     }
+    @Test void everyPartiallyUsedSpareAboveMinimumCanBeReequipped() {
+        for (int remaining = 11; remaining < 432; remaining++) {
+            int[] spares = {-1, 10, remaining, 1};
+            assertEquals(2, ElytraReplacement.best(spares, 10), "remaining=" + remaining);
+            assertFalse(ElytraReplacement.stranded(10, spares, 10, 10));
+        }
+    }
     @Test void noSpares() {
         assertEquals(-1, ElytraReplacement.best(new int[] {-1, -1}, 10));
         assertEquals(-1, ElytraReplacement.best(new int[0], 10));

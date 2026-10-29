@@ -7,7 +7,7 @@ import net.minecraft.world.phys.AABB;
 
 /** Applies Baritone's requested heading through the same flight pipeline as Adaptive Elytra Fly. */
 public final class BaritoneFlight {
-    private static final double PITCH_DEADZONE = .1;
+    private final double pitchDeadzone;
 
     /** Speed caps are blocks per second; ramp steps retain Adaptive Elytra Fly's blocks-per-tick units. */
     public record Settings(double speedBps, double verticalSpeedBps, double rampStep, double verticalRampStep) {
@@ -25,6 +25,13 @@ public final class BaritoneFlight {
     private boolean tickStarted, stepped, landing;
 
     public BaritoneFlight(AdaptiveFlightEngine.Settings profile) {
+        this(profile, .1);
+    }
+
+    /** Automatic altitude control uses zero deadzone so small height corrections are not discarded. */
+    public BaritoneFlight(AdaptiveFlightEngine.Settings profile, double pitchDeadzone) {
+        Finite.requireNonnegative(pitchDeadzone, "Pitch deadzone");
+        this.pitchDeadzone = pitchDeadzone;
         engine = new AdaptiveFlightEngine(Objects.requireNonNull(profile, "profile"));
     }
 
@@ -51,7 +58,7 @@ public final class BaritoneFlight {
         double headingPitch = Finite.clamp(pitch, -90, 90, 0);
         return process(settings(profile, config, pitch, boostReady), tick, 1,
             (float) Finite.clamp(yaw, -Float.MAX_VALUE, Float.MAX_VALUE, 0),
-            headingPitch < -PITCH_DEADZONE, headingPitch > PITCH_DEADZONE,
+            headingPitch < -pitchDeadzone, headingPitch > pitchDeadzone,
             boostReady, vanillaSpeed, vanillaMovement, body, probe, floorClearance, glide, collisions);
     }
 
@@ -132,7 +139,7 @@ public final class BaritoneFlight {
         double curveTop = Math.min(ServerMoveLimit.SINGLE, p.boostTop());
         double headingPitch = Finite.clamp(pitch, -90, 90, 0);
         double slope = Math.abs(Math.tan(Math.toRadians(headingPitch)));
-        boolean level = Math.abs(headingPitch) <= PITCH_DEADZONE;
+        boolean level = Math.abs(headingPitch) <= pitchDeadzone;
         // A steep route spends its vertical budget first. Lowering the horizontal cap keeps its requested
         // slope attainable instead of flattening the route when the climb or descent reaches its limit.
         // An explicitly disabled vertical axis keeps independent horizontal flight level.

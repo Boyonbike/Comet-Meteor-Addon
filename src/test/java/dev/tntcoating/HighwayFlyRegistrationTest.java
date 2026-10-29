@@ -86,6 +86,8 @@ class HighwayFlyRegistrationTest {
                 conflicts.add(type.getInternalName());
             }
         }
+        assertTrue(conflicts.contains("dev/tntcoating/modules/ElytraLog"),
+            "Highway Fly owns durability safety; Elytra Log must not reject spares using a different threshold");
         assertTrue(conflicts.contains("dev/tntcoating/modules/CometScaffold"),
             "Highway Fly must pause Comet Scaffold so its edge guard cannot interrupt travel");
         assertTrue(conflicts.contains("meteordevelopment/meteorclient/systems/modules/movement/Scaffold"),
