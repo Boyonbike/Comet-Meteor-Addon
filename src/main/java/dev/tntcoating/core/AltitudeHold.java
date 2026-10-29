@@ -25,6 +25,11 @@ public final class AltitudeHold {
 
     private AltitudeHold() {}
 
+    /** Uses controlled movement, which is separate from Minecraft's simulated elytra glide velocity. */
+    public static float pitch(double targetY, double y, AdaptiveFlightController.Motion movement, Config config) {
+        return pitch(targetY, y, movement.y() * 20, movement.horizontalLength() * 20, config);
+    }
+
     /**
      * @param verticalBps positive when climbing, like the player's delta movement Y
      * @param horizontalBps current horizontal speed, used to turn the requested climb into a path angle
