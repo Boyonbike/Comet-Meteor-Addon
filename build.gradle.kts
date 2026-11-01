@@ -131,6 +131,40 @@ tasks {
 
 tasks.test { useJUnitPlatform() }
 
+// Phase 1.1 purity guard. The combat core must compile and test without Minecraft or Meteor on the
+// classpath, so only core/combat/mc may name their types. This runs before tests and fails the build.
+val verifyCombatPurity = tasks.register("verifyCombatPurity") {
+    group = "verification"
+    description = "Fails if a pure core/combat source or test names Minecraft or Meteor types."
+    val main = fileTree("src/main/java/dev/tntcoating/core/combat") {
+        include("**/*.java")
+        exclude("mc/**")
+    }
+    val test = fileTree("src/test/java/dev/tntcoating/core/combat") {
+        include("**/*.java")
+        exclude("mc/**")
+    }
+    val sources = main + test
+    inputs.files(sources)
+    doLast {
+        val forbidden = listOf("net.minecraft", "meteordevelopment")
+        val violations = mutableListOf<String>()
+        sources.files.sortedBy { it.path }.forEach { file ->
+            file.readLines().forEachIndexed { index, line ->
+                forbidden.filter { line.contains(it) }.forEach { token ->
+                    violations += "${file.path}:${index + 1} names $token"
+                }
+            }
+        }
+        if (violations.isNotEmpty()) {
+            throw org.gradle.api.GradleException(
+                "core/combat must stay Minecraft-free:\n" + violations.joinToString("\n"))
+        }
+    }
+}
+
+tasks.named("check") { dependsOn(verifyCombatPurity) }
+
 // Distribute this beside the JAR: GPL-covered adaptations need their modified source
 // and the build inputs, not only a link to the original upstream project.
 val sourceDistribution = tasks.register<Zip>("sourceDistribution") {
