@@ -653,7 +653,7 @@ public final class CrystalCombatController {
         // A disabled/dead/closed trap keeps its sequence for manual cleanup, but it is not a live
         // offensive owner: do not re-arm the sentinel or offer its stale preview.
         engine.offerPlans(trap.enabled()
-            ? trap.previewPlan(budget).map(List::of).orElse(List.of())
+            ? trap.previewPlan(serverTick, budget).map(List::of).orElse(List.of())
             : List.of());
         logConcurrency(engine, "no-active-trap");
         noteCleanup(serverTick, engine, trap);
@@ -779,6 +779,11 @@ public final class CrystalCombatController {
                 if (active.isPresent()) {
                     return "piston trap: " + active.orElseThrow().phase().name()
                         .toLowerCase(java.util.Locale.ROOT);
+                }
+                List<String> missing = stack.pistonTrap().missingMaterials();
+                if (!missing.isEmpty()) {
+                    return "piston trap: missing materials: "
+                        + stack.pistonTrap().missingMaterialsText();
                 }
             }
         }

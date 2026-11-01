@@ -62,6 +62,69 @@ final class PistonPlannerTest {
     }
 
     @Test
+    void missingPistonMaterialSuppressesThePistonOpportunity() {
+        assertMissingMaterialSuppresses(PistonPlanner.PISTON_ITEM);
+    }
+
+    @Test
+    void missingCrystalMaterialSuppressesThePistonOpportunity() {
+        assertMissingMaterialSuppresses(PistonPlanner.CRYSTAL_ITEM);
+    }
+
+    @Test
+    void missingSupportMaterialSuppressesThePistonOpportunity() {
+        assertMissingMaterialSuppresses(PistonPlanner.SUPPORT_ITEM);
+    }
+
+    @Test
+    void missingTorchMaterialSuppressesTorchLayouts() {
+        PistonLayoutSelection.Combination torch = PistonLayoutSelection.byId("east-feet-torch")
+            .orElseThrow();
+        PistonPlanner planner = new PistonPlanner();
+        planner.setSelection(PistonLayoutSelection.of(List.of(torch)));
+        Fake world = cradle();
+        world.removeItem(PistonGeometry.PowerKind.REDSTONE_TORCH.itemId());
+
+        PistonPlanner.Result result = planner.tick(world, List.of(TARGET), 64);
+
+        assertTrue(result.plan().isEmpty());
+        assertEquals(PistonPlanner.Reject.MISSING_MATERIALS, result.lastReject());
+    }
+
+    @Test
+    void missingRedstoneBlockMaterialSuppressesBlockLayouts() {
+        PistonLayoutSelection.Combination block = PistonLayoutSelection.byId("east-feet-redstone")
+            .orElseThrow();
+        PistonPlanner planner = new PistonPlanner();
+        planner.setSelection(PistonLayoutSelection.of(List.of(block)));
+        Fake world = cradle();
+        world.removeItem(PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId());
+
+        PistonPlanner.Result result = planner.tick(world, List.of(TARGET), 64);
+
+        assertTrue(result.plan().isEmpty());
+        assertEquals(PistonPlanner.Reject.MISSING_MATERIALS, result.lastReject());
+    }
+
+    @Test
+    void availablePowerKindStillPlansWhenTheOtherPowerItemIsMissing() {
+        Fake world = cradle();
+        world.removeItem(PistonGeometry.PowerKind.REDSTONE_TORCH.itemId());
+
+        PistonPlanner.Result result = new PistonPlanner().tick(world, List.of(TARGET), 64);
+
+        PistonPlanner.Plan plan = result.plan().orElseThrow();
+        assertEquals(PistonGeometry.PowerKind.REDSTONE_BLOCK, plan.push().powerKind());
+    }
+
+    @Test
+    void allRequiredTrapMaterialsPresentOfferThePlan() {
+        PistonPlanner.Result result = new PistonPlanner().tick(cradle(), List.of(TARGET), 64);
+
+        assertTrue(result.plan().isPresent(), () -> "last reject " + result.lastReject());
+    }
+
+    @Test
     void expectedPushedPositionComesFromTheMeasuredTraceRule() {
         PistonPlanner.Result result = new PistonPlanner().tick(cradle(), List.of(TARGET), 64);
         PistonPlanner.Plan plan = result.plan().orElseThrow();
@@ -212,6 +275,62 @@ final class PistonPlannerTest {
     }
 
     @Test
+    void exhaustedEmptyPassRescansOnTheNextTick() {
+        PistonPlanner planner = new PistonPlanner();
+        Fake world = cradle();
+        world.stationaryTicks = 0; // first pass: the target is not eligible yet
+
+        PistonPlanner.Result first = planner.tick(world, List.of(TARGET), 64);
+        assertTrue(first.complete());
+        assertTrue(first.plan().isEmpty());
+        assertEquals(PistonPlanner.Reject.NOT_STATIONARY, first.lastReject());
+
+        // The trap is not reconcile()-ed between passes in this path, so a completed pass that found
+        // no plan must restart rather than replay its cached empty result forever.
+        world.stationaryTicks = 10;
+        PistonPlanner.Result second = planner.tick(world, List.of(TARGET), 64);
+        assertTrue(second.complete());
+        assertTrue(second.plan().isPresent(),
+            () -> "an exhausted empty pass must restart: last reject " + second.lastReject());
+        assertEquals(TARGET, second.plan().orElseThrow().target());
+    }
+
+    @Test
+    void exhaustedEmptyPassRestartsWithTheSameBoundedBudget() {
+        PistonPlanner planner = new PistonPlanner();
+        Fake world = cradle();
+        world.stationaryTicks = 0;
+        assertTrue(planner.tick(world, List.of(TARGET), 64).exhausted());
+
+        world.stationaryTicks = 10;
+        PistonPlanner.Result restarted = planner.tick(world, List.of(TARGET), 1);
+        assertEquals(1, restarted.evaluated(), "the restarted pass must honour the caller's work budget");
+        // The single evaluated candidate already resolves to a plan, but the pass is not complete: the
+        // budget contract is the evaluation count and the incomplete pass, not an empty result.
+        assertFalse(restarted.complete());
+    }
+
+    @Test
+    void completedPassThatFoundAPlanStaysSticky() {
+        PistonPlanner planner = new PistonPlanner();
+        Fake world = cradle();
+        PistonPlanner.Result first = planner.tick(world, List.of(TARGET), 64);
+        assertTrue(first.plan().isPresent());
+        assertTrue(first.complete());
+
+        // A Hybrid preview must survive from the offer tick until the engine selects it, so a
+        // completed pass that found a plan must not restart even if the world changed since.
+        world.stationaryTicks = 0;
+        world.speed = 0.2;
+        PistonPlanner.Result second = planner.tick(world, List.of(TARGET), 64);
+        assertTrue(second.complete());
+        assertTrue(second.plan().isPresent(), "a found plan must stay offered");
+        assertEquals(first.plan().orElseThrow().planId(), second.plan().orElseThrow().planId());
+        assertEquals(first.evaluated(), second.evaluated(), "the sticky result must not rescan");
+        assertEquals(first.rejected(), second.rejected());
+    }
+
+    @Test
     void candidateCapIsSixtyFour() {
         assertEquals(64, PistonPlanner.CANDIDATE_CAP);
         PistonPlanner.Result result = new PistonPlanner().tick(cradle(), List.of(TARGET), 1000);
@@ -345,6 +464,14 @@ final class PistonPlannerTest {
 
     // ------------------------------------------------------------------ fake world
 
+    private static void assertMissingMaterialSuppresses(String itemId) {
+        Fake world = cradle();
+        world.removeItem(itemId);
+        PistonPlanner.Result result = new PistonPlanner().tick(world, List.of(TARGET), 64);
+        assertTrue(result.plan().isEmpty(), itemId);
+        assertEquals(PistonPlanner.Reject.MISSING_MATERIALS, result.lastReject(), itemId);
+    }
+
     private static Fake cradle() {
         Fake world = new Fake();
         world.floor(-61);
@@ -385,10 +512,18 @@ final class PistonPlannerTest {
         double mitigation = 1.0;
         long planId = 7L;
         int currentTick = 100;
+        final Set<String> items = new HashSet<>(Set.of(PistonPlanner.PISTON_ITEM,
+            PistonPlanner.CRYSTAL_ITEM, PistonPlanner.SUPPORT_ITEM,
+            PistonGeometry.PowerKind.REDSTONE_TORCH.itemId(),
+            PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId()));
 
         Fake() {
             positions.put(TARGET, new Vec(0.5, -60.0, 0.5));
             positions.put(self, new Vec(40.0, 0.0, 40.0));
+        }
+
+        void removeItem(String itemId) {
+            items.remove(itemId);
         }
 
         void put(Cell cell, String id) {
@@ -404,6 +539,11 @@ final class PistonPlannerTest {
         @Override
         public EntityKey self() {
             return self;
+        }
+
+        @Override
+        public boolean hasItem(String itemId) {
+            return itemId != null && items.contains(itemId);
         }
 
         @Override

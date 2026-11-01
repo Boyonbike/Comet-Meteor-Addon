@@ -113,6 +113,25 @@ send falls back to the normal choice only when the fallback plan has passed the 
   engine still ticks and still records its rejected plans, so the ablation shows what serialisation
   costs.
 
+Before a trap is planned, the controller checks the hotbar (slots 0–8 only; the offhand is never used)
+for the piston, end crystals, obsidian supports and at least one enabled layout's power item (redstone
+torch or redstone block). If any of those is missing, no piston opportunity is offered or reserved, the
+info string shows `piston trap: missing materials: ...`, and the debug log records the list once per
+change. Starting a specific plan additionally re-checks that plan's own power item alongside the piston,
+crystals and obsidian, so a preview can never begin after the exact power item it needs leaves the
+hotbar: no plan is offered or started without its own materials.
+
+A completed trap pass that found no plan is not terminal: the next tick starts a fresh pass over the
+live target list with the same bounded per-tick work budget, so a target that becomes stationary or
+steps into a hole after a fruitless pass can still be trapped. A completed pass that did find a plan
+stays sticky until the engine selects it or reconciliation releases it, so a Hybrid offer cannot vanish
+between the offer tick and the selection tick. Hybrid previews perform one observational world sample
+per server tick (refresh the read view and advance the stationary trackers) before ranking, because the
+trap itself is ticked only after selection; the sample is deduplicated per server tick, so a tick that
+previews and then starts or ticks the trap advances the trackers exactly once. PistonOnly is unchanged:
+its trap tick is the only sample point. A preview still never reserves a slot or lease, starts a trap or
+sends a packet.
+
 | Stage | Setting | Status | Evidence |
 | --- | --- | --- | --- |
 | Serialised Hybrid | shipped | Default in every preset | 1,000-seed interleaving and the Phase 6.1/6.2 choice tests pass; this is the baseline. |

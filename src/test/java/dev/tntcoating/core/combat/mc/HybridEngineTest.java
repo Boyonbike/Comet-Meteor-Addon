@@ -147,6 +147,45 @@ final class HybridEngineTest {
     }
 
     /**
+     * Phase 6.1: the target is fully surrounded, so a trap is plausible, but the direct faceplace still
+     * exists and ranks higher. Choice is made before any commitment, so direct wins without serialising
+     * against a running trap.
+     */
+    @Test
+    void surroundedTargetWhereDirectFaceplaceRanksHigherChoosesDirect() {
+        EngineHarness harness = EngineHarness.create(BASE_SETTINGS, SELF);
+        harness.setBase(BASE);
+        harness.addTarget(TARGET);
+        // A sealed one-block tube: four blocked sides at feet and head, plus a ceiling.
+        Cell feet = new Cell(2, 63, 3);
+        harness.setWall(new Cell(feet.x() + 1, feet.y(), feet.z()));
+        harness.setWall(new Cell(feet.x() + 1, feet.y() + 1, feet.z()));
+        harness.setWall(new Cell(feet.x() - 1, feet.y(), feet.z()));
+        harness.setWall(new Cell(feet.x() - 1, feet.y() + 1, feet.z()));
+        harness.setWall(new Cell(feet.x(), feet.y(), feet.z() + 1));
+        harness.setWall(new Cell(feet.x(), feet.y() + 1, feet.z() + 1));
+        harness.setWall(new Cell(feet.x(), feet.y(), feet.z() - 1));
+        harness.setWall(new Cell(feet.x(), feet.y() + 1, feet.z() - 1));
+        harness.setWall(new Cell(feet.x(), feet.y() + 1, feet.z()));
+        harness.engine.setMode(Mode.HYBRID);
+        // Unbound preview entity: this test is about the ranking comparison, not the reservation.
+        EntityKey trapCrystal = new EntityKey(harness.connection, 5150, UUID.randomUUID());
+        Opportunity trap = PistonOpportunity.of(trapPlan(trapCrystal, 12.0),
+            new MitigationEnvelope(0L)).orElseThrow();
+        harness.engine.offerPlans(List.of(trap));
+
+        harness.tick();
+
+        assertFalse(harness.engine.trapSelected(), "the lower-utility preview must not claim the tick");
+        assertTrue(harness.placeCount() >= 1, "the higher-ranked direct faceplace must execute");
+        Choice choice = harness.engine.lastChoice();
+        assertTrue(choice.winner().isPresent());
+        assertEquals(Strategy.DIRECT, choice.winner().orElseThrow().strategy());
+        assertTrue(rejected(choice, trap.id(), Choice.Reason.LOWER_RANK),
+            () -> "trap rejections: " + choice.rejected());
+    }
+
+    /**
      * Phase 6.5: the wait is measured in server ticks, not wall clock, and a starved cleanup is visible in
      * metrics. The hook claims the next free slot but this build has no cleanup intent origin, so the claim
      * changes no packet and no reservation.

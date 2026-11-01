@@ -83,6 +83,20 @@ final class CombatChoiceTest {
     }
 
     @Test
+    void higherUtilityDirectFaceplaceWinsOverASurroundedTrapCandidate() {
+        Opportunity trap = ChoiceFixtures.opportunity(1, Strategy.PISTON, 4, 12.0, 0.35,
+            12.0, 0.0, 4);
+        Opportunity direct = ChoiceFixtures.opportunity(2, Strategy.DIRECT, 1, 8.0, 1.0,
+            8.0, 0.0, 2);
+
+        Choice choice = CombatChoice.choose(List.of(trap, direct), null, OPEN);
+
+        assertEquals(2, choice.winner().orElseThrow().id());
+        assertEquals(8.0, choice.utility(), 1.0e-9);
+        assertEquals(Choice.Reason.LOWER_RANK, reasonOf(choice, 1));
+    }
+
+    @Test
     void usefulDamageIsCappedAtTheTargetsRemainingHealth() {
         Opportunity huge = ChoiceFixtures.opportunity(1, Strategy.DIRECT, 1, 100.0, 1.0);
 

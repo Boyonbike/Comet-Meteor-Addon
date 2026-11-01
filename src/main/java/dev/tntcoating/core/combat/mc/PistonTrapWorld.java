@@ -16,6 +16,7 @@ import dev.tntcoating.core.combat.CombatDamagePolicy;
 import dev.tntcoating.core.combat.CombatMotionModel;
 import dev.tntcoating.core.combat.Confidence;
 import dev.tntcoating.core.combat.DirectCrystal;
+import dev.tntcoating.core.combat.DirectItem;
 import dev.tntcoating.core.combat.DirectSettings;
 import dev.tntcoating.core.combat.DirectTarget;
 import dev.tntcoating.core.combat.DirectWorld;
@@ -63,6 +64,7 @@ public final class PistonTrapWorld implements PistonTrapController.World {
 
     private DirectWorld world;
     private int currentTick = -1;
+    private int lastSampleTick = Integer.MIN_VALUE;
 
     public PistonTrapWorld(DirectWorldSource source, CombatDamageAdapter damage, DirectSettings settings,
                            Safety safety) {
@@ -72,15 +74,27 @@ public final class PistonTrapWorld implements PistonTrapController.World {
         this.safety = Objects.requireNonNull(safety, "safety");
     }
 
-    /** Called once per client tick before planning; refreshes the view and stationary counters. */
+    /**
+     * Read-side refresh of the live world view at {@code serverTick}. The stationary trackers are only
+     * advanced by {@link #onServerTick(int)}; production's sample dedupe lives there.
+     */
     @Override
-    public void onServerTick(int serverTick) {
+    public void refresh(int serverTick) {
         currentTick = serverTick;
         world = source.read();
-        if (world == null) {
-            tracks.clear();
-            return;
-        }
+        if (world == null) tracks.clear();
+    }
+
+    /**
+     * Observational sample point: refresh the view and advance the stationary counters. Deduplicated per
+     * {@code serverTick} so a Hybrid preview and the trap tick for the same tick count the world once.
+     */
+    @Override
+    public void onServerTick(int serverTick) {
+        if (serverTick == lastSampleTick) return;
+        lastSampleTick = serverTick;
+        refresh(serverTick);
+        if (world == null) return;
         Map<EntityKey, Vec> positions = new LinkedHashMap<>();
         positions.put(world.self(), world.selfPosition());
         for (DirectTarget target : world.targets()) {
@@ -190,6 +204,15 @@ public final class PistonTrapWorld implements PistonTrapController.World {
     @Override
     public EntityKey self() {
         return world == null ? null : world.self();
+    }
+
+    @Override
+    public boolean hasItem(String itemId) {
+        if (itemId == null || world == null) return false;
+        for (DirectItem item : world.hotbar()) {
+            if (item.slot() >= 0 && item.slot() <= 8 && itemId.equals(item.id())) return true;
+        }
+        return false;
     }
 
     @Override

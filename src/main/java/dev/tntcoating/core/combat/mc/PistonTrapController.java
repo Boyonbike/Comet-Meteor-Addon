@@ -68,10 +68,10 @@ import java.util.UUID;
 public final class PistonTrapController {
     /** Packet cost shared with the direct engine's single-plan budget. */
     public static final int PACKET_COST = 2;
-    /** Vanilla item ids used by the structural intents. */
-    public static final String SUPPORT_ITEM = "minecraft:obsidian";
-    public static final String PISTON_ITEM = "minecraft:piston";
-    public static final String CRYSTAL_ITEM = DirectPlanner.END_CRYSTAL;
+    /** Vanilla item ids used by the structural intents; the planner owns the single source of truth. */
+    public static final String SUPPORT_ITEM = PistonPlanner.SUPPORT_ITEM;
+    public static final String PISTON_ITEM = PistonPlanner.PISTON_ITEM;
+    public static final String CRYSTAL_ITEM = PistonPlanner.CRYSTAL_ITEM;
     private static final int ATTACK_ID_OFFSET = 1000;
     /** Documented computed/client position tolerance for the diagnostic cross-check. */
     public static final double POSITION_TOLERANCE = PistonSequence.CROSS_CHECK_TOLERANCE;
@@ -163,7 +163,19 @@ public final class PistonTrapController {
             return Optional.empty();
         }
 
-        /** Production sample point: refresh the read view before planning. Fakes keep the default. */
+        /**
+         * Read-side refresh of the live world view at {@code serverTick}, without advancing the stationary
+         * motion counters. Production's {@link #onServerTick(int)} calls this first; callers that need the
+         * sample contract use {@code onServerTick} instead. Fakes may no-op.
+         */
+        default void refresh(int serverTick) {
+        }
+
+        /**
+         * Observational sample point: refresh the read view and advance the stationary motion counters.
+         * Production deduplicates per {@code serverTick}, so a Hybrid preview and the trap tick for the same
+         * tick sample the world exactly once. It never scans, reserves or sends.
+         */
         default void onServerTick(int serverTick) {
         }
     }
@@ -220,6 +232,9 @@ public final class PistonTrapController {
     private RiskId crystalRisk;
     private Vec lastTargetPosition;
     private String lastFailure = "";
+    private String lastMaterialReport = "";
+    /** Last plan-specific shortfall report; separate from the module-wide one above. */
+    private String lastPlanMaterialReport = "";
     private PistonLayoutSelection layouts = PistonLayoutSelection.all();
     private Diagnostics diagnostics = Diagnostics.NONE;
     /** Last phase the debug tap saw; only the diagnostic tap compares it. */
@@ -346,16 +361,30 @@ public final class PistonTrapController {
      * Phase 6.4: scans for a ranking-only candidate without beginning the trap. The scan is the same one a
      * normal start uses, so the plan the engine ranks is the plan that starts; no slot, lease, hazard or
      * send is touched. Empty while a trap is already active or a new trap is gated by reconciliation.
+     *
+     * <p>Hybrid previews before the engine tick, and the trap is only ticked once selected, so a preview
+     * must perform the observational sample itself: it refreshes the view and advances the stationary
+     * trackers for {@code serverTick}. The world deduplicates the sample per server tick, so a tick that
+     * previews and then starts/ticks the trap advances the trackers exactly once. PistonOnly never
+     * previews and keeps {@link #tick(int, TickBudget)} as its only sample point.</p>
      */
-    public Optional<Opportunity> previewPlan(TickBudget budget) {
+    public Optional<Opportunity> previewPlan(int serverTick, TickBudget budget) {
         preview = null;
-        if (!enabled || sequence != null || !reconciled || !session.isOpen() || budget == null) {
+        if (serverTick < 0 || !enabled || sequence != null || !reconciled || !session.isOpen()
+            || budget == null) {
             return Optional.empty();
         }
+        world.onServerTick(serverTick);
+        reportMissingMaterials();
+        if (!missingMaterials().isEmpty()) return Optional.empty();
         if (!budget.spend(TickBudget.Phase.PLANNING)) return Optional.empty();
         Optional<PistonPlanner.Plan> plan = planner.tick(world, world.targets(), 8).plan();
         if (plan.isEmpty()) return Optional.empty();
-        preview = plan.orElseThrow();
+        // The planner already rejects a candidate whose own power item is gone; keep the offering
+        // contract explicit here so no stale/mis-gated plan can ever leave as a preview.
+        PistonPlanner.Plan candidate = plan.orElseThrow();
+        if (!planMaterialsPresent(candidate)) return Optional.empty();
+        preview = candidate;
         return PistonOpportunity.of(preview, new MitigationEnvelope(world.mitigationRevision()));
     }
 
@@ -370,6 +399,8 @@ public final class PistonTrapController {
     /** Installs the exact sixteen-combination beta layout filter; empty disables planning entirely. */
     public void setLayouts(PistonLayoutSelection layouts) {
         this.layouts = layouts == null ? PistonLayoutSelection.all() : layouts;
+        this.lastMaterialReport = "";
+        this.lastPlanMaterialReport = "";
         planner.setSelection(this.layouts);
     }
 
@@ -388,6 +419,106 @@ public final class PistonTrapController {
 
     public String lastFailure() {
         return lastFailure;
+    }
+
+    /**
+     * Materials the enabled trap layouts need but the hotbar does not hold, in deterministic order:
+     * piston, end crystal, obsidian, then the power item(s) for the enabled layouts. Only slots 0-8 are
+     * consulted; the offhand is never part of a trap.
+     */
+    public List<String> missingMaterials() {
+        List<String> missing = new ArrayList<>();
+        if (!hasHotbarItem(PISTON_ITEM)) missing.add(PISTON_ITEM);
+        if (!hasHotbarItem(CRYSTAL_ITEM)) missing.add(CRYSTAL_ITEM);
+        if (!hasHotbarItem(SUPPORT_ITEM)) missing.add(SUPPORT_ITEM);
+        boolean anyPowerKind = false;
+        for (PistonLayoutSelection.Combination combination : layouts.enabledCombinations()) {
+            if (hasHotbarItem(combination.kind().itemId())) {
+                anyPowerKind = true;
+                break;
+            }
+        }
+        if (!anyPowerKind) {
+            for (PistonGeometry.PowerKind kind : PistonGeometry.PowerKind.values()) {
+                if (!enabledKind(kind)) continue;
+                if (!hasHotbarItem(kind.itemId())) missing.add(kind.itemId());
+            }
+        }
+        return List.copyOf(missing);
+    }
+
+    /**
+     * Materials the given plan needs but the hotbar does not hold, in deterministic order: piston, end
+     * crystal, obsidian, then exactly that plan's own power item. The module-wide
+     * {@link #missingMaterials()} accepts any enabled layout's power item; starting one specific plan
+     * cannot.
+     */
+    public List<String> missingPlanMaterials(PistonPlanner.Plan plan) {
+        Objects.requireNonNull(plan, "plan");
+        List<String> missing = new ArrayList<>();
+        if (!hasHotbarItem(PISTON_ITEM)) missing.add(PISTON_ITEM);
+        if (!hasHotbarItem(CRYSTAL_ITEM)) missing.add(CRYSTAL_ITEM);
+        if (!hasHotbarItem(SUPPORT_ITEM)) missing.add(SUPPORT_ITEM);
+        String power = plan.push().powerKind().itemId();
+        if (!hasHotbarItem(power)) missing.add(power);
+        return List.copyOf(missing);
+    }
+
+    /** Human-readable form of {@link #missingMaterials()}, e.g. {@code piston, end crystal, redstone torch}. */
+    public String missingMaterialsText() {
+        return materialText(missingMaterials());
+    }
+
+    private static String materialText(List<String> itemIds) {
+        List<String> names = new ArrayList<>();
+        for (String itemId : itemIds) names.add(displayItem(itemId));
+        return String.join(", ", names);
+    }
+
+    private boolean enabledKind(PistonGeometry.PowerKind kind) {
+        for (PistonLayoutSelection.Combination combination : layouts.enabledCombinations()) {
+            if (combination.kind() == kind) return true;
+        }
+        return false;
+    }
+
+    private boolean hasHotbarItem(String itemId) {
+        return hotbarSlot(itemId) >= 0;
+    }
+
+    private static String displayItem(String itemId) {
+        if (PISTON_ITEM.equals(itemId)) return "piston";
+        if (CRYSTAL_ITEM.equals(itemId)) return "end crystal";
+        if (SUPPORT_ITEM.equals(itemId)) return "obsidian";
+        String name = itemId.startsWith("minecraft:") ? itemId.substring("minecraft:".length()) : itemId;
+        return name.replace('_', ' ');
+    }
+
+    /** Writes the material shortfall once per distinct missing set; never once per tick. */
+    private void reportMissingMaterials() {
+        String report = missingMaterials().isEmpty()
+            ? ""
+            : "missing materials: " + missingMaterialsText();
+        if (report.equals(lastMaterialReport)) return;
+        lastMaterialReport = report;
+        if (!report.isEmpty()) debug(report);
+    }
+
+    /**
+     * Plan-specific start gate: the plan's own power item and every shared material must still be in the
+     * hotbar. Logs one change-triggered line naming the shortfall; never reserves, leases or sends.
+     */
+    private boolean planMaterialsPresent(PistonPlanner.Plan plan) {
+        List<String> missing = missingPlanMaterials(plan);
+        String report = missing.isEmpty()
+            ? ""
+            : "plan-missing-materials: " + materialText(missing)
+                + " power=" + plan.push().powerKind();
+        if (!report.equals(lastPlanMaterialReport)) {
+            lastPlanMaterialReport = report;
+            if (!report.isEmpty()) debug(report);
+        }
+        return missing.isEmpty();
     }
 
     public boolean spawnRejected() {
@@ -584,6 +715,12 @@ public final class PistonTrapController {
 
     private void scan(int serverTick, TickBudget budget) {
         if (!reconciled || !session.isOpen()) return;
+        reportMissingMaterials();
+        if (!missingMaterials().isEmpty()) {
+            // Drop a preview taken before the hotbar changed: never begin a trap that cannot be built.
+            preview = null;
+            return;
+        }
         PistonPlanner.Plan plan = preview;
         preview = null;
         if (plan == null) {
@@ -596,6 +733,10 @@ public final class PistonTrapController {
     }
 
     private boolean beginPlan(PistonPlanner.Plan plan, int serverTick) {
+        reportMissingMaterials();
+        if (!missingMaterials().isEmpty()) return false;
+        // Module-wide materials present is not enough: this exact plan needs its own power item.
+        if (!planMaterialsPresent(plan)) return false;
         PistonSequence candidate = new PistonSequence(plan, PistonSequence.Config.defaults());
         if (!slot.begin(candidate, serverTick)) return false;
         sequence = candidate;

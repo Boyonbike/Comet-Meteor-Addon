@@ -40,6 +40,12 @@ public final class PistonPlanner {
     public static final int STATIONARY_TICKS = 10;
     /** Intent lifetime, matching the direct planner's reserve-to-send window. */
     public static final int INTENT_LIFETIME_TICKS = 20;
+    /** Item required for the piston itself. */
+    public static final String PISTON_ITEM = "minecraft:piston";
+    /** Item required for the source crystal. */
+    public static final String CRYSTAL_ITEM = DirectPlanner.END_CRYSTAL;
+    /** Item required to place a support or a missing crystal base (matches the crystal base block). */
+    public static final String SUPPORT_ITEM = DirectPlanner.OBSIDIAN;
 
     public enum Reject {
         NONE,
@@ -54,6 +60,8 @@ public final class PistonPlanner {
         DAMAGE_TOO_LOW,
         MOTION_UNKNOWN,
         UNSUPPORTED,
+        /** A required material is absent from the hotbar; no plan is offered and nothing is reserved. */
+        MISSING_MATERIALS,
         /** The tester layout filter disabled every combination; the PistonOnly mode stays inert. */
         LAYOUT_DISABLED
     }
@@ -225,6 +233,13 @@ public final class PistonPlanner {
     public interface World extends PistonGeometry.World {
         EntityKey self();
 
+        /**
+         * Whether the player's hotbar (slots 0-8 only, never the offhand) holds at least one of
+         * {@code itemId}. Implementations are explicit: a silent default would let a test fake satisfy
+         * the material gate without modelling an inventory.
+         */
+        boolean hasItem(String itemId);
+
         Vec position(EntityKey entity);
 
         double speed(EntityKey entity);
@@ -345,16 +360,33 @@ public final class PistonPlanner {
         return selection;
     }
 
-    /** One bounded pass over eligible targets and their eight measured layouts. */
+    /**
+     * One bounded pass over eligible targets and their eight measured layouts.
+     *
+     * <p>A completed pass that found no plan is not terminal: the target may become stationary or enter a
+     * hole on a later tick, so the next call starts a fresh pass over the live target list with the same
+     * bounded budget. A completed pass that found a plan stays sticky until {@link #reset()} so a Hybrid
+     * preview survives from the offer tick until the engine selects it.</p>
+     */
     public Result tick(World world, List<EntityKey> targets, int workBudget) {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(targets, "targets");
         if (!scanning) resetScan(world, targets);
-        if (complete) return result();
         if (selection.empty()) {
             // Disabling every beta layout leaves the mode inert: no plan, no fallback layout set.
             reset();
             return new Result(Optional.empty(), 0, 0, true, Reject.LAYOUT_DISABLED);
+        }
+        if (!hasRequiredMaterials(world)) {
+            // No plan may be offered, let alone reserved, for a trap the hotbar cannot build.
+            lastReject = Reject.MISSING_MATERIALS;
+            return new Result(Optional.empty(), 0, 0, true, Reject.MISSING_MATERIALS);
+        }
+        if (complete) {
+            if (best != null) return result();
+            // Restart an exhausted empty pass here so the caller's remaining budget is spent on live
+            // targets in this same call instead of replaying the cached empty result forever.
+            resetScan(world, targets);
         }
         int remaining = Math.min(workBudget, candidateCap);
         if (remaining <= 0) return new Result(Optional.empty(), evaluated, rejected, false, lastReject);
@@ -417,6 +449,21 @@ public final class PistonPlanner {
             evaluated, rejected, complete, lastReject);
     }
 
+    /**
+     * Fixed materials every trap needs, plus at least one power item for the enabled layouts. The gate is
+     * conservative: supports already present in the hole still require obsidian, so a plan never depends on
+     * a material the hotbar cannot guarantee.
+     */
+    private boolean hasRequiredMaterials(World world) {
+        if (!world.hasItem(PISTON_ITEM) || !world.hasItem(CRYSTAL_ITEM) || !world.hasItem(SUPPORT_ITEM)) {
+            return false;
+        }
+        for (PistonLayoutSelection.Combination combination : selection.enabledCombinations()) {
+            if (world.hasItem(combination.kind().itemId())) return true;
+        }
+        return false;
+    }
+
     // ------------------------------------------------------------------ eligibility
 
     private Reject eligible(World world, EntityKey target) {
@@ -465,6 +512,13 @@ public final class PistonPlanner {
 
     private void evaluate(World world, EntityKey target, PistonGeometry.Layout layout,
                           PistonGeometry.PowerKind kind) {
+        if (!world.hasItem(kind.itemId())) {
+            // A layout that needs the other power item is enumerable but cannot be dispatched from this
+            // hotbar; reject it instead of ranking a trap that would fail at the PLACE_POWER stage.
+            rejected++;
+            noteReject(Reject.MISSING_MATERIALS);
+            return;
+        }
         Cell anchor = cellOf(world.position(target));
         // The crystal is pushed INTO the target cell: the source is one cell behind it. For the eye-height
         // layout the final cell is the target's head cell and the source sits at head height too.

@@ -670,6 +670,306 @@ final class PistonTrapControllerTest {
     }
 
     @Test
+    void everyMissingTrapMaterialSuppressesThePlanWithoutReservingOrSending() {
+        for (String itemId : List.of(PistonTrapController.PISTON_ITEM,
+                PistonTrapController.CRYSTAL_ITEM, PistonTrapController.SUPPORT_ITEM,
+                PistonGeometry.PowerKind.REDSTONE_TORCH.itemId())) {
+            Harness harness = new Harness();
+            try {
+                harness.removeMaterial(itemId);
+                harness.tick(1);
+                harness.tick(2);
+                assertTrue(harness.controller.activeTrap().isEmpty(), itemId);
+                assertEquals(0, harness.fixture.sink.attempts, itemId);
+                assertEquals(0, harness.fixture.scheduler.leaseCount(), itemId);
+                assertTrue(harness.debug.stream().anyMatch(line -> line.contains("missing materials")),
+                    itemId + " " + harness.debug);
+            } finally {
+                harness.controller.disable();
+            }
+        }
+    }
+
+    @Test
+    void blockOnlyLayoutWithoutTheBlockMaterialSuppressesThePlan() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setLayouts(PistonLayoutSelection.of(List.of(
+                PistonLayoutSelection.byId("east-feet-redstone").orElseThrow())));
+            harness.tick(1);
+            assertTrue(harness.controller.activeTrap().isEmpty());
+            assertEquals("redstone block", harness.controller.missingMaterialsText());
+            assertEquals(0, harness.fixture.sink.attempts);
+            assertEquals(0, harness.fixture.scheduler.leaseCount());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void missingMaterialsAreVisibleInTheInfoString() {
+        Harness harness = new Harness();
+        CrystalCombatController controller = new CrystalCombatController(() -> null, harness::stack);
+        try {
+            assertTrue(controller.enable());
+            controller.setMode(Mode.PISTON_ONLY);
+            controller.setTrapEnabled(true);
+            controller.setPistonLayouts(PistonLayoutSelection.of(List.of(
+                PistonLayoutSelection.byId("east-feet-torch").orElseThrow())));
+            harness.removeMaterial(PistonTrapController.PISTON_ITEM);
+            harness.removeMaterial(PistonGeometry.PowerKind.REDSTONE_TORCH.itemId());
+
+            controller.tick(1);
+            assertEquals("piston trap: missing materials: piston, redstone torch",
+                controller.waitReason());
+            assertEquals(controller.waitReason(), controller.infoString());
+            // The change-triggered debug line itself is covered by
+            // missingMaterialsAreLoggedOnceNotEveryTick, which taps the trap controller directly.
+        } finally {
+            controller.disable();
+        }
+    }
+
+    @Test
+    void missingMaterialsAreLoggedOnceNotEveryTick() {
+        Harness harness = new Harness();
+        try {
+            harness.removeMaterial(PistonTrapController.PISTON_ITEM);
+            harness.removeMaterial(PistonGeometry.PowerKind.REDSTONE_TORCH.itemId());
+            harness.tick(1);
+            harness.tick(2);
+            harness.tick(3);
+            long lines = harness.debug.stream()
+                .filter(line -> line.contains("missing materials")).count();
+            assertEquals(1, lines, harness.debug.toString());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void materialRemovedBetweenPreviewAndStartPreventsTheReservation() {
+        Harness harness = new Harness();
+        try {
+            assertTrue(harness.controller.previewPlan(1, TickBudget.unlimited()).isPresent());
+            harness.removeMaterial(PistonTrapController.SUPPORT_ITEM);
+            assertFalse(harness.controller.startPreviewed(1));
+            assertTrue(harness.controller.activeTrap().isEmpty());
+            assertEquals(0, harness.fixture.sink.attempts);
+            assertEquals(0, harness.fixture.scheduler.leaseCount());
+            assertTrue(harness.controller.missingMaterials().contains(PistonTrapController.SUPPORT_ITEM));
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void removingThePreviewedPlansOwnPowerItemPreventsTheReservation() {
+        Harness harness = new Harness();
+        try {
+            assertTrue(harness.controller.previewPlan(1, TickBudget.unlimited()).isPresent());
+            // The harness carries only the torch, so the previewed plan needs the torch for PLACE_POWER.
+            assertTrue(harness.controller.missingMaterials().isEmpty());
+            harness.removeMaterial(PistonGeometry.PowerKind.REDSTONE_TORCH.itemId());
+            // A different enabled power kind is present, so the controller-wide check passes...
+            harness.fixture.client.hotbar[4] = PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId();
+            harness.world.items.add(PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId());
+            assertTrue(harness.controller.missingMaterials().isEmpty());
+            // ...but this exact plan cannot be built without the torch and must not begin.
+            boolean started = harness.controller.startPreviewed(1);
+            assertTrue(harness.debug.stream().anyMatch(line -> line.contains("power=REDSTONE_TORCH")),
+                "the previewed plan must be the torch plan: " + harness.debug);
+            assertFalse(started, "the previewed plan needs the removed torch");
+            assertTrue(harness.controller.activeTrap().isEmpty());
+            assertEquals(0, harness.fixture.scheduler.leaseCount());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void allLayoutsPreviewOfATorchPlanCannotStartWhenOnlyTheTorchIsGone() {
+        Harness harness = new Harness();
+        try {
+            // All sixteen layouts are enabled and the harness hotbar holds only the torch power kind.
+            assertTrue(harness.controller.previewPlan(1, TickBudget.unlimited()).isPresent());
+            harness.removeMaterial(PistonGeometry.PowerKind.REDSTONE_TORCH.itemId());
+            harness.addMaterial(PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId());
+            // Module-wide view: at least one enabled layout's power item is present again.
+            assertTrue(harness.controller.missingMaterials().isEmpty());
+
+            assertFalse(harness.controller.startPreviewed(1),
+                "the exact previewed plan lost the torch it needs for PLACE_POWER");
+            assertTrue(harness.controller.activeTrap().isEmpty());
+            assertEquals(0, harness.fixture.sink.attempts);
+            assertEquals(0, harness.fixture.scheduler.leaseCount());
+            assertTrue(harness.debug.stream().anyMatch(
+                line -> line.contains("plan-missing-materials") && line.contains("power=REDSTONE_TORCH")),
+                "the refusal must name the plan and its missing power item: " + harness.debug);
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void redstoneBlockPlanStillStartsWhenOnlyTheTorchIsGone() {
+        Harness harness = new Harness();
+        try {
+            harness.removeMaterial(PistonGeometry.PowerKind.REDSTONE_TORCH.itemId());
+            harness.addMaterial(PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId());
+            assertTrue(harness.controller.missingMaterials().isEmpty());
+
+            // The bounded planner scan sees the eight torch candidates first (now rejected as missing),
+            // so the redstone-block plan needs a second planning pass before it can be previewed.
+            assertTrue(harness.controller.previewPlan(1, TickBudget.unlimited()).isEmpty());
+            assertTrue(harness.controller.previewPlan(2, TickBudget.unlimited()).isPresent());
+            assertTrue(harness.controller.startPreviewed(2),
+                "a redstone-block plan is buildable in this hotbar and must not be blocked");
+            assertEquals(PistonGeometry.PowerKind.REDSTONE_BLOCK,
+                harness.controller.activeTrap().orElseThrow().plan().push().powerKind());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    /**
+     * The Hybrid path samples the world before planning. The planner world only learns the live hotbar
+     * when that sample refreshes the snapshot, so a restock the snapshot has not read yet must still be
+     * visible to the same planning tick.
+     */
+    @Test
+    void previewPlanRefreshesThePlannerWorldBeforePlanning() {
+        Harness harness = new Harness();
+        try {
+            harness.world.modelSnapshotRefresh();
+            harness.removeMaterial(PistonGeometry.PowerKind.REDSTONE_TORCH.itemId());
+            assertFalse(harness.controller.previewPlan(1, TickBudget.unlimited()).isPresent(),
+                "no enabled layout has its power item in the planner snapshot");
+
+            // Restock the live hotbar only: the planner snapshot is stale until the sample refreshes it.
+            harness.stageOnlyMaterial(PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId());
+            assertFalse(harness.world.hasItem(PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId()),
+                "the planner snapshot must not see the restock before the sample");
+
+            // The first refreshed pass proves the snapshot sees the restock but only walks the eight
+            // now-missing torch candidates; the next pass reaches the redstone-block candidates.
+            assertTrue(harness.controller.previewPlan(2, TickBudget.unlimited()).isEmpty());
+            assertTrue(harness.world.hasItem(PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId()),
+                "previewPlan must sample the planner world before planning");
+            assertTrue(harness.controller.previewPlan(3, TickBudget.unlimited()).isPresent());
+            assertTrue(harness.controller.startPreviewed(3));
+            assertEquals(PistonGeometry.PowerKind.REDSTONE_BLOCK,
+                harness.controller.activeTrap().orElseThrow().plan().push().powerKind());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    /**
+     * Regression for the fresh-Hybrid deadlock: the trap's stationary trackers only move when the world
+     * is sampled, and a fresh session has never ticked the trap, so previews must take the sample.
+     */
+    @Test
+    void hybridPreviewSamplesTheWorldUntilTheTargetIsStationary() {
+        Harness harness = new Harness();
+        try {
+            harness.world.stationaryFromSamples = true;
+            harness.world.sampledTicks = 0;
+
+            for (int tick = 1; tick < PistonPlanner.STATIONARY_TICKS; tick++) {
+                assertTrue(harness.controller.previewPlan(tick, TickBudget.unlimited()).isEmpty(),
+                    "no plan may be offered after only " + tick + " sampled stationary tick(s)");
+            }
+            assertEquals(PistonPlanner.STATIONARY_TICKS - 1, harness.world.sampledTicks,
+                "every preview must take one world sample");
+
+            assertTrue(harness.controller.previewPlan(PistonPlanner.STATIONARY_TICKS,
+                TickBudget.unlimited()).isPresent(),
+                "ten sampled stationary ticks must make the fresh target eligible");
+            assertEquals(PistonPlanner.STATIONARY_TICKS, harness.world.sampledTicks);
+
+            // A preview is read-only apart from the sample: it never scans, reserves or sends.
+            assertEquals(0, harness.fixture.sink.attempts);
+            assertEquals(0, harness.fixture.scheduler.leaseCount());
+            assertTrue(harness.controller.activeTrap().isEmpty());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void twoPreviewsInTheSameServerTickSampleTheWorldOnce() {
+        Harness harness = new Harness();
+        try {
+            assertTrue(harness.controller.previewPlan(4, TickBudget.unlimited()).isPresent());
+            assertEquals(1, harness.world.onServerTicks);
+            assertEquals(1, harness.world.refreshCount);
+
+            assertTrue(harness.controller.previewPlan(4, TickBudget.unlimited()).isPresent());
+            assertEquals(1, harness.world.onServerTicks,
+                "a second preview in the same server tick must not resample the world");
+            assertEquals(1, harness.world.refreshCount);
+            assertEquals(1, harness.world.stationaryAdvances);
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void pistonOnlyTrapResumesScanningAfterAnExhaustedEmptyPass() {
+        Harness harness = new Harness();
+        CrystalCombatController controller = new CrystalCombatController(() -> null, harness::stack);
+        try {
+            assertTrue(controller.enable());
+            controller.setMode(Mode.PISTON_ONLY);
+            controller.setTrapEnabled(true);
+            harness.world.stationaryTicks = 0;
+
+            controller.tick(1); // full empty pass: the target is not stationary yet
+            assertTrue(harness.controller.activeTrap().isEmpty());
+            controller.tick(2); // still not stationary: the pass must restart instead of replaying
+            assertTrue(harness.controller.activeTrap().isEmpty());
+
+            harness.world.stationaryTicks = 10; // the target has now been still for long enough
+            controller.tick(3);
+            assertTrue(harness.controller.activeTrap().isPresent(),
+                "an exhausted empty pass must restart so the trap can start");
+            PistonPlanner.Plan plan = harness.plan();
+            assertEquals(harness.world.target, plan.target());
+            assertTrue(harness.world.hasItem(plan.push().powerKind().itemId()),
+                "the started plan must pass the material gate");
+        } finally {
+            controller.disable();
+        }
+    }
+
+    @Test
+    void oneTickThatPreviewsAndStartsAdvancesTheStationaryCounterOnce() {
+        Harness harness = new Harness();
+        try {
+            assertTrue(harness.controller.previewPlan(1, TickBudget.unlimited()).isPresent());
+            assertEquals(1, harness.world.refreshCount, "preview samples the world exactly once");
+            assertEquals(1, harness.world.onServerTicks);
+            assertEquals(1, harness.world.stationaryAdvances);
+            assertTrue(harness.controller.startPreviewed(1));
+            assertEquals(1, harness.world.stationaryAdvances,
+                "selecting/beginning a plan must not advance the motion counters again");
+            assertEquals(1, harness.world.onServerTicks);
+
+            // The same Hybrid tick then ticks the now-active trap; the per-tick dedupe keeps it at one
+            // sample, so the preview and the trap tick cannot double-count the same server tick.
+            harness.tick(1);
+            assertEquals(1, harness.world.onServerTicks,
+                "the trap tick must not sample the same server tick twice");
+            assertEquals(1, harness.world.stationaryAdvances, "never double-counted");
+            assertEquals(1, harness.world.refreshCount,
+                "one world sample for the preview and the same tick's trap tick");
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
     void cleanupKeepsAlreadySentRiskAsDebt() {
         Harness harness = new Harness();
         CrystalCombatController controller = new CrystalCombatController(() -> null, harness::stack);
@@ -922,6 +1222,35 @@ final class PistonTrapControllerTest {
             controller.tick(serverTick, TickBudget.unlimited());
         }
 
+        /** Removes a material from both the client hotbar and the planner's world view. */
+        void removeMaterial(String itemId) {
+            for (int slot = 0; slot < fixture.client.hotbar.length; slot++) {
+                if (itemId.equals(fixture.client.hotbar[slot])) fixture.client.hotbar[slot] = "";
+            }
+            world.items.remove(itemId);
+            world.stagedItems.remove(itemId);
+        }
+
+        /** Adds a material to the live hotbar and to the planner's world view. */
+        void addMaterial(String itemId) {
+            fixture.client.hotbar[freeHotbarSlot()] = itemId;
+            world.items.add(itemId);
+        }
+
+        /** Adds a material to the live hotbar only; the planner sees it after the next refresh. */
+        void stageOnlyMaterial(String itemId) {
+            fixture.client.hotbar[freeHotbarSlot()] = itemId;
+            world.stageMaterial(itemId);
+        }
+
+        private int freeHotbarSlot() {
+            for (int slot = 0; slot < fixture.client.hotbar.length; slot++) {
+                String item = fixture.client.hotbar[slot];
+                if (item == null || item.isEmpty()) return slot;
+            }
+            throw new AssertionError("no free hotbar slot");
+        }
+
         /** Runs through piston + crystal + power dispatch and one binding spawn, ending in WAIT_PUSH. */
         void advanceToWaitPush() {
             tick(1); // scan -> supports
@@ -988,6 +1317,20 @@ final class PistonTrapControllerTest {
         long planId = 7L;
         int currentTick = 100;
         boolean targetAlive = true;
+        final Set<String> items = new HashSet<>(List.of(PistonTrapController.PISTON_ITEM,
+            PistonTrapController.CRYSTAL_ITEM, PistonTrapController.SUPPORT_ITEM,
+            PistonGeometry.PowerKind.REDSTONE_TORCH.itemId()));
+        /** When set, only {@link #refresh(int)} copies these staged items into {@link #items}. */
+        final Set<String> stagedItems = new HashSet<>();
+        boolean snapshotFromStaged;
+        /** When set, {@link #stationaryTicks(EntityKey)} reports the sampled ticks, not the fixed field. */
+        boolean stationaryFromSamples;
+        int sampledTicks;
+        int refreshCount;
+        int onServerTicks;
+        int stationaryAdvances;
+        int lastRefreshTick = -1;
+        int lastSampleTick = Integer.MIN_VALUE;
 
         PistonWorld(ConnectionKey conn, EntityKey self, EntityKey target, UUID targetUuid) {
             this.self = self;
@@ -1028,6 +1371,43 @@ final class PistonTrapControllerTest {
         @Override
         public EntityKey self() {
             return self;
+        }
+
+        /** Models production: the planner-visible items only change when {@link #refresh(int)} runs. */
+        void modelSnapshotRefresh() {
+            snapshotFromStaged = true;
+            stagedItems.clear();
+            stagedItems.addAll(items);
+        }
+
+        void stageMaterial(String itemId) {
+            stagedItems.add(itemId);
+        }
+
+        @Override
+        public void refresh(int serverTick) {
+            refreshCount++;
+            lastRefreshTick = serverTick;
+            if (snapshotFromStaged) {
+                items.clear();
+                items.addAll(stagedItems);
+            }
+        }
+
+        @Override
+        public void onServerTick(int serverTick) {
+            // Models production: a preview and a trap tick for the same server tick sample it once.
+            if (serverTick == lastSampleTick) return;
+            lastSampleTick = serverTick;
+            refresh(serverTick);
+            onServerTicks++;
+            stationaryAdvances++;
+            sampledTicks++;
+        }
+
+        @Override
+        public boolean hasItem(String itemId) {
+            return itemId != null && items.contains(itemId);
         }
 
         @Override
@@ -1109,7 +1489,7 @@ final class PistonTrapControllerTest {
 
         @Override
         public int stationaryTicks(EntityKey entity) {
-            return stationaryTicks;
+            return stationaryFromSamples ? sampledTicks : stationaryTicks;
         }
 
         @Override
