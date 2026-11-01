@@ -5,9 +5,32 @@ plugins {
 val archivesBaseName = providers.gradleProperty("archives_base_name").get()
 val mavenGroup = providers.gradleProperty("maven_group").get()
 
+// Tester builds are opt-in: normal `./gradlew build` keeps the release version. Passing
+// `-PtesterSuffix=tester.1` appends the suffix to the build version (and therefore to the JAR,
+// source archive and embedded build stamp) without touching any dependency version.
+val testerSuffix = providers.gradleProperty("testerSuffix").orNull?.trim().orEmpty()
+if (testerSuffix.isNotEmpty() && !testerSuffix.matches(Regex("[A-Za-z0-9._-]+"))) {
+    throw GradleException("testerSuffix may only contain letters, digits, dots, dashes and underscores")
+}
+val buildVersion = libs.versions.mod.version.get() +
+    if (testerSuffix.isEmpty()) "" else "-$testerSuffix"
+
+fun gitOutput(vararg args: String): String = try {
+    providers.exec {
+        commandLine("git", *args)
+        workingDir = projectDir
+    }.standardOutput.asText.get().trim()
+} catch (_: Exception) {
+    ""
+}
+
+val gitCommit = gitOutput("rev-parse", "--short", "HEAD").ifEmpty { "unknown" }
+val gitDirty = gitOutput("status", "--porcelain").isNotEmpty()
+val gitCommitLabel = if (gitDirty) "$gitCommit-dirty" else gitCommit
+
 base {
     archivesName = archivesBaseName
-    version = libs.versions.mod.version.get()
+    version = buildVersion
     group = mavenGroup
 }
 
@@ -83,6 +106,10 @@ tasks {
             "minecraft_version" to toMinecraftCompat(libs.versions.minecraft.get()),
             "jdk_version" to libs.versions.jdk.get(),
             "meteor_build" to libs.versions.meteor.get(),
+            "build_version" to buildVersion,
+            "git_commit" to gitCommitLabel,
+            "git_dirty" to gitDirty.toString(),
+            "tester_suffix" to testerSuffix,
         )
 
         inputs.properties(propertyMap)
@@ -90,10 +117,29 @@ tasks {
             expand(propertyMap)
         }
         filesMatching("comet-scaffold-build.properties") { expand(propertyMap) }
+        filesMatching("comet-build.properties") { expand(propertyMap) }
     }
 
     jar {
         inputs.property("archivesName", archivesBaseName)
+
+        // Tester builds are self-describing even when the file is renamed: the manifest carries the
+        // exact build version, the short HEAD (marked -dirty for an unclean tree) and the tester marker.
+        manifest {
+            attributes(
+                mapOf(
+                    "Implementation-Title" to archivesBaseName,
+                    "Implementation-Version" to buildVersion,
+                    "Implementation-Vendor" to "Boyonabike",
+                    "Comet-Version" to buildVersion,
+                    "Comet-Git-Commit" to gitCommitLabel,
+                    "Comet-Minecraft-Version" to libs.versions.minecraft.get(),
+                    "Comet-Meteor-Build" to libs.versions.meteor.get(),
+                    "Comet-Tester-Build" to testerSuffix.isNotEmpty(),
+                    "Comet-Tester-Suffix" to testerSuffix,
+                )
+            )
+        }
 
         from("LICENSE")
         from("LICENSE-CC0")

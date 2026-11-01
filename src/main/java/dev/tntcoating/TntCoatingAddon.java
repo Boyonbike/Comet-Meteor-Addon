@@ -1,9 +1,14 @@
 package dev.tntcoating;
 
 import dev.tntcoating.compat.MeteorUpgrades;
+import dev.tntcoating.commands.CombatExportCommand;
+import dev.tntcoating.commands.CombatRecorderCommand;
 import dev.tntcoating.core.InventorySlotLoan;
+import dev.tntcoating.core.tester.BuildInfo;
 import dev.tntcoating.core.scaffold.ScaffoldCoordinator;
 import dev.tntcoating.modules.CometScaffold;
+import dev.tntcoating.modules.CombatRecorderModule;
+import dev.tntcoating.modules.CrystalCombat;
 import dev.tntcoating.core.InventoryWeaponAttack;
 import dev.tntcoating.modules.AdaptiveElytraFly;
 import dev.tntcoating.modules.HighwayFly;
@@ -43,6 +48,7 @@ import java.util.List;
 import java.util.Map;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
+import meteordevelopment.meteorclient.commands.Commands;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
@@ -60,6 +66,12 @@ public final class TntCoatingAddon extends MeteorAddon {
     public static final Category CATEGORY = new Category("Comet", () -> Items.TNT.getDefaultInstance());
 
     private static List<Module> orderedModules = List.of();
+    private static final BuildInfo BUILD_INFO = BuildInfo.load();
+
+    /** Build stamp (version, commit, tester suffix) shared by the module info string and the exporter. */
+    public static BuildInfo buildInfo() {
+        return BUILD_INFO;
+    }
 
     @Override
     public void onRegisterCategories() {
@@ -109,6 +121,8 @@ public final class TntCoatingAddon extends MeteorAddon {
         ordered.add(new SafeFastUse());
         ordered.add(new AntiSpawnSet());
         // Combat and inventory.
+        ordered.add(new CombatRecorderModule());
+        ordered.add(new CrystalCombat());
         upgraded(ordered, modules.get(AutoTool.class), "AutoToolMixin");
         upgraded(ordered, modules.get(AutoWeapon.class), "AutoWeaponMixin");
         upgraded(ordered, modules.get(InventoryTweaks.class), "InventoryTweaksMixin");
@@ -124,6 +138,8 @@ public final class TntCoatingAddon extends MeteorAddon {
                 modules.getGroup(CATEGORY).add(module);
             }
         });
+        Commands.add(new CombatRecorderCommand());
+        Commands.add(new CombatExportCommand());
         ScaffoldCoordinator.initialize();
         Map<String, String> skipped = MeteorUpgrades.disabled();
         if (!skipped.isEmpty()) {
