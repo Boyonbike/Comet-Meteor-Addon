@@ -1,0 +1,21 @@
+{
+  "required": true,
+  "package": "dev.tntcoating.gametest.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "ConnectionAccessor",
+    "MinecraftServerMixin",
+    "LivingEntityMixin",
+    "ServerPlayerMixin",
+    "ServerExplosionMixin",
+    "LevelMixin",
+    "PistonMovingBlockEntityMixin",
+    "ServerGamePacketListenerImplMixin",
+    "PlayerMixin",
+    "ServerLevelMixin",
+    "EndCrystalMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

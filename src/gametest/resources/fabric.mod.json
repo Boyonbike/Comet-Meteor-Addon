@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "comet-gametest",
+  "version": "1.0.0",
+  "name": "Comet Combat Harness",
+  "description": "Test-only scripted client/server harness for CrystalCombat Phase 0.4/0.5.",
+  "environment": "*",
+  "license": "CC0-1.0",
+  "entrypoints": {
+    "preLaunch": [
+      "dev.tntcoating.gametest.HarnessPreLaunch"
+    ],
+    "fabric-client-gametest": [
+      "dev.tntcoating.gametest.CombatHarness"
+    ]
+  },
+  "depends": {
+    "java": ">=25",
+    "minecraft": "~26.2",
+    "fabricloader": ">=0.19.3",
+    "fabric-client-gametest-api-v1": "*",
+    "comet": "*"
+  },
+  "mixins": [
+    "comet-gametest.mixins.json"
+  ]
+}
