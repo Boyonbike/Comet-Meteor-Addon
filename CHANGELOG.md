@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.27.0-tester.3 — 2026-11-01 (Minecraft 26.1.2)
+
+- **CrystalCombat ported to Minecraft 26.1.2:** the audited crystal-aura and piston-crystal combat module from the 26.2 tree now runs on Minecraft 26.1.2, Java 25 and Meteor Client **26.1.2-20260810.135545-42** (build 42). The pure `core/combat` core and its traces are carried over; the Minecraft/Meteor adapters, observation hooks, damage and inventory adapters, world readers, piston trap and HUD render were re-implemented from the [26.1.2 combat API audit](docs/superpowers/audit/2026-11-01-combat-api-26.1.2.md), not copied from 26.2.
+- **Meteor CrystalAura suppression:** every audited send path is guarded, both delayed `Rotations.rotate` callbacks are wrapped in a generation-checked `CrystalCombatGate.guard`, and ledger-protected crystals are refused even while CrystalCombat is disabled. `CombatCapabilities` verifies each critical mixin, injection point, redirect and metadata accessor from bytecode before activation; a missing hook refuses activation and leaves Meteor's CrystalAura working.
+- **Unavailable on 26.1.2:** `motion-prediction` and `hurt-sync` remain visible but are marked **not available on Minecraft 26.1.2** and refuse activation, because the audit records the stronger-hit knockback/motion behaviour as unconfirmed on this branch (audit §6.2). Every other setting, default and risk-model option matches the 26.2 build.
+- **Module, recorder and tester tooling:** `CrystalCombat` and `combat-recorder` are registered under the Comet category, with `.crystalcombat` and `combat-recorder` commands, settings migration, the debug export with hashing, and the opt-in `-PtesterSuffix=tester.3` build stamp (version, short commit, tester marker in the manifest and `comet-build.properties`).
+- **Verification:** the pure core purity guard is wired into `check`, the copied core tests pass, and the new adapter/suppression/module/tester suites pass. No Minecraft client or server was launched to validate this build; the live checks in the [tester checklist](docs/testers/checklist.md) remain tester items.
+
 ## 0.27.0 — 2026-10-28
 
 - **Discord IGN sync relay:** players no longer paste a Discord bot token, server ID or channel ID. The module reads through one public **relay URL** (new **relay-url** setting), a Cloudflare Worker that alone holds the bot token and forwards only the four read-only sync requests; its code ships in `relay/worker.js`. Chat Tools' Discord connection is now a single **Clan relay URL** field. Saved **bot-token**, **guild-id** and **ign-channel-id** values are no longer used, and saved role data is hidden until the first relay sync rewrites it.
