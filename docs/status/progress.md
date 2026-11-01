@@ -7,7 +7,7 @@ Repository: `~/Desktop/Comet Metior Addon/26.2` (branch `26.2`, common git dir `
 | --- | --- | --- | --- | --- | --- |
 | 1 Secure the work | DONE | 2026-11-01 | see below | 2620 / 276 suites, 0 failures | orchestrator spot-check |
 | 2 Plan and docs match reality | DONE | 2026-11-01 | `01d0e75` | 2620 / 276 suites, 0 failures | PASS after 1 fix round |
-| 3 Phase 6 gaps | | | | | |
+| 3 Phase 6 gaps | DONE | 2026-11-01 | `b7bec51` | 2645 / 276 suites, 0 failures | PASS after 2 fix rounds |
 | 4 Phase 5 test gaps + auto-cleanup | | | | | |
 | 5 Phase 8 UI and lifecycle | | | | | |
 | 6 risk-model setting | | | | | |
@@ -59,3 +59,23 @@ Carried-forward non-blocking issues:
 - CHANGELOG.md:6 keeps the historical "HYBRID is still refused" clause before its supersede note (intentional history).
 
 Deferred to later stages (boxes now unticked with DEFERRED notes): plan:1027 fixture-replay happy path and plan:1029 swept intermediate-frame bound → Stage 4; plan:1034 every-phase disable/death loop → Stage 5; plan:1045 unsupported-layouts list → Stage 4. Still unticked for their own stages: plan:1027 vertical push out of the hole (→ Stage 4), plan:1028 ID reuse across connections (→ Stage 4), plan:1086/1088 direct-wins-on-surrounded-target and missing piston materials (→ Stage 3).
+
+## Stage 3 — Phase 6 gaps — DONE (2026-11-01)
+
+Commit `b7bec51` (10 files: `PistonPlanner`, `PistonTrapController`, `PistonTrapWorld`, `CrystalCombatController`, four test suites, module doc, plan). Tests: **2645 tests, 276 suites, 0 failures, 0 errors, 0 skipped** (`./gradlew cleanTest test --no-build-cache`, newest result 2026-11-01T11:22:58Z). `python3 scripts/check_docs.py` PASS.
+
+Delivered:
+- **Missing piston materials (6.1 gap):** `PistonPlanner.World.hasItem(String)` plus planner gate `hasRequiredMaterials` (piston, end crystal, obsidian, at least one enabled layout's power item) before any candidate work; `Reject.MISSING_MATERIALS`; per-candidate rejection when that candidate's own power kind is absent. `PistonTrapController.missingMaterials()` / `missingMaterialsText()` gate `previewPlan`, `scan` and `beginPlan`; `missingPlanMaterials(plan)` re-checks the previewed plan's own power item before `new PistonSequence`/`slot.begin`, so a plan that lost its power never reserves. `CrystalCombatController.waitReason()` surfaces `piston trap: missing materials: …`; the debug log records each distinct missing set once per change.
+- **Direct wins when better (6.1 gap):** `CombatChoiceTest.higherUtilityDirectFaceplaceWinsOverASurroundedTrapCandidate` (trap utility 4.2 vs direct 8.0) and `HybridEngineTest.surroundedTargetWhereDirectFaceplaceRanksHigherChoosesDirect` (Hybrid picks DIRECT, `trapSelected` false, direct placement sent). A committed/live trap still serialises; only an uncommitted preview loses.
+- **Cleanup starvation:** documented as an accepted gap (module doc + plan:1101-1103) with the synthetic tests retained.
+- **Two latent defects found by the orchestrator while re-checking the fix (both from `7487801`), fixed here:**
+  1. Hybrid preview starvation: stationary counters advanced only in `tickInternal`, but the trap is only ticked when selected/active, so a fresh Hybrid session could never preview a trap. `previewPlan` now takes one observational sample per server tick (`world.onServerTick`) and `PistonTrapWorld.onServerTick` dedupes per tick; preview still never scans, starts, reserves, leases or sends.
+  2. Planner never rescanned: a completed empty pass was sticky forever (`reset()` only on reconcile), starving PistonOnly and Hybrid. `PistonPlanner.tick` now restarts only an exhausted empty pass within the caller's remaining budget; a completed pass that found a plan stays sticky so a Hybrid preview survives until selection.
+
+Review: first reviewer failed two blockers (plan-own power item not re-checked; stale trap world snapshot in Hybrid preview); a fix round closed both with tests. A fresh read-only reviewer then reviewed the complete diff and returned **PASS** after verifying 2645 tests and `check_docs`. Non-blocking carried forward:
+- The engine "surrounded faceplace" test seals a tube around TARGET but offers a trap for a different unbound entity and the direct plan is an ordinary base placement — real for ranking, overstated for the scenario.
+- Plan-own-power shortfall is debug-only: after swapping torch→block, `previewPlan` returns empty and `waitReason` falls through to "hybrid: idle" until `reconcile()`; the sticky planner cannot re-plan an available alternative layout.
+- Production `PistonTrapWorld.onServerTick` dedupe/refresh has no direct unit test (fakes cover the controller seam).
+- Planner material-gate `Result(..., complete=true, MISSING_MATERIALS)` can report complete while internal scan state is untouched (diagnostic inconsistency).
+- `lastSampleTick` is not reset on reconcile/reconnect — one-tick stale sample if a new session's tick equals the previous one.
+- Pre-existing: a sticky completed plan survives `setLayouts`, so a plan for a now-disabled layout can still be previewed/started until reconcile.
