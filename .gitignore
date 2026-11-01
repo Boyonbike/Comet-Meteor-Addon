@@ -17,3 +17,6 @@ Thumbs.db
 # Python documentation checks
 __pycache__/
 *.pyc
+
+# Local Claude Code session transcript
+/1.txt
