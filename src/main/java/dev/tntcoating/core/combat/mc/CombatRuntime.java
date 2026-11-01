@@ -25,6 +25,7 @@ import dev.tntcoating.core.combat.ObservationKind;
 import dev.tntcoating.core.combat.ObservationPayload;
 import dev.tntcoating.core.combat.PistonFacing;
 import dev.tntcoating.core.combat.RiskId;
+import dev.tntcoating.core.combat.RiskModel;
 import dev.tntcoating.core.combat.Safety;
 import dev.tntcoating.core.combat.SafetyState;
 import dev.tntcoating.core.combat.Snapshot;
@@ -65,6 +66,15 @@ import net.minecraft.world.phys.Vec3;
 public final class CombatRuntime implements AutoCloseable {
     private static final String END_CRYSTAL_ID = "minecraft:end_crystal";
     private static final int MAX_TRACES = 32;
+    /**
+     * Packet-only plan/intent pair used by the BARRIER probe. These ids never reach the planner, never own
+     * a cell, entity or slot, and never create risk, debt or a hazard: the lease exists only long enough to
+     * book one packet and hand one prediction-sequenced action to the sink.
+     */
+    private static final long BARRIER_PROBE_PLAN = Long.MIN_VALUE + 1;
+    private static final long BARRIER_PROBE_INTENT = Long.MIN_VALUE + 2;
+    /** Highest air cell above the eye the probe searches for its inert position. */
+    private static final int BARRIER_PROBE_MAX_RISE = 4;
 
     public enum Status {
         SENT,
@@ -286,6 +296,12 @@ public final class CombatRuntime implements AutoCloseable {
     private final Deque<DispatchTrace> traces = new ArrayDeque<>();
     private int lastTickedTick = -1;
     private int lastServerTick = -1;
+    /**
+     * Whether the owning module is currently enabled. The BARRIER probe is armed only between
+     * {@link #onEnabled()} and {@link #onDisabled()}; every other lifecycle boundary either closes the
+     * session or clears the probe evidence in the budget, so a late due check can never send.
+     */
+    private boolean enabled;
     private int tickCount;
     private boolean closed;
     /**
@@ -405,7 +421,7 @@ public final class CombatRuntime implements AutoCloseable {
         }
         PlanKey key = PlanKey.of(intent);
         PlanContext context = contexts.get(key);
-        if (context == null) {
+        if (context == null && intent.strategy() != Strategy.PROBE) {
             scheduler.releaseIntent(intent.plan(), intent.id());
             return new DispatchResult(Status.FAILED, Reason.NO_PLAN, trace);
         }
@@ -433,6 +449,12 @@ public final class CombatRuntime implements AutoCloseable {
         if (!scheduler.reacquirePackets(intent.plan(), intent.id(), lastServerTick)) {
             forget(key);
             return new DispatchResult(Status.BLOCKED, Reason.PACKET_BUDGET, trace);
+        }
+        if (intent.strategy() == Strategy.PROBE) {
+            // The barrier probe is the one dispatch that has no planner context, no target and no risk
+            // lease. It never reuses the damage policy, because it touches no block, entity or item; it
+            // only needs a real prediction sequence and the server's sequence acknowledgement.
+            return dispatchProbe(intent, trace);
         }
 
         boolean attack = intent.action() == Action.ATTACK_CRYSTAL;
@@ -652,6 +674,51 @@ public final class CombatRuntime implements AutoCloseable {
         return new DispatchResult(Status.SENT, reason, trace);
     }
 
+    /**
+     * Hands one prediction-sequenced {@code ABORT_DESTROY_BLOCK} to the sink at an inert air cell above the
+     * player, then releases the packet-only lease. The server's abort branch clears its own destroy state,
+     * sends one {@code -1} destruction overlay and always acknowledges the sequence; it never changes a
+     * block, entity, item or hand. A sink refusal, a missing position or a sequence below zero fails the
+     * probe and keeps the debt: no ack is invented and no risk retires here.
+     */
+    private DispatchResult dispatchProbe(Intent intent, DispatchTrace trace) {
+        if (intent.action() != Action.PROBE) {
+            release(intent);
+            return new DispatchResult(Status.FAILED, Reason.UNSUPPORTED_ACTION, trace);
+        }
+        Cell inert = probeCell();
+        if (inert == null) {
+            release(intent);
+            return new DispatchResult(Status.BLOCKED, Reason.NOT_READY, trace);
+        }
+        CombatPacketSink.SendResult probe = sink.probeBlockChange(
+            new BlockPos(inert.x(), inert.y(), inert.z()));
+        trace.record(DispatchTrace.Stage.CAUSATIVE, probe);
+        if (!probe.enqueued() || probe.ackSequence() < 0) {
+            release(intent);
+            return new DispatchResult(Status.FAILED, Reason.CAUSATIVE_NOT_ACCEPTED, trace);
+        }
+        scheduler.sent(intent, lastServerTick, intake.appliedRevision());
+        return new DispatchResult(Status.SENT, Reason.NONE, trace);
+    }
+
+    /**
+     * First air cell in the short column above the player's eye, or null when none is safe. Air is the
+     * server's inert case: an abort there only clears destroy progress, never destroys a block.
+     */
+    private Cell probeCell() {
+        Vec eye = client.eyePosition();
+        if (eye == null) return null;
+        int x = (int) Math.floor(eye.x());
+        int z = (int) Math.floor(eye.z());
+        int baseY = (int) Math.floor(eye.y());
+        for (int rise = 1; rise <= BARRIER_PROBE_MAX_RISE; rise++) {
+            Cell candidate = new Cell(x, baseY + rise, z);
+            if (client.blockId(candidate) == null) return candidate;
+        }
+        return null;
+    }
+
     private static double safetyHealth(SafetyState state) {
         if (state.selfHealth() == null) return 0.0;
         return state.selfHealth().health();
@@ -761,6 +828,45 @@ public final class CombatRuntime implements AutoCloseable {
         budget.spend(TickBudget.Phase.RECONCILIATION);
         scheduler.tick(serverTick);
         risk.tick(serverTick);
+        maybeSendBarrierProbe(serverTick);
+    }
+
+    /**
+     * Sends at most one BARRIER probe per tick, only after the tick's observations were applied and the
+     * budget retired what its evidence allowed. The probe books one packet through the packet-only lease
+     * path (no risk, debt, hazard, slot, cell or entity), so it can never displace the debt or the engine's
+     * footprint. Every failed attempt releases the lease; the debt stays until a later ack plus one full
+     * tick, a timeout, respawn or connection close. The guard is intentionally conservative: no session,
+     * disabled runtime, a suspension (DEATH/CONNECTION_CHANGE included), a non-BARRIER model, an in-flight
+     * probe or an in-progress block break we started all keep it silent (the abort would cancel that break).
+     */
+    private void maybeSendBarrierProbe(int serverTick) {
+        if (!enabled || closed) return;
+        if (!session.isOpen() || !client.connectionOpen() || !sink.open()) return;
+        if (risk.riskModel() != RiskModel.BARRIER) return;
+        if (risk.suspended()) return;
+        if (!risk.barrierProbeDue()) return;
+        if (destructionCell != null) {
+            // ABORT_DESTROY_BLOCK would cancel our own in-progress cleanup break, and the server would then
+            // warn about a destroy-block-pos mismatch. The probe is delayed until that break ends; the
+            // 40-tick window keeps running meanwhile, so a long break can abandon the risk and keep its debt.
+            return;
+        }
+        Ticket ticket = session.ticket(BARRIER_PROBE_PLAN);
+        Intent probe = new Intent(BARRIER_PROBE_INTENT, BARRIER_PROBE_PLAN, Strategy.PROBE, Action.PROBE,
+            null, null, Set.of(), Set.of(), Set.of(), serverTick + 1);
+        if (!scheduler.reservePackets(probe, ticket, serverTick, 1, false)) return;
+        DispatchResult result = dispatch(probe, ticket);
+        if (result.sent()) {
+            result.trace().packet(DispatchTrace.Stage.CAUSATIVE)
+                .map(DispatchTrace.PacketProgress::ackSequence)
+                .ifPresent(sequence -> risk.barrierProbeSent(sequence, serverTick,
+                    intake.appliedRevision(), session.connection()));
+        } else {
+            // dispatch() already released every path that owns the lease; this covers the early rejections
+            // that return before touching it. Release is idempotent for an absent lease.
+            scheduler.releaseIntent(BARRIER_PROBE_PLAN, BARRIER_PROBE_INTENT);
+        }
     }
 
     /**
@@ -868,6 +974,9 @@ public final class CombatRuntime implements AutoCloseable {
         session.death();
         finishGenerationTransition(holder);
         risk.suspend(dev.tntcoating.core.combat.SuspensionCause.DEATH);
+        // The runtime death path does not fabricate a DEATH observation, so the probe evidence it would
+        // have cleared is cleared here. Sent debt stays; only the in-flight barrier claim is dropped.
+        risk.clearProbeEvidence();
     }
 
     /** Respawn: self debt resets only through the observation path; friend debt and hazards stay. */
@@ -944,8 +1053,20 @@ public final class CombatRuntime implements AutoCloseable {
         destructionCell = null;
     }
 
+    /** Enables the BARRIER probe lifecycle; called by the controller after the module is enabled. */
+    public void onEnabled() {
+        this.enabled = true;
+    }
+
+    /** Whether the owning module is enabled. Probe sending is gated on this flag. */
+    public boolean enabled() {
+        return enabled;
+    }
+
     /** Manual disable: stop sending immediately; risk and ledger stay observing. */
     public void onDisabled() {
+        enabled = false;
+        risk.clearProbeEvidence();
         ActionGenerationHolder holder = beginGenerationTransition();
         session.disable();
         finishGenerationTransition(holder);
@@ -967,6 +1088,9 @@ public final class CombatRuntime implements AutoCloseable {
     /** Marks matching packet progress as acknowledged; ack = -1 never matches. */
     public void onBlockChangedAck(int sequence) {
         for (DispatchTrace trace : traces) trace.acknowledge(sequence);
+        // The barrier probe is not a combat trace: its ack is the one piece of terminal evidence the
+        // budget needs, and the next tick (strictly later than the ack) decides whether to retire.
+        risk.blockAck(sequence, lastServerTick);
     }
 
     public boolean closed() {
@@ -982,6 +1106,7 @@ public final class CombatRuntime implements AutoCloseable {
     public void close() {
         if (closed) return;
         closed = true;
+        enabled = false;
         onConnectionClosed();
         contexts.clear();
     }

@@ -6,9 +6,15 @@
 
 package dev.tntcoating.core.combat.mc;
 
+import dev.tntcoating.mixin.SpeedminePredictionAccessor;
 import java.util.Objects;
+import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.prediction.BlockStatePredictionHandler;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.game.ServerboundAttackPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundSwingPacket;
 import net.minecraft.world.InteractionHand;
@@ -83,6 +89,48 @@ public final class ClientPacketSink implements CombatPacketSink {
         try {
             mc.gameMode.continueDestroyBlock(hit.getBlockPos(), hit.getDirection());
             return SendResult.accepted(true, -1);
+        } catch (RuntimeException refused) {
+            return SendResult.refused();
+        }
+    }
+
+    /**
+     * Inert barrier probe. Vanilla's prediction handler assigns a real sequence to the abort packet, so
+     * the server acks it like any other block action; the abort branch only clears destroy state and
+     * sends a -1 progress overlay, so no block, inventory slot or offhand is touched. A missing handler,
+     * missing connection or negative sequence is reported as {@link SendResult#refused()}.
+     */
+    @Override
+    public SendResult probeBlockChange(BlockPos pos) {
+        if (!open() || mc.player == null || mc.level == null || pos == null) {
+            return SendResult.refused();
+        }
+        try {
+            BlockStatePredictionHandler prediction = ((SpeedminePredictionAccessor) (Object) mc.level)
+                .comet$getBlockStatePredictionHandler();
+            return probe(pos, prediction, packet -> mc.getConnection().getConnection().send(packet));
+        } catch (RuntimeException refused) {
+            return SendResult.refused();
+        }
+    }
+
+    /**
+     * Package-private seam for the probe contract: the handler supplies the sequence and the consumer
+     * carries the packet, so tests can pin the sequence, action and refusal rules without a live client.
+     */
+    static SendResult probe(BlockPos pos, BlockStatePredictionHandler handler,
+                            Consumer<ServerboundPlayerActionPacket> sender) {
+        if (pos == null || handler == null || sender == null) {
+            return SendResult.refused();
+        }
+        try (BlockStatePredictionHandler prediction = handler.startPredicting()) {
+            int sequence = prediction.currentSequence();
+            if (sequence < 0) {
+                return SendResult.refused();
+            }
+            sender.accept(new ServerboundPlayerActionPacket(
+                ServerboundPlayerActionPacket.Action.ABORT_DESTROY_BLOCK, pos, Direction.DOWN, sequence));
+            return SendResult.accepted(true, sequence);
         } catch (RuntimeException refused) {
             return SendResult.refused();
         }

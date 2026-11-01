@@ -10,10 +10,17 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Anarchy-only statistical quiet window. This is <strong>labelled statistical</strong>: a later health
- * snapshot can show that it retired too early, so it records every retirement and every detected miss
- * through the injected log consumer. It is disabled by default and must never be used with Conservative
- * settings, where elapsed time may not retire anything.
+ * Anarchy-only statistical quiet window. <strong>Superseded on 2026-11-01 by
+ * {@link RiskModel#BARRIER}.</strong> The risk-model setting replaced the labelled statistical rule as the
+ * way to stop zero-damage explosions from becoming permanent debt; elapsed time is not terminal evidence and
+ * remains unreachable in production. This class and its budget hook are retained only because the
+ * retirement tests still pin the old, always-disabled path, and {@link CombatProfiles#profileBudget} still
+ * rejects an enabled window. No module setting, profile or production constructor can enable it.
+ *
+ * <p>The window was always <strong>labelled statistical</strong>: a later health snapshot can show that it
+ * retired too early, so it records every retirement and every detected miss through the injected log
+ * consumer. It is disabled by default and must never be used with Conservative settings, where elapsed time
+ * may not retire anything.
  */
 public final class AnarchyQuietWindow {
     public static final long DEFAULT_QUIET_TICKS = 40L;

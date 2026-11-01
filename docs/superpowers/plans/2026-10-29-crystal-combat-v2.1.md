@@ -328,7 +328,7 @@ Placement crystals reserve at `PLACE_CRYSTAL`. A later swing or slot-restore fai
 
 1. **Terminal evidence with a coherent snapshot.** An explosion at the bound crystal's position is observed, and then an effective-health snapshot arrives whose applied revision is causally after it. One transaction applies the snapshot and retires exactly the reservations whose explosions precede it. The snapshot need not attribute the change; it only has to postdate the explosion, so unrelated healing is harmless.
 2. **Coherence.** Health and absorption updates that may belong to one damage event are held until both are applied for the same bundle or revision. An absorption-only update never retires anything on its own.
-3. **Processing barrier.** Where no health change follows (a zero-damage or weaker in-window hit), retire only with evidence that the server has processed everything up to the explosion and sent any resulting health sync. The candidate barrier is the vanilla block-change acknowledgement sequence: send a sequenced interaction after the explosion is applied, wait for its acknowledgement, then one further server tick. Phase 0 must verify that ordering against health sync; a keepalive or a send callback does not qualify.
+3. **Processing barrier.** Where no health change follows (a zero-damage or weaker in-window hit), retire only with evidence that the server has processed everything up to the explosion and sent any resulting health sync. The candidate barrier is the vanilla block-change acknowledgement sequence: send a sequenced interaction after the explosion is applied, wait for its acknowledgement, then one further server tick. Phase 0 must verify that ordering against health sync; a keepalive or a send callback does not qualify. Stage 6 implements the candidate as the opt-in `Barrier` risk model: the ack plus one further server tick retires only reservations whose explosion predates the probe and that saw no health change. A lost, late or mismatched ack keeps debt. Confirmation is limited to a local vanilla server; `Strict` never sends the probe.
 4. **Debt.** Anything without terminal evidence stays as debt and counts in `D_max`. Debt blocks only sends that would cross the margin. The info string and render show outstanding debt.
 5. **Respawn and connection close.** Respawn clears self debt (health is reset by the server). Friend debt and crystal hazards persist and are rescanned. Connection close clears everything for that connection.
 
@@ -341,6 +341,8 @@ A 40-tick wait only sets backoff. The reservation stays `Sent` until the crystal
 ### Anarchy statistical option
 
 The Anarchy profile may enable a labelled quiet-window rule: retire with zero damage after an explosion plus RTT p99 + jitter p99 + 2 ticks with no health change. The setting text says the guarantee is statistical and can fail under delays beyond the measured tail. Phase 9 reports its observed miss rate. Conservative never uses it.
+
+**Superseded 2026-11-01.** `AnarchyQuietWindow` is disabled and no production path can enable it: the module offers Conservative and Custom, `CombatProfiles.profileBudget` refuses an enabled window, and the shipped budget uses `AnarchyQuietWindow.disabled()`. `RiskModel.BARRIER` replaces it because elapsed time is not terminal evidence. The class and its retirement tests remain only to pin that the dormant statistical path cannot be reached.
 
 ### Suspension
 
@@ -365,7 +367,7 @@ The budget bounds module-issued risk. Damage from other players, mobs or the env
 - [x] Delays beyond the p99 tail: Conservative retires nothing early; Anarchy statistical mode records a miss.
 - [x] Split absorption then health updates: no retirement until coherent.
 - [x] Unrelated healing after the explosion retires correctly without double counting.
-- [x] Zero-damage detonation retires only after the processing barrier; without a barrier it remains debt and blocks only margin-crossing sends.
+- [x] Zero-damage detonation retires only after the `Barrier` probe is acknowledged and one further server tick has passed; under `Strict` it remains debt and blocks only margin-crossing sends, and `Meteor-style` retires it on the observed explosion.
 - [x] Tracking removal does not retire.
 - [x] Rejected attack retires only after a barrier with the crystal still present.
 - [x] Failure after each packet step in dispatch: risk is retained once any causative packet may have left.
@@ -456,7 +458,7 @@ Repeat at added one-way delay of 0, 40 and 100 ms each way (80 and 200 ms RTT) w
 - [x] Audit file reviewed, with artifact hashes.
 - [x] All seven questions in 0.5 answered from traces, not from memory.
 - [x] `W`, raw-before-mitigation subtraction and crystal-explosion semantics confirmed for 26.2.
-- [x] Processing-barrier question answered. If no barrier exists, Conservative keeps zero-damage risk as debt and the plan records that limitation.
+- [x] Processing-barrier question answered. The block-change acknowledgement is implemented only as the opt-in `Barrier` risk model (sequenced abort after the explosion, ack, one further server tick); `Strict` keeps zero-damage risk as debt and the local-vanilla limitation is recorded.
 - [x] Provenance pins recorded.
 - [x] At least 50 traces stored as fixtures.
 
@@ -1356,7 +1358,7 @@ Every number here is a starting point to measure in Phase 9, not an established 
 | Support depth | 2 | 2 | Same |
 | Combat work budget (all work per tick) | 1 ms / tick | 1 ms / tick | On CachyOsPC; adjust from JFR measurements |
 | Candidate caps | 128 direct, 64 piston | same | Bounded search |
-| Zero-damage retirement | Processing barrier, else debt | same | Anarchy may opt into a labelled statistical quiet window (RTT p99 + jitter p99 + 2 ticks); percentiles do not bound the tail |
+| Zero-damage retirement | `Barrier`: ack plus one tick; `Strict`: debt | same | `Meteor-style` retires on the observed explosion; only `Barrier` sends the probe; the plan's statistical quiet window is superseded and disabled |
 | Experiments | All off | All off | Must earn their place in Phase 9 |
 
 Aggressive reach, rotations off and every experiment need an explicit per-setting opt-in. Nothing is enabled automatically based on server name.
@@ -1442,7 +1444,7 @@ State the sample size, method and sidedness alongside every rate.
 
 | Risk | Effect | Mitigation |
 | --- | --- | --- |
-| No processing barrier exists in 26.2 | Zero-damage hits leave debt; Conservative throughput drops in long fights | Debt blocks only margin-crossing sends and is visible; Anarchy may opt into the labelled statistical rule |
+| The `Barrier` ack barrier is confirmed only on a local vanilla server | On a laggy, proxied or modified server the probe may not order health sync, so `Barrier` could retire early | `Barrier` is opt-in; `Strict` is the default and never sends the probe; a lost, late or mismatched ack keeps debt |
 | Grouping obligations cannot be proven | Summed bound throttles bursts | Accept the summed bound; Conservative stays safe and slower |
 | Cached artifacts differ from publisher releases | Audit findings wrong | Hash every artifact; compare with publisher checksums where available |
 | Meteor 26.2 internals change before release | Suppression mixin breaks | Descriptor capability check refuses activation; pin build |
@@ -1457,7 +1459,7 @@ State the sample size, method and sidedness alongside every rate.
 
 ### Open questions
 
-- [ ] Does a block-change acknowledgement provide a reliable processing barrier relative to health sync? (Phase 0; decides zero-damage retirement.)
+- [ ] Does the `Barrier` probe's block-change acknowledgement order health sync on the target server type, not only local vanilla? (Phase 9; only `Barrier` sends it; `Strict` never does.)
 - [ ] Exact 26.2 immunity window, raw-before-mitigation order, and cooldown-bypassing damage types (Phase 0).
 - [ ] Do absorption and health from one damage event share a bundle? (Phase 0.)
 - [ ] Crystal-hit-by-explosion and vertical knockback behaviour on the target server type, not just vanilla (Phase 0/9).
@@ -1507,5 +1509,7 @@ State the sample size, method and sidedness alongside every rate.
 | 2026-11-01 | Stage 5 adds `CUSTOM` beside `CONSERVATIVE`; Anarchy remains unimplemented and is not offered. Conservative re-applies the four audited defaults when selected; a profile change runs `configChanged()` → `CrystalCombatController.onConfigChanged()` → `CombatRuntime.onConfigChanged()` → `session.reconfigure()` | The switch must invalidate queued unsent leases and intents without touching hazards or already-sent risk. `reconfigure()` ends the action generation and `releasePlanBookkeeping()` releases scheduler plans, while `CombatRiskBudget.actionGenerationEnded` terminates only RESERVED/DISPATCHING entries, so SENT risk and hazards survive. Both profiles pass `CombatProfiles.productionSafety`, so no floor moves. Selecting Conservative sets four settings, and each has an `onChanged -> configChanged()` handler, so one user action can run the reconfigure path up to five times; this is chatty but safe (no sends, no hazard or SENT-risk change, and every intermediate value is legal). Test: `CrystalCombatConfigChangeTest` |
 | 2026-11-01 | Render shows outstanding risk debt and suspension causes through a read-only `Render2DEvent` overlay fed by a volatile `RiskDebtSnapshot` published in `sampleRisk()` and cleared on disable and on leaving the world; `show-risk-debt` is a Render-group setting, default on | The render callback must not query the world, budget or ledger, send packets or advance a sequence. The snapshot is the only channel; it is empty while disabled, after the world is left, or when there is no debt and no suspension. The plan's full outline, pushed-position marker and damage-label render are not implemented. Tests: `RiskDebtSnapshotTest`, `CrystalCombatRiskSnapshotTest`, `CrystalCombatPhase8SettingsTest` |
 | 2026-11-01 | Disable coverage was extended to every direct, piston and cleanup phase | `PistonTrapControllerTest.disableAtEveryPistonAndCleanupPhaseSendsNothingAfterwards` disables at RESERVE, SUPPORTS, PISTON, CRYSTAL, POWER, WAIT_PUSH, ATTACK, WAIT_REMOVE, CLEANUP, COOLDOWN and MANUAL_CLEANUP, then asserts no further sink attempt while outstanding risk is retained; `CrystalCombatEngineModuleTest.disableAfterASentAttackSendsNothingElseAndRetainsTheHazard` covers direct placement and attack |
+| 2026-11-01 | Stage 6 adds the `risk-model` Safety setting with three models: `Strict` (default; rule-1 health evidence only, no probe), `Barrier` (Strict plus one packet-only sequenced abort probe; ack plus one further server tick retires only pre-probe, no-health-change reservations; local-vanilla confirmation only) and `Meteor-style` (retire on observed explosion/removal, still sum sent-not-exploded crystals) | The three behaviours have different evidence standards, and the user needs to choose throughput versus protection. Only `Barrier` sends, through `CombatRuntime.dispatch` with a packet-only lease and the vanilla prediction sequence; the probe aborts destroy state at an inert air cell, so it changes no block, item or offhand. A lost, late or wrong ack keeps debt, and no model switch or profile change ever clears sent risk. Tests: `CombatRiskModelBudgetTest`, `CombatRuntimeBarrierProbeTest`, `CrystalCombatRiskModelTest`, `ClientPacketSinkProbeTest`, `CombatDebugHostRiskModelTest` |
+| 2026-11-01 | `AnarchyQuietWindow` is superseded and disabled; no production path can enable it | Elapsed time is not terminal evidence. The three-model design replaces it: `Barrier` retires only on the sequenced ack plus one tick, and `Strict` keeps debt. No module setting or profile constructs an enabled window, `CombatProfiles.profileBudget` refuses one, and the shipped budget passes `AnarchyQuietWindow.disabled()`; the class and its retirement tests stay only to pin the dormant path |
 
 Numeric defaults, profile names and delivery order are recommendations awaiting your approval.

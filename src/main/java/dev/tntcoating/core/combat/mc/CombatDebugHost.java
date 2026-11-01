@@ -76,13 +76,19 @@ public final class CombatDebugHost {
             CombatDebugHost host = new CombatDebugHost(mc, stack.runtime(), stack.risk(), stack.client(),
                 moduleEnabled, recorder, sink);
             stack.runtime().setDispatchObserver(host::onDispatch);
-            recorder.label("debug-log-start" + motionPredictionHeader(stack) + hurtSyncHeader(stack)
-                + supportHeader(stack) + surroundGapHeader(stack) + dangerousCrystalHeader(stack)
-                + antiPistonHeader(stack));
+            recorder.label("debug-log-start" + riskModelHeader(stack.risk()) + motionPredictionHeader(stack)
+                + hurtSyncHeader(stack) + supportHeader(stack) + surroundGapHeader(stack)
+                + dangerousCrystalHeader(stack) + antiPistonHeader(stack));
             return host;
         } catch (RuntimeException failure) {
             return null;
         }
+    }
+
+    /** Stage 6: the active risk model is part of the debug-log header so an export is self-describing. */
+    static String riskModelHeader(CombatRiskBudget risk) {
+        if (risk == null) return "";
+        return " risk-model=" + risk.riskModel().key();
     }
 
     /** Phase 4.2: the tactic state is part of the debug-log header so a tester export is self-describing. */
@@ -253,6 +259,14 @@ public final class CombatDebugHost {
         if (stopped) return;
         if (CombatDispatchInvariants.isInvariantFailure(result)) {
             marker(CombatDispatchInvariants.label(result));
+        }
+        if (result.sent()) {
+            // One line per accepted dispatch: the outstanding total is the budget's post-send debt count,
+            // so a tester export shows exactly what the send left armed.
+            String ack = result.trace().packet(CombatRuntime.DispatchTrace.Stage.CAUSATIVE)
+                .map(progress -> " ack=" + progress.ackSequence())
+                .orElse("");
+            debug("send outstanding=" + risk.outstanding() + ack);
         }
     }
 

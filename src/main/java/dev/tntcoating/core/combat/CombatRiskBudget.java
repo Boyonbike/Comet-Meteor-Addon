@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Pure TNT-risk budget. It owns the reservation lifetime
@@ -40,8 +41,14 @@ import java.util.Set;
  * known, its own survival check.
  *
  * <p>Retirement rules implemented here: rule 1 (explosion + causally later coherent effective-health
- * snapshot), rule 2 coherence, rule 3 never satisfied ({@link ProcessingBarrier}), rule 4 debt counting,
- * rule 5 respawn/connection close/tracking-removal semantics. Rule 3 deliberately has no path.
+ * snapshot), rule 2 coherence, rule 3 only under {@link RiskModel#BARRIER} ({@link ProcessingBarrier} itself
+ * is the strict never-satisfied marker), rule 4 debt counting, rule 5 respawn/connection close semantics.
+ *
+ * <p>{@link RiskModel} selects the additional terminal evidence path. {@link RiskModel#STRICT} and
+ * {@link RiskModel#METEOR_STYLE} never create block-change evidence; only a {@link RiskModel#BARRIER}
+ * budget may arm one barrier probe at a time, and its acknowledgement retires only reservations whose
+ * explosion was observed before the probe and that have seen no health change. The model never relaxes a
+ * reservation check, a timeout never retires risk, and changing the model never clears outstanding risk.
  */
 public final class CombatRiskBudget {
     /** Stored lifetime states; Proposed and Debt are documented projections, not storage states. */
@@ -67,6 +74,12 @@ public final class CombatRiskBudget {
     private static final double EPSILON = 1e-9;
     private static final int MAX_TERMINAL_HISTORY = 4096;
     private static final int TOMBSTONE_LIFETIME_TICKS = 400;
+    /**
+     * A barrier probe is only useful while its acknowledgement can still be causally after the explosion it
+     * measures. After this many server ticks an unacknowledged probe is abandoned and the debt stays: a lost,
+     * late or out-of-order acknowledgement is never treated as terminal evidence.
+     */
+    public static final int BARRIER_PROBE_WINDOW_TICKS = 40;
 
     private final MitigationWidener widener;
     private final GroupedBound groupedBound;
@@ -80,6 +93,15 @@ public final class CombatRiskBudget {
     private long nextRiskId = 1;
     private long lastEnvelopeRevision = Long.MIN_VALUE;
     private int serverTick = -1;
+
+    private RiskModel riskModel = RiskModel.defaultModel();
+    private Consumer<String> eventSink;
+
+    private int barrierProbeSequence = -1;
+    private int barrierProbeSentTick = -1;
+    private int barrierProbeAckTick = -1;
+    private long barrierProbeRevision = -1L;
+    private ConnectionKey barrierProbeConn;
 
     /**
      * Conservative production constructor: grouped bounds disabled, statistical quiet window disabled.
@@ -96,6 +118,162 @@ public final class CombatRiskBudget {
         this.groupedBound = Objects.requireNonNull(groupedBound, "groupedBound");
         this.quietWindow = Objects.requireNonNull(quietWindow, "quietWindow");
     }
+
+    /** Live retirement model; defaults to STRICT and is never changed by a profile switch. */
+    public RiskModel riskModel() {
+        return riskModel;
+    }
+
+    /**
+     * Switches the retirement model without touching outstanding risk. Leaving BARRIER discards the
+     * in-flight probe evidence only; reservations that were already sent stay counted exactly as before, so
+     * changing the option (or a profile that carries it) can never clear debt.
+     */
+    public void setRiskModel(RiskModel model) {
+        RiskModel next = Objects.requireNonNull(model, "model");
+        if (next == riskModel) return;
+        riskModel = next;
+        if (next != RiskModel.BARRIER) clearBarrierProbe();
+        emit("risk-model=" + next.key() + " outstanding=" + risks.size());
+    }
+
+    /** Debug/event line sink. Accounting never depends on it; a throwing sink is ignored. */
+    public void setEventSink(Consumer<String> sink) {
+        this.eventSink = sink;
+    }
+
+    /**
+     * Whether BARRIER should arm its next probe now. Eligible risks are sent reservations with an observed
+     * explosion and no health evidence afterwards. Risks whose explosion is older than the bounded window
+     * are abandoned first (their debt stays), and an in-flight probe suppresses a second one.
+     */
+    public boolean barrierProbeDue() {
+        if (riskModel != RiskModel.BARRIER || serverTick < 0) return false;
+        if (barrierProbeSequence >= 0) return false;
+        boolean due = false;
+        for (Risk risk : new ArrayList<>(risks.values())) {
+            if (!barrierEligible(risk)) continue;
+            if (risk.explosionAnchorTick >= 0
+                && serverTick - risk.explosionAnchorTick > BARRIER_PROBE_WINDOW_TICKS) {
+                risk.barrierProbeAbandoned = true;
+                emit("BARRIER_PROBE_ABANDONED risk=" + risk.id.value() + " intent=" + risk.intent
+                    + " outstanding=" + risks.size());
+                continue;
+            }
+            due = true;
+        }
+        return due;
+    }
+
+    /**
+     * Records one dispatched probe. Only a real prediction sequence is accepted; {@code -1} can never be an
+     * acknowledgement, so a sink without a sequence leaves the debt untouched and the probe is not armed.
+     */
+    public void barrierProbeSent(int sequence, int tick, long appliedRevision, ConnectionKey conn) {
+        if (riskModel != RiskModel.BARRIER) return;
+        if (sequence < 0 || tick < 0 || appliedRevision < 0 || conn == null) return;
+        if (barrierProbeSequence >= 0) return;
+        barrierProbeSequence = sequence;
+        barrierProbeSentTick = tick;
+        barrierProbeAckTick = -1;
+        barrierProbeRevision = appliedRevision;
+        barrierProbeConn = conn;
+        emit("BARRIER_PROBE_SENT sequence=" + sequence + " tick=" + tick
+            + " outstanding=" + risks.size());
+    }
+
+    /**
+     * Applies one server block-change acknowledgement. Only the exact in-flight sequence counts, only once,
+     * and only when the acknowledgement is causally at or after the probe's send tick. Retirement itself
+     * happens one server tick later in {@link #tick(int)}.
+     */
+    public boolean blockAck(int sequence, int tick) {
+        if (sequence < 0 || tick < 0) return false;
+        if (riskModel != RiskModel.BARRIER) return false;
+        if (barrierProbeSequence < 0 || sequence != barrierProbeSequence) return false;
+        if (barrierProbeAckTick >= 0) return false;
+        if (tick < barrierProbeSentTick) return false;
+        barrierProbeAckTick = tick;
+        emit("BARRIER_ACK sequence=" + sequence + " tick=" + tick);
+        return true;
+    }
+
+    /** Whether a barrier probe is armed and has not yet been acknowledged, timed out or abandoned. */
+    public boolean barrierProbeInFlight() {
+        return barrierProbeSequence >= 0;
+    }
+
+    /**
+     * Drops in-flight probe evidence on disable, death, respawn, connection close or a model change away
+     * from BARRIER. Outstanding risk is untouched: an abandoned probe never retires debt.
+     */
+    public void clearProbeEvidence() {
+        clearBarrierProbe();
+    }
+
+    private void clearBarrierProbe() {
+        barrierProbeSequence = -1;
+        barrierProbeSentTick = -1;
+        barrierProbeAckTick = -1;
+        barrierProbeRevision = -1L;
+        barrierProbeConn = null;
+    }
+
+    private void emit(String line) {
+        Consumer<String> sink = eventSink;
+        if (sink == null) return;
+        try {
+            sink.accept(line);
+        } catch (RuntimeException ignored) {
+            // A debug sink is never allowed to change risk accounting.
+        }
+    }
+
+    private boolean barrierEligible(Risk risk) {
+        return risk.state == State.SENT
+            && !risk.dimensionMigrated
+            && risk.explosionRevision >= 0
+            && risk.healthAfterExplosion.isEmpty()
+            // A coherent snapshot at or after the explosion revision disproves "no health change", even
+            // when it retired no component (for example when it shares the explosion's bundle revision).
+            && !risk.healthEvidenceAfterExplosion
+            && !risk.barrierProbeAbandoned;
+    }
+
+    private boolean barrierCandidate(Risk risk) {
+        return barrierEligible(risk)
+            && barrierProbeConn != null
+            && risk.conn.equals(barrierProbeConn)
+            && risk.explosionRevision <= barrierProbeRevision;
+    }
+
+    private void pruneBarrierProbe() {
+        if (barrierProbeSequence < 0 || barrierProbeAckTick >= 0) return;
+        if (serverTick - barrierProbeSentTick <= BARRIER_PROBE_WINDOW_TICKS) return;
+        emit("BARRIER_PROBE_TIMEOUT sequence=" + barrierProbeSequence
+            + " outstanding=" + risks.size());
+        clearBarrierProbe();
+    }
+
+    private void retireByBarrierEvidence() {
+        if (barrierProbeSequence < 0 || barrierProbeAckTick < 0) return;
+        if (serverTick <= barrierProbeAckTick) return;
+        int retired = 0;
+        for (Risk risk : new ArrayList<>(risks.values())) {
+            if (!barrierCandidate(risk)) continue;
+            terminate(risk);
+            retired++;
+            // Log after the removal so outstanding is the real total left, even when this tick retires
+            // several risks through the same probe.
+            emit("BARRIER_RETIRE risk=" + risk.id.value() + " intent=" + risk.intent
+                + " sequence=" + barrierProbeSequence + " outstanding=" + risks.size());
+        }
+        if (retired > 0) {
+            emit("BARRIER_RETIRE_TOTAL retired=" + retired + " outstanding=" + risks.size());
+        }
+        clearBarrierProbe();
+    }
+
 
     /** Convenience overload with no bound crystal; such a risk can never retire by rule 1. */
     public Optional<RiskId> reserve(long intent, ExposureBound upper, ServerTickInterval arrival,
@@ -245,14 +423,23 @@ public final class CombatRiskBudget {
             case HEALTH -> observeHealth(observation);
             case ENTITY_DATA -> observeEntityData(observation);
             case SETBACK -> suspend(SuspensionCause.SETBACK);
-            case DEATH -> suspend(SuspensionCause.DEATH);
+            case DEATH -> {
+                suspend(SuspensionCause.DEATH);
+                clearProbeEvidence();
+            }
             case RESPAWN -> {
                 clearSelfOnRespawn(observation.conn());
                 suspend(SuspensionCause.RESPAWN);
+                clearProbeEvidence();
             }
-            case CONNECTION_CHANGE -> suspend(SuspensionCause.CONNECTION_CHANGE);
+            case CONNECTION_CHANGE -> {
+                suspend(SuspensionCause.CONNECTION_CHANGE);
+                clearProbeEvidence();
+            }
+            case REMOVED, TRACKING_REMOVED -> observeCrystalGone(observation);
             default -> {
-                // Tracking removal, totem pop, equipment and effect packets are not detonation evidence.
+                // Totem pop, equipment and effect packets are not detonation evidence. Removal is handled
+                // above only for METEOR_STYLE, where seen-gone is the plan's terminal observation.
             }
         }
     }
@@ -334,6 +521,7 @@ public final class CombatRiskBudget {
     /** Connection close clears exactly that connection's risk, pending pairs and quiet tombstones. */
     public void connectionClosed(ConnectionKey conn) {
         if (conn == null) return;
+        clearProbeEvidence();
         for (Risk risk : new ArrayList<>(risks.values())) {
             if (risk.conn.equals(conn)) terminate(risk);
         }
@@ -352,6 +540,7 @@ public final class CombatRiskBudget {
      */
     public void dimensionChanged(ConnectionKey previous, ConnectionKey next) {
         if (previous == null || next == null) return;
+        clearProbeEvidence();
         for (Risk risk : risks.values()) {
             if (!risk.conn.equals(previous)) continue;
             risk.conn = next;
@@ -373,6 +562,8 @@ public final class CombatRiskBudget {
             risk.retiredFriends.clear();
             risk.retiredFriends.addAll(retired);
             risk.healthAfterExplosion.clear();
+            risk.latestHealthRevision.clear();
+            risk.healthEvidenceAfterExplosion = false;
             risk.explosionRevision = -1;
             risk.explosionAnchorTick = -1;
             risk.dimensionMigrated = true;
@@ -443,10 +634,12 @@ public final class CombatRiskBudget {
         if (!pendingHealth.isEmpty()) suspensions.add(SuspensionCause.INCOHERENT_HEALTH);
     }
 
-    /** Server-tick clock for the Anarchy-only statistical window; no Conservative retirement uses it. */
+    /** Server-tick clock for the barrier evidence window and the Anarchy-only statistical window. */
     public void tick(int serverTick) {
         if (serverTick < 0) return;
         this.serverTick = Math.max(this.serverTick, serverTick);
+        pruneBarrierProbe();
+        retireByBarrierEvidence();
         retireQuietly();
         pruneTombstones();
     }
@@ -512,7 +705,7 @@ public final class CombatRiskBudget {
         Vec at = observation.position();
         if (at == null && observation.cell() != null) at = observation.cell().center();
         if (at == null) return;
-        for (Risk risk : risks.values()) {
+        for (Risk risk : new ArrayList<>(risks.values())) {
             if (risk.state != State.SENT) continue;
             if (!risk.conn.equals(observation.conn())) continue;
             if (risk.boundCrystal == null || risk.boundPosition == null) continue;
@@ -527,6 +720,43 @@ public final class CombatRiskBudget {
             risk.explosionRevision = observation.appliedRevision();
             risk.explosionAnchorTick = serverTick;
             risk.healthAfterExplosion.clear();
+            // Arming a newer explosion starts a fresh evidence window, but the health snapshot can be
+            // applied before the explosion in the same bundle (same revision), or between the explosion
+            // and this observation. Any coherent bound-entity snapshot at or after the new revision is
+            // still health evidence, so recompute it from the per-risk revision record.
+            risk.healthEvidenceAfterExplosion = false;
+            for (Long revision : risk.latestHealthRevision.values()) {
+                if (revision >= risk.explosionRevision) {
+                    risk.healthEvidenceAfterExplosion = true;
+                    break;
+                }
+            }
+            if (riskModel == RiskModel.METEOR_STYLE) {
+                // Meteor-style evidence: the bound crystal was seen exploding, so this reservation is done.
+                // The next placement is still checked against every sent-but-not-exploded crystal.
+                terminate(risk);
+                emit("METEOR_RETIRE risk=" + risk.id.value() + " intent=" + risk.intent
+                    + " reason=explosion outstanding=" + risks.size());
+            }
+        }
+    }
+
+    /**
+     * METEOR_STYLE only: a sent reservation bound to a crystal that is seen gone retires immediately. In
+     * STRICT and BARRIER a removal is not detonation evidence; the debt stays until a health snapshot, the
+     * barrier acknowledgement or the connection close.
+     */
+    private void observeCrystalGone(Observation observation) {
+        if (riskModel != RiskModel.METEOR_STYLE || observation.entity() == null) return;
+        String reason = observation.kind() == ObservationKind.REMOVED ? "removal" : "tracking-removal";
+        for (Risk risk : new ArrayList<>(risks.values())) {
+            if (risk.state != State.SENT) continue;
+            if (!risk.conn.equals(observation.conn())) continue;
+            if (risk.dimensionMigrated) continue;
+            if (risk.boundCrystal == null || !risk.boundCrystal.equals(observation.entity())) continue;
+            terminate(risk);
+            emit("METEOR_RETIRE risk=" + risk.id.value() + " intent=" + risk.intent
+                + " reason=" + reason + " outstanding=" + risks.size());
         }
     }
 
@@ -618,10 +848,26 @@ public final class CombatRiskBudget {
             if (risk.state != State.SENT) continue;
             if (!risk.conn.equals(conn)) continue;
             if (risk.dimensionMigrated) continue;
-            if (risk.explosionRevision < 0 || revision <= risk.explosionRevision) continue;
             // Coherence with the placement act itself: the snapshot must have been applied after the
             // revision the dispatch decision was based on, never before the crystal was placed.
             if (risk.sentRevision >= 0 && revision <= risk.sentRevision) continue;
+
+            boolean boundEntity = risk.selfEntity.equals(who)
+                || risk.friendBounds.containsKey(who);
+            if (boundEntity) {
+                // Record evidence independently of the explosion: ObservationIntake can deliver the
+                // bundle's health snapshot before the explosion is observed, at the same revision.
+                risk.latestHealthRevision.merge(who, revision, Math::max);
+                if (risk.explosionRevision >= 0 && revision >= risk.explosionRevision) {
+                    // Any coherent snapshot of a bound entity at or after the explosion revision disproves
+                    // "no health change", even when it retires nothing below.
+                    risk.healthEvidenceAfterExplosion = true;
+                }
+            }
+            if (risk.explosionRevision < 0) continue;
+            // Rule 1 still retires only on a snapshot applied strictly after the explosion revision: a
+            // same-bundle snapshot can predate the explosion inside the bundle and cannot retire alone.
+            if (revision <= risk.explosionRevision) continue;
 
             boolean changed = false;
             if (risk.selfEntity.equals(who) && !risk.selfRetired && risk.selfBound > 0.0) {
@@ -711,6 +957,8 @@ public final class CombatRiskBudget {
     }
 
     private void terminate(Risk risk) {
+        risk.healthEvidenceAfterExplosion = false;
+        risk.latestHealthRevision.clear();
         risks.remove(risk.id);
         terminalHistory.put(risk.id, State.RETIRED);
         while (terminalHistory.size() > MAX_TERMINAL_HISTORY) {
@@ -825,6 +1073,9 @@ public final class CombatRiskBudget {
         Vec boundPosition;
         final Set<EntityKey> retiredFriends = new HashSet<>();
         final Set<EntityKey> healthAfterExplosion = new HashSet<>();
+        // Newest coherent bound-entity health revision, independent of the explosion. It lets
+        // observeExplosion see health that arrived before the explosion inside the same bundle.
+        final Map<EntityKey, Long> latestHealthRevision = new HashMap<>();
         State state = State.RESERVED;
         double selfBound;
         boolean selfRetired;
@@ -833,6 +1084,8 @@ public final class CombatRiskBudget {
         long sentRevision = -1;
         long explosionRevision = -1;
         int explosionAnchorTick = -1;
+        boolean healthEvidenceAfterExplosion;
+        boolean barrierProbeAbandoned;
 
         Risk(RiskId id, long intent, ConnectionKey conn, ActionGeneration gen, EntityKey selfEntity,
              double selfBound, Map<EntityKey, Double> friendBounds, double selfKnownValue,

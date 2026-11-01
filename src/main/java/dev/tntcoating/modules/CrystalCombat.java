@@ -23,6 +23,7 @@ import dev.tntcoating.core.combat.PacketLedger;
 import dev.tntcoating.core.combat.PistonGeometry;
 import dev.tntcoating.core.combat.PistonLayoutSelection;
 import dev.tntcoating.core.combat.RiskDebtSnapshot;
+import dev.tntcoating.core.combat.RiskModel;
 import dev.tntcoating.core.combat.Safety;
 import dev.tntcoating.core.combat.Vec;
 import dev.tntcoating.core.combat.mc.ClientPacketSink;
@@ -144,7 +145,15 @@ public final class CrystalCombat extends Module {
         .onChanged(value -> configChanged())
         .build());
 
-    // Stage 6 reserves this group for the planned risk-model setting; it is intentionally absent today.
+    // Strict is the default in every profile. The model is live state: changing it never rebuilds the
+    // stack, never reprofiles safety and never clears risk that has already left.
+    private final Setting<RiskModel> riskModel = sgSafety.add(new EnumSetting.Builder<RiskModel>()
+        .name("risk-model")
+        .description(RiskModel.STRICT.description() + " " + RiskModel.BARRIER.description() + " "
+            + RiskModel.METEOR_STYLE.description())
+        .defaultValue(RiskModel.defaultModel())
+        .onChanged(value -> configChanged())
+        .build());
 
     private final Setting<Double> minTargetDamage = sgSafety.add(new DoubleSetting.Builder()
         .name("min-target-damage")
@@ -438,6 +447,7 @@ public final class CrystalCombat extends Module {
     @Override
     public void onActivate() {
         controller.setMode(mode.get());
+        controller.setRiskModel(riskModel.get());
         controller.setPistonLayouts(selection());
         controller.setTrapEnabled(pistonTrap.get());
         if (!controller.enable()) {
@@ -457,12 +467,13 @@ public final class CrystalCombat extends Module {
 
     @Override
     public String getInfoString() {
-        // Published snapshot only: no world, budget or capability queries from the render thread.
+        // Published controller snapshot plus the enum-backed risk-model key: no world, budget or
+        // capability queries from the render thread.
         String status = controller.infoString();
         if (isActive() && "idle".equals(status)) {
             status = "running: no verified opportunity";
         }
-        return status + " [" + TntCoatingAddon.buildInfo().display()
+        return status + " [risk: " + riskModel.get().key() + "] [" + TntCoatingAddon.buildInfo().display()
             + (TntCoatingAddon.buildInfo().tester() ? " " + TntCoatingAddon.buildInfo().testerLabel() : "")
             + "]";
     }
@@ -594,6 +605,7 @@ public final class CrystalCombat extends Module {
             new dev.tntcoating.core.combat.CrystalLedger();
         // No mitigation data source exists yet; refusing the widening suspends instead of keeping stale bounds.
         CombatRiskBudget risk = CombatProfiles.conservativeBudget((envelope, current) -> null);
+        risk.setRiskModel(riskModel.get());
         dev.tntcoating.core.combat.CombatScheduler scheduler =
             new dev.tntcoating.core.combat.CombatScheduler(session, risk, packets);
         CombatInventoryAdapter inventory = CombatInventoryAdapter.production(client);
@@ -759,6 +771,7 @@ public final class CrystalCombat extends Module {
         }
         controller.setPistonLayouts(selection());
         controller.setMode(mode.get());
+        controller.setRiskModel(riskModel.get());
         controller.onConfigChanged();
         controller.setAutoCleanup(autoCleanup.get());
         if (controller.hasStack()) controller.reconfigure(directSettings());

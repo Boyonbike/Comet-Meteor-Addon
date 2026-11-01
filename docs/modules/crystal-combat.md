@@ -37,6 +37,51 @@ hazard. Sent risk retires only on the safety model's evidence. The anti-suicide 
 The default safety envelope is minimum target damage 4, maximum self damage 6, remaining margin 2 and
 maximum friend damage 2. Stricter values are accepted; looser values are refused.
 
+### Risk models
+
+`risk-model` (Safety group) selects how sent risk is retired. `Strict` is the default in every profile
+and is the only model that adds no assumption: a reservation retires only by rule 1 (an observed
+explosion plus a causally later coherent effective-health snapshot), self respawn or connection close. A
+zero-damage explosion therefore stays as debt under `Strict` even though the crystal is gone.
+
+`Barrier` is `Strict` plus one probe. After an applied explosion whose reservation is still `SENT` and
+has seen no coherent health snapshot for a bound entity at or after the explosion, the runtime sends
+exactly one `ABORT_DESTROY_BLOCK` at the first air block above the player's eye within four blocks
+through the single dispatch path. The packet carries a real vanilla prediction sequence from
+`BlockStatePredictionHandler`, so the server treats it as a normal block action and acknowledges that
+sequence; the abort branch only clears the server's destroy state and sends a `-1` progress overlay, so
+the probe changes no block, consumes no inventory item, never touches the offhand and sends no other
+packet. If those four blocks above the eye contain no air, for example in a confined, fully underwater
+or low-ceiling position, the probe is refused and the debt stays. While the runtime is breaking a block
+it started, the probe is delayed, because the abort would cancel that in-progress destroy and the
+server would then warn about a destroy-block-pos mismatch; the probe window keeps running during the
+delay. The server may also log that harmless "Mismatch in destroy block pos" warning for a normal
+probe, because the abort races the server's own destroy tracking even when no cleanup break is running.
+If a cleanup destroy ever leaks past our tracking, the delay guard suppresses probes until the risk is
+abandoned with its debt kept. The ack alone is not enough: after the ack, one further server tick retires
+only reservations whose explosion predates the probe and that saw no coherent health change. A lost
+probe, or a lost, late, repeated or mismatched ack, leaves the debt in place. At most one probe is in
+flight at a time, and a sent probe is pruned after 40 ticks. A reservation left probe-eligible for 40
+ticks is abandoned with its debt and is not probed again. This is not one probe per reservation: a
+reservation that becomes eligible after an earlier probe has gone out can be covered by a later one.
+The probe consumes one packet from the shared budget, is never planned, and is sent only while the
+module is enabled, the session is open and
+the model is `Barrier`; `Strict` and `Meteor-style` never arm it. Switching away from `Barrier` drops
+only the in-flight probe evidence, never sent risk. Confirmation is local vanilla only: on a laggy,
+proxied or modified server the ack may not order the health sync, so use `Strict` there.
+
+`Meteor-style` follows Meteor and Future: an observed explosion retires that reservation immediately,
+and an observed removal or tracking removal also retires it. Crystals that were sent but never observed
+exploding still count against the next placement, so three crystals in flight before a health update are
+summed and a placement that would cross the margin is blocked. It is the fastest model and the weakest
+when several hits land before health updates.
+
+The module info string shows the active model (`[risk: strict]`), the debug log header carries
+`risk-model=<key>`, and each accepted dispatch line records the outstanding total. Model changes are
+logged once. `Barrier` and `Meteor-style` retirements are logged once each; a `Strict` rule-1
+retirement is not separately logged, because it is inferred from the same health snapshot that the
+rule already applies.
+
 ## Settings
 
 The Phase 8 settings are grouped for the Meteor screen. `show-risk-debt` (Render group, default on)
@@ -48,8 +93,8 @@ exists, when there is neither debt nor a suspension, or after leaving the world:
 closed connection cannot leave stale debt or suspension on screen until the next enabled tick.
 
 - **General** — mode, profile and target range.
-- **Safety** — min target damage, max self damage, remaining-health margin, max friend damage and locked
-  anti-suicide.
+- **Safety** — risk model, min target damage, max self damage, remaining-health margin, max friend damage
+  and locked anti-suicide.
 - **Direct** — place, attack and walls ranges, own-only, support and surround-gap.
 - **Timing** — motion prediction and hurt-sync.
 - **Piston** — piston-trap, beta auto-cleanup and the sixteen beta layout toggles.
@@ -278,8 +323,11 @@ by the conflict row or by `setting`/`uncached`), `concurrency_setting` (`on`/`of
 `concurrency_modes` (the active mode). The debug line prints setting, mode and phase on change only; it
 never changes a decision.
 
-The debug log's header records the active mode and whether hysteresis is engaged. The per-tick choice
-line is only written through the existing debug hook; the log never changes a decision.
+The debug log's header records the active mode, whether hysteresis is engaged and `risk-model=<key>`.
+The per-tick choice line is only written through the existing debug hook; each accepted dispatch line
+also records the outstanding total. Model changes are logged once; `Barrier` and `Meteor-style`
+retirements are logged once each, while a `Strict` rule-1 retirement is not separately logged. The log
+never changes a decision.
 
 ## Footprint-scoped concurrency (Phase 6.4 stage 2, experimental)
 

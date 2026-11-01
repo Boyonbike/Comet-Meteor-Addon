@@ -342,6 +342,8 @@ final class HybridInterleavingTest {
             case PISTON -> Action.PLACE_PISTON;
             case DEFEND -> Action.ATTACK_CRYSTAL;
             case CLEANUP -> Action.MINE_POWER;
+            // PROBE is packet-only runtime evidence: no planner can ever produce it as an opportunity.
+            case PROBE -> throw new IllegalArgumentException("PROBE is never planned");
         };
     }
 

@@ -55,7 +55,7 @@ final class CrystalCombatPhase8SettingsTest {
         assertEquals(List.of("General", "Safety", "Direct", "Timing", "Piston", "Defence",
             "Pauses", "Experimental", "Render", "Diagnostics"), List.copyOf(groups.keySet()));
         assertEquals(List.of("mode", "profile", "target-range"), groups.get("General"));
-        assertEquals(List.of("anti-suicide", "min-target-damage", "max-self-damage",
+        assertEquals(List.of("anti-suicide", "risk-model", "min-target-damage", "max-self-damage",
             "remaining-health-margin", "max-friend-damage"), groups.get("Safety"));
         assertEquals(List.of("place-range", "attack-range", "walls-range", "own-only", "support",
             "surround-gap"), groups.get("Direct"));

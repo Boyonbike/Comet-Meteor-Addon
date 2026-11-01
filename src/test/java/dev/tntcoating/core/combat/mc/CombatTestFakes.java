@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.BlockHitResult;
 
@@ -267,7 +268,8 @@ final class CombatTestFakes {
             BREAK,
             SWING,
             SLOT,
-            STOP
+            STOP,
+            PROBE
         }
 
         record Send(int attempt, Kind kind, int number, BlockHitResult hit, boolean enqueued) {
@@ -277,8 +279,14 @@ final class CombatTestFakes {
         /** 1-based attempt number that is refused, or -1 for none. */
         int failOnAttempt = -1;
         int ackSequence = -1;
+        /**
+         * Sequence the fake prediction handler reports for the next probe. -1 models a client without a
+         * real sequence, which the runtime must treat as a failed probe, never as an acknowledgement.
+         */
+        int probeSequence = -1;
         int attempts;
         final List<Send> sends = new ArrayList<>();
+        final List<BlockPos> probes = new ArrayList<>();
         /** The cell whose vanilla destruction is currently in progress, if any. */
         Cell breaking;
         int stops;
@@ -286,8 +294,10 @@ final class CombatTestFakes {
         void reset() {
             attempts = 0;
             sends.clear();
+            probes.clear();
             failOnAttempt = -1;
             ackSequence = -1;
+            probeSequence = -1;
             breaking = null;
             stops = 0;
         }
@@ -380,6 +390,17 @@ final class CombatTestFakes {
         @Override
         public SendResult selectSlot(int slot) {
             return attempt(Kind.SLOT, slot, null);
+        }
+
+        @Override
+        public SendResult probeBlockChange(BlockPos pos) {
+            probes.add(pos);
+            SendResult result = attempt(Kind.PROBE, 0, null);
+            if (!result.enqueued()) return result;
+            // The probe's ack is its own prediction sequence, never the generic sink ack.
+            return probeSequence >= 0
+                ? SendResult.accepted(result.sendMethodCompleted(), probeSequence)
+                : SendResult.refused();
         }
     }
 }

@@ -6,6 +6,7 @@
 
 package dev.tntcoating.core.combat.mc;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.BlockHitResult;
 
 /**
@@ -56,6 +57,16 @@ public interface CombatPacketSink {
      * cleanup action; it never routes through Speedmine or any other module.
      */
     SendResult breakBlock(BlockHitResult hit);
+
+    /**
+     * Sends one side-effect-free sequenced interaction for the BARRIER probe: an
+     * {@code ABORT_DESTROY_BLOCK} action at an inert position (air above the player's head), carrying a real
+     * vanilla prediction sequence. The server's abort branch only clears its own destroy state and sends a
+     * {@code -1} destroy-progress overlay; it never changes a block, and the server always acknowledges the
+     * sequence on its next tick. Implementations must report {@code -1} when they cannot obtain a real
+     * sequence; no caller may treat {@code -1} as an acknowledgement.
+     */
+    SendResult probeBlockChange(BlockPos pos);
 
     /**
      * Cancels the vanilla destruction this sink started. This is the one cancellation exception to

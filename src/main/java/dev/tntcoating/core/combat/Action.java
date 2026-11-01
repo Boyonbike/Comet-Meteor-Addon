@@ -17,5 +17,7 @@ public enum Action {
     MINE_POWER,
     MINE_PISTON,
     MINE_SUPPORT,
-    PLACE_BLOCKER
+    PLACE_BLOCKER,
+    /** Side-effect-free barrier probe; packet-only, never planned, never touches a block or the offhand. */
+    PROBE
 }

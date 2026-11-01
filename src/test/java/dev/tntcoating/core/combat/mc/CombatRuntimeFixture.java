@@ -135,6 +135,12 @@ final class CombatRuntimeFixture {
             Set.of(), Set.of(crystal()), Set.of(), 20);
     }
 
+    /** A cleanup mine that starts a vanilla destroy and leaves {@code destructionCell} set. */
+    Intent mine(Cell cell) {
+        return new Intent(freshId(), PLAN, Strategy.DIRECT, Action.MINE_SUPPORT, cell, null,
+            Set.of(cell), Set.of(), Set.of(), 20);
+    }
+
     EffectiveHealth healthySelf() {
         return new EffectiveHealth(20.0, 0.0, Capability.KNOWN, 0L);
     }
@@ -168,6 +174,13 @@ final class CombatRuntimeFixture {
         return new PlanContext(state, exposure, estimate, healthySelf(), false,
             client.selectedSlot, client.hotbar[client.selectedSlot], client.selectedSlot,
             client.offhand, false);
+    }
+
+    /** A cleanup-mine context: the dispatch revalidates the exact block id it intends to break. */
+    PlanContext mineContext(String blockId) {
+        return new PlanContext(state(), exposure(), estimate(), healthySelf(), false,
+            client.selectedSlot, client.hotbar[client.selectedSlot], client.selectedSlot,
+            client.offhand, false, false, false, null, false, blockId);
     }
 
     PlanContext rotationContext() {

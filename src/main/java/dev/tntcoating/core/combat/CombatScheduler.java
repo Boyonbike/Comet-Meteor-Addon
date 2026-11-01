@@ -119,17 +119,18 @@ public final class CombatScheduler {
     }
 
     /**
-     * Reserves only packet capacity and, when needed, the hotbar slot for a cleanup action. Cleanup is
-     * budgeted like every other combat action but it carries no risk: nothing here creates a risk entry,
-     * debt or hazard, and the lease is dropped as soon as the causative packet is reported sent (or when
-     * the dispatch fails and the caller releases it). The packet spend itself stays in the rolling window.
+     * Reserves only packet capacity and, when needed, the hotbar slot for a packet-only action. Cleanup and
+     * the BARRIER probe are budgeted like every other combat action but carry no risk: nothing here creates a
+     * risk entry, debt or hazard, and the lease is dropped as soon as the causative packet is reported sent
+     * (or when the dispatch fails and the caller releases it). The packet spend itself stays in the rolling
+     * window. No other strategy may use this path.
      *
      * @return true when the lease now owns the packet capacity (and slot, if requested)
      */
     public boolean reservePackets(Intent intent, Ticket ticket, int tick, int packetCost,
                                   boolean needsSlot) {
         if (intent == null || ticket == null) return false;
-        if (intent.strategy() != Strategy.CLEANUP) return false;
+        if (intent.strategy() != Strategy.CLEANUP && intent.strategy() != Strategy.PROBE) return false;
         if (!session.isOpen() || !session.valid(ticket)) return false;
         if (ticket.plan() != intent.plan()) return false;
         if (tick < 0 || packetCost < 0) return false;

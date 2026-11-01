@@ -9,10 +9,15 @@ package dev.tntcoating.core.combat;
 /**
  * Planner family. There is deliberately no speculative strategy: an attack always names a verified
  * entity identity.
+ *
+ * <p>{@link #PROBE} is the packet-only barrier evidence path: it is never produced by a planner, carries no
+ * risk reservation, and is allowed only for {@link RiskModel#BARRIER} through
+ * {@code CombatRuntime.dispatch}.
  */
 public enum Strategy {
     DIRECT,
     PISTON,
     DEFEND,
-    CLEANUP
+    CLEANUP,
+    PROBE
 }

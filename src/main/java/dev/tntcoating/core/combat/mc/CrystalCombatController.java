@@ -27,6 +27,7 @@ import dev.tntcoating.core.combat.Mode;
 import dev.tntcoating.core.combat.PistonLayoutSelection;
 import dev.tntcoating.core.combat.PistonSequence;
 import dev.tntcoating.core.combat.RiskDebtSnapshot;
+import dev.tntcoating.core.combat.RiskModel;
 import dev.tntcoating.core.combat.Observation;
 import dev.tntcoating.core.combat.Opportunity;
 import dev.tntcoating.core.combat.ObservationKind;
@@ -128,6 +129,11 @@ public final class CrystalCombatController {
     private boolean autoCleanup;
     /** The single tester mode selector; Hybrid is never accepted. */
     private Mode mode = Mode.DIRECT_ONLY;
+    /**
+     * Last risk model pushed to the live budget (or the one the next built stack starts with). The model is
+     * live state, not a build input: switching it never rebuilds the stack and never touches debt.
+     */
+    private RiskModel riskModel = RiskModel.defaultModel();
     /** Beta 16-combination layout filter; only consulted by the PistonOnly trap. */
     private PistonLayoutSelection pistonLayouts = PistonLayoutSelection.all();
     /**
@@ -217,6 +223,7 @@ public final class CrystalCombatController {
         }
         engineGeneration = stack.session().isOpen() ? stack.session().actionGeneration() : null;
         enabled = true;
+        stack.runtime().onEnabled();
         lastSuspensions.clear();
         lastServerTick = -1;
         info = ENABLED;
@@ -411,6 +418,7 @@ public final class CrystalCombatController {
             stack.session().open();
             trackedConnection = stack.session().connection();
         }
+        if (enabled) stack.runtime().onEnabled();
         refresh();
     }
 
@@ -593,6 +601,23 @@ public final class CrystalCombatController {
 
     public Mode mode() {
         return mode;
+    }
+
+    /**
+     * Live risk-model switch. The stack is never rebuilt and nothing is retired: the existing budget is
+     * handed the new model, which only drops in-flight BARRIER probe evidence when it leaves BARRIER.
+     * Sent risk, debt, hazards and the ledger are untouched, so neither a config change nor a profile
+     * switch can clear risk that has already left.
+     */
+    public void setRiskModel(RiskModel value) {
+        if (value == null) throw new IllegalArgumentException("riskModel");
+        riskModel = value;
+        if (stack != null) stack.risk().setRiskModel(value);
+    }
+
+    /** The live budget's model, or the staged value before the stack exists. */
+    public RiskModel riskModel() {
+        return stack != null ? stack.risk().riskModel() : riskModel;
     }
 
     /** Installs the beta layout filter; disabled combinations are never enumerated by the trap planner. */
@@ -890,6 +915,9 @@ public final class CrystalCombatController {
         if (debugHost != null && debugHost.running()) return true;
         debugHost = CombatDebugHost.start(mc, stack, moduleEnabled);
         if (debugHost != null) {
+            // The budget already emits one line per model change and per BARRIER/METEOR-style retirement;
+            // routing that sink into the recorder keeps those decisions in the exported debug log.
+            stack.risk().setEventSink(debugHost::debug);
             debugMarker("combat mode=" + mode.name() + " hysteresis="
                 + (mode == Mode.HYBRID ? "on" : "off"));
         }
@@ -899,6 +927,7 @@ public final class CrystalCombatController {
     /** Stops the debug taps; the rendered buffer is retained for one later export. */
     public void stopDebugLog() {
         if (debugHost == null) return;
+        if (stack != null) stack.risk().setEventSink(null);
         debugHost.stop();
     }
 

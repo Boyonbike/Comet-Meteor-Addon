@@ -10,23 +10,25 @@ package dev.tntcoating.core.combat;
  * Rule 3 of the safety model: retirement needs a processing barrier formed by the block-change
  * acknowledgement plus one server tick.
  *
- * <p><strong>This barrier is deliberately NEVER SATISFIED.</strong> The 26.2 acknowledgement exists, but
- * the ordering from acknowledgement to health synchronisation is unverified (audit C20); a barrier that
- * only looks present would silently retire risk. There is no probe packet, no barrier send, and no
- * observation kind that can satisfy this class. Zero-damage components therefore remain debt forever
- * unless rule 1 or rule 5 clears them, per the Conservative contract.
+ * <p><strong>This class is the strict never-satisfied marker.</strong> It reports {@code false} for
+ * {@link RiskModel#STRICT} and {@link RiskModel#METEOR_STYLE}, where the ordering from acknowledgement to
+ * health synchronisation remains unverified (audit C20) and no extra packet is allowed. The
+ * {@link RiskModel#BARRIER} model implements its own bounded, explicitly-armed evidence path inside
+ * {@link CombatRiskBudget}: one side-effect-free sequenced interaction, the exact acknowledgement plus one
+ * server tick, and only for reservations whose explosion predates the probe and that saw no health change.
+ * This class itself still has no send path and never becomes satisfied.
  */
 public final class ProcessingBarrier {
     private ProcessingBarrier() {
     }
 
-    /** Always {@code false}: rule 3 is not implemented as a satisfiable gate. */
+    /** Always {@code false}: the strict barrier is not implemented as a satisfiable gate. */
     public static boolean satisfied() {
         return false;
     }
 
     /** Human-readable explanation for logs and review notes. */
     public static String evidenceGap() {
-        return "block-change acknowledgement to health-sync ordering is unverified (audit C20); rule 3 is never satisfied";
+        return "block-change acknowledgement to health-sync ordering is unverified (audit C20); the strict barrier is never satisfied";
     }
 }
