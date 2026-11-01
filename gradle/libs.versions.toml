@@ -1,5 +1,5 @@
 [versions]
-mod-version = "0.26.27"
+mod-version = "0.27.0"
 
 # Fabric (https://fabricmc.net/develop)
 jdk = "25"
@@ -13,6 +13,10 @@ loom = "1.17.21"
 # Pinned to snapshot build 35; to update, take the newest <value> from
 # https://maven.meteordev.org/snapshots/meteordevelopment/meteor-client/26.2-SNAPSHOT/maven-metadata.xml
 meteor = "26.2-20261009.074120-35"
+
+# Test-only Fabric API client game-test module. This is the module version bundled by
+# Fabric API 0.161.0+26.2; it is not part of the shipped mod.
+fabric-client-gametest = "6.0.2+0f4f1dca9e"
 
 # Mods
 # Xaero's Minimap, compile-only (players install it themselves). Versions: https://modrinth.com/mod/xaeros-minimap/versions
@@ -28,6 +32,9 @@ fabric-loader = { module = "net.fabricmc:fabric-loader", version.ref = "fabric-l
 
 # Meteor client
 meteor-client = { module = "meteordevelopment:meteor-client", version.ref = "meteor" }
+
+# Test-only client game-test API
+fabric-client-gametest = { module = "net.fabricmc.fabric-api:fabric-client-gametest-api-v1", version.ref = "fabric-client-gametest" }
 
 # Mods
 xaero-minimap = { module = "maven.modrinth:xaeros-minimap", version.ref = "xaero-minimap" }
