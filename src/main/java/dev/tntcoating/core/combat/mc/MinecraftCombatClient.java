@@ -25,6 +25,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.item.ItemStack;
@@ -333,5 +334,12 @@ public final class MinecraftCombatClient implements CombatClient {
     /** End-crystal registry id used by dispatch's verified-entity check. */
     public static String endCrystalId() {
         return END_CRYSTAL_ID;
+    }
+
+    @Override
+    public HealthPair appliedHealth(int entityId) {
+        if (mc.level == null) return null;
+        if (!(mc.level.getEntity(entityId) instanceof LivingEntity living)) return null;
+        return new HealthPair(living.getHealth(), living.getAbsorptionAmount());
     }
 }
