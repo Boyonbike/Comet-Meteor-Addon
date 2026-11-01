@@ -17,7 +17,7 @@ Port of CrystalCombat from the Minecraft 26.2 tree. Source of every copied file 
 
 | Stage | Status | Commit | Tests | Review |
 |---|---|---|---|---|
-| 1. Desk audit | IN PROGRESS | — | — | — |
+| 1. Desk audit | DONE | `1137fa1` | — | self-check + fix round; independent review pending |
 | 2. Pure core | TODO | — | — | — |
 | 3. Minecraft/Meteor adapters | TODO | — | — | — |
 | 4. Meteor suppression + capability checks | TODO | — | — | — |
