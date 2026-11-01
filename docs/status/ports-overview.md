@@ -18,5 +18,5 @@ the 26.2 working tree. Both targets use the same `PORT_BASE`.
 | Version | Features available | Features disabled | Unconfirmed | Test totals | Tester jar |
 |---|---|---|---|---|---|
 | 26.2 | all CrystalCombat features (reference implementation) | — | — | 1681 passed (Phase 9 close) | `26.2/build/libs/comet-0.27.0-tester.3-mc26.2.jar` |
-| 26.1.2 | all CrystalCombat features, including PistonOnly, Hybrid and the three risk models, except the two disabled settings | `motion-prediction`, `hurt-sync` | stronger-hit knockback/motion (§6.2); health/absorption co-delivery order (§6.3); piston per-tick displacement (§6.4) | focused suites pass; full-suite total in the stage 8 report | pending (stage 7) |
+| 26.1.2 | all CrystalCombat features, including PistonOnly, Hybrid and the three risk models, except the two disabled settings | `motion-prediction`, `hurt-sync` | stronger-hit knockback/motion (§6.2); health/absorption co-delivery order (§6.3); piston per-tick displacement (§6.4) | 2651 passed (full suite, 0 failures) | `26.1.2/build/libs/comet-0.27.0-tester.3-mc26.1.2.jar` (commit `b4a09ec`, clean) |
 | 1.21.11 | pending | pending | pending | baseline 1664 passed before port | pending |
