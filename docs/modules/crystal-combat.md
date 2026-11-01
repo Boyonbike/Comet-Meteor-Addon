@@ -1,11 +1,13 @@
 # CrystalCombat
 
+Current build: **tester.4** — [cross-version timing test notes](../testers/tester-4-handout.md).
+
 [Documentation index](../README.md) · [Project README](../../README.md)
 
 Module: **crystal-combat**.
 
 **CrystalCombat** is the audited crystal-aura / piston-crystal combat module for Meteor 26.2. It is
-**DirectOnly by default**. The piston trap is an opt-in beta in the `-tester.3` build and is not
+**DirectOnly by default**. The piston trap is an opt-in beta in the `-tester.4` build and is not
 server-confirmed. This is beta software: test on worlds where losing gear is acceptable.
 
 The module sends only through one runtime dispatch path. Planners never send, rotations are requested

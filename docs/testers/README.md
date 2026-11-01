@@ -1,6 +1,8 @@
-# CrystalCombat tester build 3
+# CrystalCombat tester build 4
 
-This is the third **tester build** of CrystalCombat (`tester.3`). It is not a release build. It exists
+Current build: **tester.4** — [cross-version timing test notes](tester-4-handout.md).
+
+This is the fourth **tester build** of CrystalCombat (`tester.4`). It is not a release build. It exists
 so testers can exercise the audited DirectOnly baseline, the **beta PistonOnly** single-push trap and
 the serialised Hybrid mode on real servers, and send back evidence. The suggested testing order is in
 [`tester-3-handout.md`](tester-3-handout.md).
@@ -168,16 +170,16 @@ behaviour or packet APIs, and evidence from it will not be comparable.
 
 1. Install Fabric Loader 0.19.3+ for Minecraft 26.2 and a Java 25 runtime.
 2. Put Meteor Client **26.2-20261009.074120-35** in `mods/`.
-3. Put `comet-0.27.0-tester.3-mc26.2.jar` from `build/libs/` in `mods/` as well.
+3. Put `comet-0.27.0-tester.4-mc26.2.jar` from `build/libs/` in `mods/` as well.
 4. **Keep the matching
-   `build/distributions/comet-0.27.0-tester.3-mc26.2-source.zip` with the jar.** Comet's distributed jar
+   `build/distributions/comet-0.27.0-tester.4-mc26.2-source.zip` with the jar.** Comet's distributed jar
    is GPL-3.0-only and the source archive is the corresponding source for exactly this tested build; it
    must travel with the jar. Both files are produced by the same build and the source zip contains
    `src/` and `THIRD_PARTY_NOTICES.md`.
 5. Launch the game, open Meteor's module list and enable `CrystalCombat` under **Comet**.
 
 The module's info string shows the active risk model and then a build bracket, for example
-`[risk: strict] [v0.27.0-tester.3 <short commit> tester.3]`: the first bracket is the model, the
+`[risk: strict] [v0.27.0-tester.4 <short commit> tester.4]`: the first bracket is the model, the
 second carries the version, short commit and tester label. A `-dirty` commit means the build was
 made from an uncommitted working tree; the export's `build.txt` records the same value. Please
 include that version line in feedback.
