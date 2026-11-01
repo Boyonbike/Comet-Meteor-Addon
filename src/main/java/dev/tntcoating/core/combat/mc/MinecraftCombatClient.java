@@ -27,6 +27,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ClipContext;
@@ -336,5 +337,12 @@ public final class MinecraftCombatClient implements CombatClient {
     static AABB toAabb(Box box) {
         return new AABB(box.min().x(), box.min().y(), box.min().z(),
             box.max().x(), box.max().y(), box.max().z());
+    }
+
+    @Override
+    public HealthPair appliedHealth(int entityId) {
+        if (mc.level == null) return null;
+        if (!(mc.level.getEntity(entityId) instanceof LivingEntity living)) return null;
+        return new HealthPair(living.getHealth(), living.getAbsorptionAmount());
     }
 }

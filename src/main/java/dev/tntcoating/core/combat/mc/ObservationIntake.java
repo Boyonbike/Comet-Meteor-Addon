@@ -263,6 +263,23 @@ public final class ObservationIntake implements ObservationListener {
                     }
                 }
                 if (!healthKnown && !absorptionKnown) return;
+                // Entity data is delta-synced: the server sends only the fields that changed, and absorption
+                // at its default of 0 is never sent at all. This runs after the vanilla handler applied the
+                // packet, so the entity's other field is its value at this same applied revision. Complete
+                // the pair from it; a half pair would keep the budget suspended with INCOHERENT_HEALTH forever.
+                if (!healthKnown || !absorptionKnown) {
+                    CombatClient.HealthPair applied = client.appliedHealth(data.entityId());
+                    if (applied != null) {
+                        if (!healthKnown) {
+                            healthKnown = true;
+                            healthValue = applied.health();
+                        }
+                        if (!absorptionKnown) {
+                            absorptionKnown = true;
+                            absorptionValue = applied.absorption();
+                        }
+                    }
+                }
                 enqueue(new Observation(conn, receipt.sequence, revision, receipt.nanos, clientTick,
                     ObservationKind.ENTITY_DATA, entity, null, null, null,
                     new ObservationPayload.EntityData(healthKnown, healthValue, absorptionKnown,

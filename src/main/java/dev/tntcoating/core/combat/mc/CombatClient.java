@@ -99,4 +99,16 @@ public interface CombatClient {
     void selectHotbarSlot(int slot);
 
     ConnectionKey connection();
+
+    /** Health and absorption of a living entity as currently applied on the client. */
+    record HealthPair(double health, double absorption) {
+    }
+
+    /**
+     * The applied health/absorption pair of the living entity with this network id, read on the client
+     * thread after the vanilla handler ran, or {@code null} when it is absent or not a living entity.
+     */
+    default HealthPair appliedHealth(int entityId) {
+        return null;
+    }
 }
