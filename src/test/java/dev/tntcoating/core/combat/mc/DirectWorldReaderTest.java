@@ -94,7 +94,7 @@ final class DirectWorldReaderTest {
     }
 
     @Test
-    void astralOverlayCellsSubstituteObsidianForExposure() {
+    void plannedCoverLowersTargetExposureButNotSelfOrFriendBounds() {
         CombatDamageAdapter adapter = new CombatDamageAdapter();
         AdapterTestSupport.FakeWorld world = new AdapterTestSupport.FakeWorld();
         Vec eye = new Vec(0.5, 64.5, 0.5);
@@ -105,7 +105,7 @@ final class DirectWorldReaderTest {
             List.of()), 1.0e-9);
         assertEquals(0.0, adapter.exposure(world, eye, target, ExposurePolicy.FAITHFUL, wall),
             1.0e-9);
-        assertEquals(0.0, adapter.exposure(world, eye, target,
+        assertEquals(1.0, adapter.exposure(world, eye, target,
             ExposurePolicy.SELF_FRIEND_UPPER_BOUND, wall), 1.0e-9);
     }
 

@@ -1,22 +1,21 @@
 # CrystalCombat ports overview
 
-Status of the CrystalCombat port from the Minecraft 26.2 tree to Minecraft 26.1.2 and
-Minecraft 1.21.11.
+Updated 2026-11-01 after the three-version parity pass. Source baseline for the ports:
+`363b410fa945e361c707b997a97556d0e5ef7398` (26.2).
 
-| Field | Value |
-|---|---|
-| PORT_BASE (26.2 source commit) | `363b410fa945e361c707b997a97556d0e5ef7398` |
-| 26.2 | Minecraft 26.2, Java 25, Meteor `26.2-20261009.074120-35` (port source; read-only) |
-| 26.1.2 | Minecraft 26.1.2, Java 25, Meteor `26.1.2-20260810.135545-42` |
-| 1.21.11 | Minecraft 1.21.11, Java 21, Meteor `1.21.11-82` (vendored under `1.21.11/vendor/`) |
+All three ports are implemented and have passing tester builds. The supported combat
+features match after correcting planned-cover upper bounds and support-cell validation
+on both older versions. Motion prediction and hurt-sync remain gated on the older
+versions, and the live gametest harness remains 26.2-only.
 
-Every copied file comes from `PORT_BASE` via `git show`/`git archive`; nothing is copied from
-the 26.2 working tree. Both targets use the same `PORT_BASE`.
+See [the parity report](version-parity-2026-11-01.md) for fixes, deliberate differences,
+verification and remaining live-testing limitations.
 
-## Per-version status
+| Minecraft | Tests passed | Failures/errors/skips | Tester jar |
+|---|---:|---|---|
+| 1.21.11 | 2658 | 0 / 0 / 0 | `build/libs/comet-0.27.0-tester.3-mc1.21.11.jar` |
+| 26.1.2 | 2654 | 0 / 0 / 0 | `build/libs/comet-0.27.0-tester.3-mc26.1.2.jar` |
+| 26.2 | 2779 | 0 / 0 / 0 | `build/libs/comet-0.27.0-tester.3-mc26.2.jar` |
 
-| Version | Features available | Features disabled | Unconfirmed | Test totals | Tester jar |
-|---|---|---|---|---|---|
-| 26.2 | all CrystalCombat features (reference implementation) | — | — | 1681 passed (Phase 9 close) | `26.2/build/libs/comet-0.27.0-tester.3-mc26.2.jar` |
-| 26.1.2 | all CrystalCombat features, including PistonOnly, Hybrid and the three risk models, except the two disabled settings | `motion-prediction`, `hurt-sync` | stronger-hit knockback/motion (§6.2); health/absorption co-delivery order (§6.3); piston per-tick displacement (§6.4) | 2651 passed (full suite, 0 failures) | `26.1.2/build/libs/comet-0.27.0-tester.3-mc26.1.2.jar` (commit `b4a09ec`, clean) |
-| 1.21.11 | pending | pending | pending | baseline 1664 passed before port | pending |
+Matching source archives are in `build/distributions/`. Combat purity checks passed
+as part of each build. Documentation links were checked with `python3 scripts/check_docs.py`.

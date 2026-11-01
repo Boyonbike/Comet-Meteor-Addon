@@ -53,13 +53,13 @@ final class CombatDamageAdapterTest {
     }
 
     @Test
-    void overlayCellsAreTreatedAsObsidianForEveryPolicy() {
+    void plannedCoverNeverReducesSelfOrFriendUpperBound() {
         CombatDamageAdapter adapter = new CombatDamageAdapter();
         AdapterTestSupport.FakeWorld world = new AdapterTestSupport.FakeWorld();
         List<Cell> wall = List.of(new Cell(1, 64, 0), new Cell(1, 65, 0));
         assertEquals(1.0, adapter.exposure(world, EYE, TARGET, ExposurePolicy.SELF_FRIEND_UPPER_BOUND,
             List.of()), 1.0e-9);
-        assertEquals(0.0, adapter.exposure(world, EYE, TARGET,
+        assertEquals(1.0, adapter.exposure(world, EYE, TARGET,
             ExposurePolicy.SELF_FRIEND_UPPER_BOUND, wall), 1.0e-9);
     }
 

@@ -166,9 +166,13 @@ public final class MinecraftCombatClient implements CombatClient {
 
     @Override
     public boolean supportBelow(Cell cell) {
-        if (cell == null || mc.level == null) return false;
-        BlockPos below = blockPos(cell.below());
-        return mc.level.getBlockState(below).isFaceSturdy(mc.level, below, Direction.UP);
+        return supportBelow(mc.level, cell);
+    }
+
+    static boolean supportBelow(net.minecraft.world.level.BlockGetter world, Cell cell) {
+        if (cell == null || world == null) return false;
+        BlockPos below = blockPos(cell);
+        return world.getBlockState(below).isFaceSturdy(world, below, Direction.UP);
     }
 
     @Override

@@ -101,3 +101,9 @@ The stronger-hit runtime behaviour, the health/absorption co-delivery order, the
 
 - Nothing pushed; all commits local to branch `26.1.2`.
 - No dependency or vendored-Meteor changes are permitted; stop and report if one appears needed.
+
+## Later parity pass — 2026-11-01
+
+See [the three-version parity report](version-parity-2026-11-01.md) for the current
+verification totals, adapter corrections, tester builds and compatibility exceptions.
+The earlier stage report above is retained as historical evidence.
