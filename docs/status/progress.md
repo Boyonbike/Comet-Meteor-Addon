@@ -11,7 +11,7 @@ Repository: `~/Desktop/Comet Metior Addon/26.2` (branch `26.2`, common git dir `
 | 4 Phase 5 test gaps + auto-cleanup | DONE | 2026-11-01 | `ec3d365` (part A), `361e5f8` (part B) | 2699 / 277 suites, 0 failures | part A PASS after 2 fix rounds; part B PASS after 1 fix round |
 | 5 Phase 8 UI and lifecycle | DONE | 2026-11-01 | `166cf57` | 2733 / 282 suites, 0 failures | PASS after 1 follow-up fix round + delta re-review PASS |
 | 6 risk-model setting | DONE | 2026-11-01 | `067cfd5` | 2776 / 287 suites, 0 failures | PASS after 2 fix rounds (same-bundle health evidence both orders) + final delta re-review PASS |
-| 7 Tester build 3 | | | | | |
+| 7 Tester build 3 | DONE | 2026-11-01 | `4f0e141` (docs) + tester.3 build | 2776 / 287 suites, 0 failures | PASS (7 non-blocking, 6 fixed in the same commit) |
 | 8 Final report | | | | | |
 
 ## Stage 1 — Secure the work — DONE (2026-11-01)
@@ -165,3 +165,18 @@ Carried-forward non-blocking issues:
 - Zero-bound self/friend health snapshots still block the barrier (conservative: may slow the aura, cannot cause unsafe placement).
 - `CrystalCombatRuntimeBarrierProbeTest` and the other new suites do not cover planner integration or a render-thread call path.
 
+
+## Stage 7 — Tester build 3 — DONE (2026-11-01)
+
+Documentation commit `4f0e141` (no `src/`, `build.gradle.kts` or `libs.versions.toml` change):
+
+- `docs/testers/README.md` retitled for build 3 and gained `## Sending your report`: send reports **directly to the developer** (not a public tracker, public chat or Discord), use `.crystalcombat export confirm` first so other players' names/UUIDs are hashed, zip `comet/exports/` together with the filled-in template and send that one zip. Per-OS paths: Windows `%APPDATA%\.minecraft\comet\exports\`, macOS `~/Library/Application Support/minecraft/comet/exports/`, Linux `~/.minecraft/comet/exports/`; custom launchers use the instance game directory containing `mods/` and `config/`. Per-OS zip steps included.
+- Triage location documented as `testers/reports/<round>/<tester>/`: for this build `testers/reports/tester-3/<tester>/`, the input to Phase 9 triage; testers never commit anything.
+- `CHANGELOG.md` top entry `## 0.27.0-tester.3 — 2026-11-01` (all three modes, three-option risk model, debt HUD, settings re-groups/migration, materials wait, direct-over-preview, beta auto-cleanup, piston trace/vertical-push hardening, tester docs) with an explicit known-limitations list.
+- New `docs/testers/tester-3-handout.md`: install (MC 26.2, Fabric Loader, Java 25, pinned Meteor build, jar + source zip), test order DirectOnly → PistonOnly (beta) → Hybrid, risk-model order Strict → Barrier (local vanilla only) → Meteor-style, how to read debt/suspension text, debug log + export flow, privacy, where to send, what to include, limitations and a stop-and-send list.
+- `docs/testers/checklist.md`: stale ack wording corrected (ordinary dispatch keeps `ackSequence = -1`; Barrier is the exception), cleanup wait text updated, `footprint-concurrency` moved to Experimental, and `## Tester build 3 additions` items 81–87 (risk-model selection and debt retention, Strict retirement, Barrier on local vanilla, Meteor-style, debt/suspension display incl. clear on leaving world, auto-cleanup, settings migration).
+- `docs/README.md` links the handout; `docs/modules/crystal-combat.md` moves to `-tester.3` and links the tester docs.
+
+Review: reviewer `9c237c76` (read-only) returned PASS with no blocking issues; 7 non-blocking nits, of which 6 were fixed in the same commit (migration durability wording, Pauses destination list, real info-string shape `[risk: ...] [v0.27.0-tester.3 <commit> tester.3]`, auto-cleanup stop list including respawn and mode switch, "when risk is suspended" wording, ordinary-path ack wording). The seventh (tester.3 artifacts not built yet) is the handoff gate resolved by the build below.
+
+Build verification is recorded in Stage 8.
