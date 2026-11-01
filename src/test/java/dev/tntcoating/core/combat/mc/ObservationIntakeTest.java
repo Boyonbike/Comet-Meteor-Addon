@@ -1,0 +1,172 @@
+/*
+ * Original Comet implementation by Boyonabike.
+ * Independent: tests written against the project's own interfaces; no third-party code.
+ * SPDX-License-Identifier: CC0-1.0
+ */
+
+package dev.tntcoating.core.combat.mc;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import dev.tntcoating.core.combat.Observation;
+import dev.tntcoating.core.combat.ObservationKind;
+import dev.tntcoating.core.combat.ObservationPayload;
+import java.util.List;
+import java.util.UUID;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+/** Receipt ordering, revision stamping and the T1 applied-state surface. */
+final class ObservationIntakeTest {
+    private static int nextConnection = 1;
+
+    @BeforeAll
+    static void bootstrap() {
+        AdapterTestSupport.bootstrap();
+    }
+
+    private static CombatRuntimeFixture fixture() {
+        return new CombatRuntimeFixture();
+    }
+
+    @Test
+    void appliedRevisionTracksBundlesAndSetbacksQueueInReceiptOrder() {
+        CombatRuntimeFixture fixture = fixture();
+        ObservationIntake intake = fixture.intake;
+        intake.record(1, -1, 0, new ObservationIntake.RawSetback());
+        intake.record(1, -1, 0, new ObservationIntake.RawSetback());
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawSetback()), null);
+        List<Observation> drained = intake.drain();
+        assertEquals(1, drained.size());
+        assertEquals(ObservationKind.SETBACK, drained.get(0).kind());
+        assertTrue(intake.appliedRevision() > 0);
+        assertEquals(0, intake.queued());
+        assertEquals(0, intake.drain().size());
+    }
+
+    @Test
+    void receiptsFromAnotherConnectionAreDropped() {
+        CombatRuntimeFixture fixture = fixture();
+        ObservationIntake intake = fixture.intake;
+        long other = 99;
+        ObservationIntake.Receipt receipt = intake.record(other, -1, 0, new ObservationIntake.RawSetback());
+        intake.useConnection(1);
+        intake.apply(receipt, null);
+        assertEquals(0, intake.queued());
+    }
+
+    @Test
+    void healthPacketIsOnlyADeathMarkerNeverAHealthSnapshot() {
+        CombatRuntimeFixture fixture = fixture();
+        ObservationIntake intake = fixture.intake;
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawHealth(19.0f, 20, 5.0f)), null);
+        assertEquals(0, intake.queued());
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawHealth(0.0f, 20, 5.0f)), null);
+        List<Observation> drained = intake.drain();
+        assertEquals(1, drained.size());
+        assertEquals(ObservationKind.DEATH, drained.get(0).kind());
+    }
+
+    @Test
+    void entityDataReadsHealthAndAbsorptionThroughTheAccessorIds() {
+        CombatRuntimeFixture fixture = fixture();
+        ObservationIntake intake = fixture.intake;
+        int id = 203;
+        UUID uuid = UUID.randomUUID();
+        fixture.client.putEntity(id, uuid, "minecraft:player",
+            new dev.tntcoating.core.combat.Vec(0.0, 64.0, 0.0), dev.tntcoating.core.combat.Box.fromCell(
+                CombatRuntimeFixture.CELL));
+        List<SynchedEntityData.DataValue<?>> values = List.of(
+            new SynchedEntityData.DataValue<>(9, EntityDataSerializers.FLOAT, 12.0f),
+            new SynchedEntityData.DataValue<>(10, EntityDataSerializers.FLOAT, 3.0f));
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawEntityData(id, values)), null);
+        Observation observation = intake.drain().get(0);
+        assertEquals(ObservationKind.ENTITY_DATA, observation.kind());
+        ObservationPayload.EntityData data = (ObservationPayload.EntityData) observation.payload();
+        assertTrue(data.healthKnown());
+        assertEquals(12.0, data.health(), 1.0e-9);
+        assertTrue(data.absorptionKnown());
+        assertEquals(3.0, data.absorption(), 1.0e-9);
+    }
+
+    @Test
+    void expansionResolvesTheCrystalAndKeepsTheRadius() {
+        CombatRuntimeFixture fixture = fixture();
+        ObservationIntake intake = fixture.intake;
+        var crystal = fixture.crystal();
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawExplosion(
+            CombatRuntimeFixture.CRYSTAL_POSITION, 6.0f)), null);
+        Observation observation = intake.drain().get(0);
+        assertEquals(ObservationKind.EXPLOSION, observation.kind());
+        assertEquals(crystal, observation.entity());
+        assertEquals(6.0, ((ObservationPayload.Explosion) observation.payload()).radius(), 1.0e-9);
+    }
+
+    @Test
+    void respawnDimensionChangeIsComputedFromThePreviousDimension() {
+        CombatRuntimeFixture fixture = fixture();
+        ObservationIntake intake = fixture.intake;
+        intake.apply(intake.record(1, -1, 0,
+            new ObservationIntake.RawRespawn("minecraft:overworld")), null);
+        Observation first = intake.drain().get(0);
+        assertTrue(!((ObservationPayload.Respawn) first.payload()).dimensionChanged());
+        intake.apply(intake.record(1, -1, 0,
+            new ObservationIntake.RawRespawn("minecraft:the_nether")), null);
+        Observation second = intake.drain().get(0);
+        assertTrue(((ObservationPayload.Respawn) second.payload()).dimensionChanged());
+        intake.apply(intake.record(1, -1, 0,
+            new ObservationIntake.RawRespawn("minecraft:the_nether")), null);
+        assertTrue(!((ObservationPayload.Respawn) intake.drain().get(0).payload())
+            .dimensionChanged());
+    }
+
+    @Test
+    void blockAckReachesTheListenerWithoutAnObservation() {
+        CombatRuntimeFixture fixture = fixture();
+        ObservationIntake intake = fixture.intake;
+        int[] seen = {-1};
+        intake.setBlockAckListener(sequence -> seen[0] = sequence);
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawBlockAck(42)), null);
+        assertEquals(42, seen[0]);
+        assertEquals(0, intake.queued());
+    }
+
+    @Test
+    void entityEventsOnlyProduceDeathForSelfAndTotemForAnyone() {
+        CombatRuntimeFixture fixture = fixture();
+        ObservationIntake intake = fixture.intake;
+        var self = fixture.client.self;
+        var other = fixture.crystal();
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawEntityEvent(3)), self);
+        assertEquals(ObservationKind.DEATH, intake.drain().get(0).kind());
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawEntityEvent(3)), other);
+        assertEquals(0, intake.queued());
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawEntityEvent(35)), other);
+        assertEquals(ObservationKind.TOTEM_POP, intake.drain().get(0).kind());
+    }
+
+    @Test
+    void capacityOverflowIsStickyUntilReconciled() {
+        CombatRuntimeFixture fixture = fixture();
+        ObservationIntake intake = new ObservationIntake(fixture.session, fixture.client,
+            new EntityDataIds(9, 10), 1);
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawSetback()), null);
+        intake.apply(intake.record(1, -1, 0, new ObservationIntake.RawSetback()), null);
+        assertTrue(intake.overflowed());
+        assertEquals(1, intake.queued());
+        intake.clearOverflow();
+        assertTrue(!intake.overflowed());
+    }
+
+    @Test
+    void offThreadApplyIsIgnored() {
+        CombatRuntimeFixture fixture = fixture();
+        fixture.client.onClientThread = false;
+        fixture.intake.apply(fixture.intake.record(1, -1, 0,
+            new ObservationIntake.RawSetback()), null);
+        assertEquals(0, fixture.intake.queued());
+    }
+}
