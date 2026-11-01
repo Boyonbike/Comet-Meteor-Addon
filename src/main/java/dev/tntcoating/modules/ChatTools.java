@@ -27,6 +27,7 @@ import dev.tntcoating.core.ChatPublicQueue;
 import dev.tntcoating.core.ChatCountdowns;
 import dev.tntcoating.gui.ChatToolsScreen;
 import dev.tntcoating.mixin.EntityArgumentAccessor;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -46,6 +47,7 @@ import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.mixin.MinecraftServerAccessor;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.orbit.EventHandler;
+import meteordevelopment.orbit.EventPriority;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.Setting;
@@ -706,6 +708,28 @@ public final class ChatTools extends Module {
         return whispers.pending(player, now()).stream().map(ChatWhisperQueue.Whisper::text).toList();
     }
 
+    /** Whether a chat line is a private message in a format Chat Tools recognises. */
+    public boolean isPrivateMessage(String text) {
+        return mc.player != null && messages.parse(text, mc.player.getGameProfile().name(), now()) != null;
+    }
+
+    /** One chat line exactly as in-game chat shows it, for the Chat page and the Overview chat card. */
+    public record ChatLine(long id, long time, Component message, boolean dm) {}
+    public static final int CHAT_LINES = 300;
+    private final ArrayDeque<ChatLine> chatLines = new ArrayDeque<>();
+    private long chatLineId;
+    /** Recent chat for this session, oldest first. */
+    public List<ChatLine> chatLines() { checkSession(); return List.copyOf(chatLines); }
+
+    /** Runs after every other listener, so lines hidden from chat (hidden DMs, resent whispers) stay hidden here. */
+    @EventHandler(priority = EventPriority.LOWEST) private void onShownMessage(ReceiveMessageEvent event) {
+        if (mc.player == null || mc.getConnection() == null) return;
+        checkSession();
+        Component message = event.getMessage();
+        chatLines.addLast(new ChatLine(++chatLineId, System.currentTimeMillis(), message, isPrivateMessage(message.getString())));
+        if (chatLines.size() > CHAT_LINES) chatLines.removeFirst();
+    }
+
     @EventHandler private void onMessage(ReceiveMessageEvent event) {
         if (mc.player == null || mc.getConnection() == null) return;
         checkSession();
@@ -915,6 +939,7 @@ public final class ChatTools extends Module {
     private void resetSession() {
         if (popup != null && mc.gui.screen() == popup) mc.gui.setScreen(null);
         messages.clear();
+        chatLines.clear();
         recentPlayers.clear();
         recentKey = null;
         whispers.clear();
