@@ -1,0 +1,1515 @@
+# CrystalCombat Implementation Plan v2.1
+
+Oct 28, 2026 · @Innes
+
+## Purpose and scope
+
+This plan builds one `CrystalCombat` module for Comet, with DirectOnly, PistonOnly and Hybrid modes, on a shared engine. It supersedes the 2026-10-28 v1 plan and keeps its architecture, but changes the safety model, the task order and three feature decisions.
+
+Target first: Minecraft 26.2, Java 25, Meteor `26.2-20261009.074120-35`. Later ports: 26.1.2 (Java 25, Meteor build 42) and 1.21.11 (Java 21, vendored build 82).
+
+This document authorises planning only. It does not authorise writing product code, launching the client, joining any server or publishing a build. Each of those needs a separate go-ahead.
+
+### What changed from v1
+
+| Area | v1 | v2 | Why |
+| --- | --- | --- | --- |
+| Risk reconciliation | Released only on explosion + fresh health packet | Released on explosion/removal + latency window with no health change (superseded in v2.1) | Health packets only arrive on change; v1 could deadlock forever |
+| Health freshness | Age-based staleness | "No unresolved event older than X" | Health is legitimately quiet for long periods |
+| Cumulative self damage | Sum of per-crystal upper bounds | Sum of each close-arrival group's two largest hits | Sound even with outside hits; much less throttling on bursts of 3+ |
+| Task order | Four infrastructure tasks before anything runs | Phase 0 records real 26.2 event order first | Ledger and models are built against observed traces |
+| Task 4 | One task | Split into 2a scheduler/risk, 2b runtime/inventory, 2c Meteor suppression | Separately reviewable; 2c is the most version-fragile |
+| Hybrid concurrency | Serialised, footprint narrowing later | Footprint-scoped concurrency is core Phase 6 work | Without it Hybrid loses direct pressure for up to 5 s per trap |
+| ID prediction | Bound over every reachable position | Only when no unknown crystal actor is in reach (superseded in v2.1: removed) | The v1 bound was almost always unsatisfiable |
+| Defence | Break dangerous crystals | Adds anti-piston detection and blocking | Open-source precedent (GameSense Blocker); you will be pistoned too |
+| Release gate | 19 of 20 per layout | 19/20 smoke gate, 48/50 for default layouts | 19/20 only bounds success at about 75% |
+
+### What changed in v2.1 (technical review)
+
+An external review read the cached 26.2 bytecode and Meteor build 35 source and found that v2 treated several probabilistic observations as guarantees. v2.1 adopts its findings. Its evidence files are on your machine and were not re-checked here; Phase 0 must confirm each against the pinned artifacts.
+
+| Area | v2 | v2.1 |
+| --- | --- | --- |
+| Risk retirement | Quiet window and 40-tick rejection retired risk | Timeouts change backoff only; risk retires on terminal evidence covering the reservation, or world close |
+| Safety profiles | One rule for all | Conservative keeps hard-guarantee debt; Anarchy may opt into a labelled statistical quiet window |
+| Damage quantities | One "raw post-mitigation" value | `RawDamage`, `MitigatedBeforeAbsorption`, `EffectiveHealth` kept separate |
+| Risk reservation point | At attack | At `PLACE_CRYSTAL`, since others can detonate our crystal |
+| Cumulative bound | Grouped top-two from the start | Summed conservative bound first; grouping only after its proof obligations pass |
+| Target lower bound | Full value at confidence 0.5 | Unknown prior hurt → guaranteed lower bound 0; expected and optimistic kept separately |
+| Friend health | Implied hidden | Read from tracked metadata when available; known / unknown / censored states |
+| Crystal hit by explosion | Detonates early | Destroyed without a second explosion (inspected vanilla) |
+| Knockback | Zero in a full hole; 6-block cutoff | Three-dimensional push, 12-block entity search, swept exposure |
+| Damage raycast | Meteor default | Separate audited raycast policies for estimates, target lower bounds and self/friend upper bounds |
+| Observations | Enqueued on receive | Receipt sequence plus applied-state revision; snapshots after the application barrier |
+| Dispatch | Binary send | Packet-level progress; risk kept if any causative packet may have left |
+| Ownership | Owned if we placed and observed it | Confirmed state, inferred attribution and contested ownership kept separate; ambiguous cleanup stays manual |
+| Death | Closes session | Action generation ends; world hazards persist and are rescanned |
+| ID prediction | Narrowed precondition | Removed from the hard-safety milestone entirely |
+| Optimistic removal | Render and collision | Render hiding only; collision filtering and reuse are separate experiments |
+| Delivery order | Lifecycle late | First usable milestone is DirectOnly with suppression, lifecycle, risk and metrics |
+| Ablation | Interval overlap | Paired treatment-minus-baseline effect with a prespecified threshold |
+| Performance budget | Per planner pass | All combat work in a client tick, shared deadline |
+
+### How to use this plan
+
+Work phases in order. Each phase lists its files, contracts, tests to write first, implementation steps and an exit gate. A phase is done only when its exit gate passes and a reviewer signs the checkpoint. Tick the `- [ ]` boxes as you go.
+
+### Delivery order
+
+1. Phase 0: desk audit, then (separately authorised) trace recording.
+2. Phases 1–2: pure core, conservative risk accounting, runtime, Meteor suppression, minimal module lifecycle and metrics, built together.
+3. Phase 3: DirectOnly vertical slice, measured against Meteor. **First usable milestone.**
+4. Phase 4: direct tactics and defence, each behind its own gate.
+5. Phase 5: single-push piston layouts.
+6. Phase 6: serialised Hybrid, then footprint-scoped concurrency only if it demonstrates benefit.
+7. Phase 7: double push and presentation experiments, each independently gated.
+8. Phase 8: remaining UI; inventory lending behind its own gate.
+9. Phase 9: full validation; Phase 10: ports.
+
+At no stage is speculative ID prediction in scope.
+
+## Global constraints and provenance
+
+Safety invariants are hard rules: no profile, tactic, override or emergency may weaken them. Everything else in this plan is a tunable default.
+
+### Hard invariants
+
+1. One packet-sending path for combat-owned work. Only `CombatRuntime.dispatch` sends interaction, attack, swing, slot or rotation packets, including delegated mining and rotation requests. Planners never send.
+   - Exceptions: (1) CrystalCombat never calls `InventorySlotLoan.prepare()`, `Speedmine.requestBreak` or `InventoryWeaponAttack` **in a way that sends**; (2) rotation requests to Meteor `Rotations` may be issued only from inside `CombatRuntime.dispatch` and count as part of the single path; (3) Meteor `CrystalAura`'s send paths are suppressed in **P2c**; (4) other modules' sends are out of scope.
+2. Verified attacks need a real current-world crystal identified by entity ID and UUID within the current connection epoch.
+3. Self and friend safety cannot be bypassed by faceplace, lethal override, hurt-sync, cleanup, defence or any profile. No self-lethal totem gambling.
+4. Every crystal placement and every attack acquires a risk reservation atomically with its action, slot and rotation reservations. Placement reserves because another actor can detonate our crystal before we attack it.
+5. Timeouts change retry and backoff state only. They never retire risk or clear a hazard.
+6. Sent risk retires only when authoritative terminal evidence and a causally complete effective-health snapshot cover that reservation, or when its connection closes. Uncertain evidence suspends new risk spending.
+7. Unresolved sent-placement hazards survive timeout, disable, death and plan invalidation.
+8. Manual disable stops automatic sends immediately. No cleanup packets after disable.
+9. No sends from render callbacks or network threads.
+10. No silent double execution with Meteor CrystalAura. Missing critical mixin capability refuses activation.
+11. Never toggle the user's other modules. Never mutate Meteor's settings or enabled flag.
+12. Manual slot selection, cursor/container state and offhand totem priority win over automation.
+13. No speculative (unverified-ID) attacks in any profile that claims these invariants.
+
+The Anarchy profile may opt into a statistical quiet-window rule that relaxes invariant 6. When it does, the UI and docs must say the guarantee is statistical, and Phase 9 must report its observed miss rate.
+
+### Defaults that are not invariants
+
+Ranges, damage thresholds, packet budgets, hysteresis values, timeouts and caps are engineering starting points, listed with rationale in the defaults section. They change from measurement, not from guesses.
+
+### Provenance policy
+
+Comet ships under a GPL-compatible licence with full corresponding source. Every borrowed algorithm, helper or constant needs a pinned upstream revision, its licence, the author, and a note of what was changed. Record this in file headers, `THIRD_PARTY_NOTICES` and the source ZIP.
+
+Borrowing means one of three things, and each file states which:
+
+- **Ported code:** copied and adapted from a licence-compatible source. Needs header and notice.
+- **Reimplemented idea:** written fresh after reading a compatible source. Needs a notice line.
+- **Independent:** written from vanilla behaviour and tests alone. No notice needed.
+
+### Approved references
+
+| Source | Use for | Mode | Pin |
+| --- | --- | --- | --- |
+| Meteor 26.2 build | Damage, faceplace, Weakness, pauses, inventory semantics; test baseline | Ported where needed | `26.2-20261009.074120-35` |
+| Lambda (new rewrite) | Shared InteractionSettings/RotationSettings/Targeting split; opportunity concepts | Reimplemented | `e8eb261c…`; CrystalAura PR #101 merge `3eb57a77…` |
+| THM | 26.2 integration points only | Reimplemented | `21140a37…`; lineage checked 2026-10-29: not the flagged ThunderHack rename; Lambda is the true upstream; confirm GPL attribution before borrowing |
+| Coyduck | Hurt-aware arrival timing, gap fill, defensive pass, budgets | Ported selectively | `20d01a51…` |
+| LiquidBounce | Event-driven invalidation, rotation queue, movement simulation | Reimplemented | Pin a 26.2 revision (v0.40.0 tag) before reading code |
+| BlackOut | Piston geometry and ordering; real displaced-crystal attacks | Ported selectively | `4c18af3f…` plus the fork it comes from |
+| GameSense PR #95 (TechAle) | Piston failure cases; Blocker anti-piston idea | Reimplemented | PR #95 merge commit |
+| Marlow's Crystal Optimizer (MIT) | Presentation-overlay reference for optimistic removal | Reimplemented | Pin a release tag |
+| WaifuHax | Geometry ideas only | Reimplemented, no code | n/a |
+
+### Excluded sources
+
+These never enter the codebase, notes or tests, in code or as ideas:
+
+- Cracked clients and loaders (for example rushercrack).
+- Decompiled or deobfuscated paid clients, whatever licence badge they carry (for example OpenMio).
+- Leaked proprietary source (for example Shoreline leaks).
+- Renamed ThunderHack builds flagged as ratted.
+
+Closed clients you hold a licence for (Future, RusherHack, Mio, CatLean) may be used only as black-box opponents or baselines in Phase 9, and via public docs or plugin APIs. Never decompile them.
+
+### Deferred HongShi/Alien and Saturn behaviour
+
+They remain regression fixtures only. Their power-before-crystal ordering is a known-bad case the piston tests must reject.
+
+## Architecture and contracts
+
+Two planners propose, one scheduler reserves, one runtime sends. Observations flow the other way: network events become immutable records, the client thread applies them to the ledger, and planners see them in the next snapshot.
+
+&#91;embedded content: engine data flow · 8 components, one sender\]
+
+Observations run along the top row on their way in; actions run along the bottom row on their way out. Only the highlighted runtime talks to the server.
+
+### Data flow per client tick or event
+
+1. Meteor posts its Receive event before vanilla handles the packet. Network intake therefore records only an immutable receipt: connection ID, receipt sequence number, bundle position, nanoTime and the raw packet fields. It resolves nothing mutable and never touches planners.
+2. On the client thread, after vanilla has applied the packet, an application hook stamps the matching receipt with an applied-state revision. Only applied receipts become `Observation`s. UUIDs and world data are resolved here, not in intake.
+3. `CombatEngine.drain()` applies observations to `CrystalLedger`, `CombatHurtModel`, `CombatRiskBudget` and `CombatMetrics` in receipt order, preserving bundle order.
+4. `CombatRuntime.capture()` builds a bounded immutable `Snapshot` stamped with the applied-state revision it reflects.
+5. `DirectPlanner`, `PistonPlanner` and `DefensePlanner` evaluate the same snapshot and return `Opportunity` records. None sends.
+6. `CombatEngine.choose()` filters unsafe opportunities, ranks the rest and hands the winner's next `Intent` to `CombatScheduler`.
+7. `CombatScheduler.reserve()` atomically acquires block, entity, slot, rotation, packet-budget and risk reservations, or nothing.
+8. `CombatRuntime.dispatch()` revalidates against the newest applied revision, then sends packet by packet, recording progress (see Phase 2b).
+
+Event-triggered reactions (a crystal spawn, a block break) run steps 3–8 in the client-thread task that applies the event, without waiting for the next tick. The reaction delay is a measured service objective in Phase 9 (observation-to-application and application-to-send latency), not an assumed one-frame bound.
+
+### Package layout
+
+All paths are under `26.2/src/main/java/dev/tntcoating/`. Tests mirror them under `src/test/java/`.
+
+| Package / file | Responsibility | Touches Minecraft? |
+| --- | --- | --- |
+| `core/combat/CombatTypes` | Shared immutable records and enums | No |
+| `core/combat/CombatSession` | World epochs, config generations, tickets | No |
+| `core/combat/CrystalLedger` | Crystal lifecycle, spawn hazards, quarantine | No |
+| `core/combat/CombatDamagePolicy` | Threshold checks | No |
+| `core/combat/CombatMotionModel` | Bounded collision-aware prediction | No (uses `CollisionView`) |
+| `core/combat/CombatHurtModel` | Immunity-window and arrival modelling | No |
+| `core/combat/CombatRiskBudget` | Cumulative self/friend exposure | No |
+| `core/combat/CombatScheduler` | Leases, dependencies, packet budget | No |
+| `core/combat/DirectPlanner`, `DirectSequence` | Direct aura opportunities and sequence | No |
+| `core/combat/PistonPlanner`, `PistonSequence` | Piston opportunities and sequence | No |
+| `core/combat/DefensePlanner` | Dangerous crystal breaking, anti-piston blocking | No |
+| `core/combat/CombatEngine` | Orchestration and choice | No |
+| `core/combat/CombatMetrics` | Attempt/observation/outcome counters | No |
+| `core/combat/CombatRecorder` | Phase 0 trace recorder, kept for validation | Reads only |
+| `core/combat/mc/CombatRuntime` | Snapshot capture, observation intake, dispatch | Yes |
+| `core/combat/mc/CombatDamageAdapter` | Explosion exposure, armour, effects | Yes |
+| `core/combat/mc/CombatInventoryAdapter` | Hotbar selection, loans, restoration | Yes |
+| `modules/CrystalCombat` | Meteor module, settings, info string | Yes |
+| `render/CrystalCombatRender` | Read-only plan rendering | Yes |
+| `mixin/CrystalAuraMixin` | Meteor CrystalAura suppression | Yes |
+
+The `core/combat` package must compile and test without Minecraft on the classpath. Enforce it with a Gradle source-set or ArchUnit check in Phase 1.
+
+### Core contracts
+
+These are project types, not claims about Minecraft APIs. All collections are defensively copied.
+
+```java
+record ConnectionKey(long epoch) {}                 // one per server connection / world
+record ActionGeneration(long value) {}              // ends on death, respawn, config change, disable
+record EntityKey(ConnectionKey conn, int id, UUID uuid) {}
+record Cell(int x, int y, int z) {}
+record Vec(double x, double y, double z) {}
+record Box(Vec min, Vec max) {}
+record Ticket(ConnectionKey conn, ActionGeneration gen, long config, long plan) {}
+record ServerTickInterval(long earliest, long latest) {}   // server ticks, not wall clock
+
+enum Mode { DIRECT_ONLY, PISTON_ONLY, HYBRID }
+enum Strategy { DIRECT, PISTON, DEFEND, CLEANUP }
+enum Action { PLACE_BASE, PLACE_SUPPORT, PLACE_PISTON, PLACE_CRYSTAL, PLACE_POWER,
+              ATTACK_CRYSTAL, MINE_POWER, MINE_PISTON, PLACE_BLOCKER }
+enum ObservationKind { SPAWN, MOVE, REMOVED, TRACKING_REMOVED, BLOCK_UPDATE, EXPLOSION,
+                       HEALTH, ENTITY_DATA, EFFECT, EQUIPMENT, DAMAGE_EVENT, ENTITY_STATUS,
+                       TOTEM_POP, SETBACK, DEATH, RESPAWN, CONNECTION_CHANGE }
+enum Capability { KNOWN, UNKNOWN, CENSORED }
+enum Ownership { CONFIRMED_OURS, INFERRED_OURS, CONTESTED, NOT_OURS }
+
+record Observation(ConnectionKey conn, long receiptSeq, long appliedRevision,
+                   long receiptNanos, int clientTick, ObservationKind kind,
+                   EntityKey entity, Cell cell, Vec position, Box bounds,
+                   ObservationPayload payload) {}
+
+// Damage quantities are never mixed
+record RawDamage(double value) {}
+record MitigatedDamage(double beforeAbsorption) {}   // after armour, toughness, enchants, effects
+record EffectiveHealth(double health, double absorption, Capability cap, long revision) {}
+
+record TargetEstimate(double guaranteedLower, double expected, double optimistic) {}
+record ExposureBound(MitigatedDamage selfUpper, Map<EntityKey, MitigatedDamage> friendUpper,
+                     MitigationEnvelope envelope) {}
+record Safety(double minTarget, double maxSelf, double minRemaining, double maxFriend) {}
+
+record Intent(long id, long plan, Strategy strategy, Action action,
+              Cell cell, EntityKey entity, Set<Cell> blockLocks,
+              Set<EntityKey> entityLocks, Set<Intent> dependsOn, int expiresTick) {}
+
+record Opportunity(long id, Strategy strategy, EntityKey target, Vec explosion,
+                   TargetEstimate targetDamage, ExposureBound exposure, int etaTicks,
+                   double expectedDamage20, int actionCost, List<Intent> plan,
+                   double confidence, Footprint footprint) {}
+
+record Footprint(Set<Cell> structural, Box swept, Box blastSearch, Set<EntityKey> bound) {}
+```
+
+`EntityKey` carries its `ConnectionKey`, so identical numeric IDs across connections are never equal. `ActionGeneration` is separate: death ends every in-flight action but crystals and structures can survive in the same world, so hazards are kept and rescanned before reactivation. `Footprint` is what Hybrid uses to decide whether two plans can run concurrently. `SPECULATIVE_DIRECT` is gone from `Strategy`.
+
+### Threading
+
+- Network thread: record immutable receipts into a bounded MPSC queue, preserving bundle order. Nothing else.
+- Client thread: stamp applied revisions, drain, snapshot, plan, reserve, dispatch.
+- One shared per-tick work budget covers all of that, including event-triggered passes (see Phase 9.3). Invalidations are coalesced; optional planning is deferred when reconciliation uses the budget.
+- Worker threads: none until whole-client JFR profiles show the budget is exceeded.
+- Queue overflow: suspend new risk spending, log, take a fresh snapshot and reconcile. Never drop an observation silently.
+
+## Safety model
+
+The aura may spend risk only when the conservative worst case of every unresolved reservation, plus the new one, leaves self effective health above the margin and every friend within limits. In Conservative, risk retires only on evidence; silence and elapsed time never retire it.
+
+### Three damage quantities, never mixed
+
+- **`RawDamage`**: explosion damage as the hurt path receives it, before armour. The immunity rule subtracts the previous raw hit at this stage, before mitigation.
+- **`MitigatedDamage`**: after armour, toughness, protection enchantments and Resistance, before absorption.
+- **`EffectiveHealth`**: health plus absorption from one coherent snapshot. Absorption is subtracted here only, never inside a damage estimate, so it is never credited twice.
+
+Each reservation `r` carries `u_r`, a `MitigatedDamage` upper bound, and an arrival interval in **server ticks**. Server ticks are tracked separately from client wall-clock time, because a server stall or low TPS separates them. The margin `m` stays strictly greater than 2.
+
+### Mitigation envelope
+
+Upper bounds assume the weakest protection that could apply by the latest possible arrival:
+
+- An armour piece that could break before arrival is assumed broken.
+- An effect (Resistance, absorption source) that could expire before arrival is assumed gone.
+- When protection deteriorates, every outstanding reservation's `u_r` widens. It never narrows until the reservation retires.
+
+### Cumulative bound: summed first
+
+All profiles start with the plain sum:
+
+```latex
+D_{\max} = \sum_{r \in R} u_r
+```
+
+Allow a send only if the effective-health lower bound minus `D_max` exceeds `m`. Repeat per friend with their own `u` values.
+
+### Grouped bound (gated, later)
+
+The inspected 26.2 hurt path subtracts the previous raw hit before mitigation, and under fixed armour, toughness and protection the mitigation formula has a nondecreasing damage-to-input ratio. That suggests a group of hits landing within one immunity window costs at most the mitigated largest raw hit, and a group whose arrivals span less than `W` touches at most two windows:
+
+```latex
+D_{\max} = \sum_{g \in G} \left( u^{(1)}_g + u^{(2)}_g \right)
+```
+
+This is a mathematical inference, not yet a proof for gameplay. Grouping stays off until every obligation below passes, and falls back to the plain sum whenever one fails at run time:
+
+- [ ] Phase 0 confirms the raw-subtraction order and the ratio property against 26.2 bytecode, for every armour, toughness and protection combination in the test matrix.
+- [ ] Every member's arrival fits inside a stated server-tick interval shorter than `W`. Under a detected stall or TPS below 18, fall back.
+- [ ] One common worst-case mitigation envelope applies across the whole group.
+- [ ] Damage types that bypass the cooldown are excluded from grouping.
+- [ ] Armour breakage, effect expiry or a cooldown reset that could happen inside the group's interval → fall back.
+- [ ] A property test over random arrivals and prior outside hits never finds actual damage above the bound.
+- [ ] Server overrides: grouping is enabled only on a server where Phase 9 confirms vanilla behaviour.
+
+The v2 "fresh window after silence" tightening is removed: an outside hit can already have landed before its observation arrives.
+
+### Target estimates
+
+`TargetEstimate` keeps three values apart:
+
+- **`guaranteedLower`**: 0 whenever the target's prior hurt is unknown or a larger hit may still be inside its window.
+- **`expected`**: the best estimate, used for ordinary ranking and minimum-damage checks.
+- **`optimistic`**: used only for diagnostics.
+
+Lethal eligibility requires `guaranteedLower` at least equal to the target's effective-health upper bound. Ranking with low-confidence expected values is fine; claiming lethality with them is not.
+
+### Friend health
+
+In inspected vanilla, health is tracked entity metadata sent to tracking players. Read friend health and absorption through an adapter that reports `KNOWN`, `UNKNOWN` (not tracked) or `CENSORED` (the server sends placeholder values; detect constant or implausible values).
+
+- The per-friend cumulative damage ceiling (default 2) applies in every state.
+- A friend-survival check applies only with `KNOWN` health and uses a conservative lower bound.
+
+### Reservation lifecycle
+
+| State | Entered when | Leaves when |
+| --- | --- | --- |
+| Proposed | A planner returns an opportunity | Reserved, or dropped |
+| Reserved | Atomically acquired with action, slot and rotation locks | `DISPATCHING`, or cancelled (released) |
+| Dispatching | Before the first causative packet | Sent once any causative packet may have left; released only if non-transmission is established |
+| Sent | A placement or attack may have reached the server | Retired by the rules below, or connection close |
+| Debt | Sent, with no terminal evidence yet | Retired by rule 1 or 3, or connection close |
+
+Placement crystals reserve at `PLACE_CRYSTAL`. A later swing or slot-restore failure never rolls back an already queued attack.
+
+### Retirement rules (Conservative: hard guarantee)
+
+1. **Terminal evidence with a coherent snapshot.** An explosion at the bound crystal's position is observed, and then an effective-health snapshot arrives whose applied revision is causally after it. One transaction applies the snapshot and retires exactly the reservations whose explosions precede it. The snapshot need not attribute the change; it only has to postdate the explosion, so unrelated healing is harmless.
+2. **Coherence.** Health and absorption updates that may belong to one damage event are held until both are applied for the same bundle or revision. An absorption-only update never retires anything on its own.
+3. **Processing barrier.** Where no health change follows (a zero-damage or weaker in-window hit), retire only with evidence that the server has processed everything up to the explosion and sent any resulting health sync. The candidate barrier is the vanilla block-change acknowledgement sequence: send a sequenced interaction after the explosion is applied, wait for its acknowledgement, then one further server tick. Phase 0 must verify that ordering against health sync; a keepalive or a send callback does not qualify. Stage 6 implements the candidate as the opt-in `Barrier` risk model: the ack plus one further server tick retires only reservations whose explosion predates the probe and that saw no health change. A lost, late or mismatched ack keeps debt. Confirmation is limited to a local vanilla server; `Strict` never sends the probe.
+4. **Debt.** Anything without terminal evidence stays as debt and counts in `D_max`. Debt blocks only sends that would cross the margin. The info string and render show outstanding debt.
+5. **Respawn and connection close.** Respawn clears self debt (health is reset by the server). Friend debt and crystal hazards persist and are rescanned. Connection close clears everything for that connection.
+
+Timeouts never retire risk. A crystal that disappears through tracking removal (out of range) is not evidence of detonation. Removal of an unrelated crystal retires nothing.
+
+### Rejected attacks
+
+A 40-tick wait only sets backoff. The reservation stays `Sent` until the crystal's explosion is observed (rules 1–3), or a processing barrier sent after the attack is acknowledged while the crystal is still present in a later applied snapshot. That barrier proves the server processed the attack and did not detonate the crystal.
+
+### Anarchy statistical option
+
+The Anarchy profile may enable a labelled quiet-window rule: retire with zero damage after an explosion plus RTT p99 + jitter p99 + 2 ticks with no health change. The setting text says the guarantee is statistical and can fail under delays beyond the measured tail. Phase 9 reports its observed miss rate. Conservative never uses it.
+
+**Superseded 2026-11-01.** `AnarchyQuietWindow` is disabled and no production path can enable it: the module offers Conservative and Custom, `CombatProfiles.profileBudget` refuses an enabled window, and the shipped budget uses `AnarchyQuietWindow.disabled()`. `RiskModel.BARRIER` replaces it because elapsed time is not terminal evidence. The class and its retirement tests remain only to pin that the dormant statistical path cannot be reached.
+
+### Suspension
+
+Uncertain evidence suspends new risk spending (offence and defence detonations) until reconciled:
+
+- Observation queue overflow.
+- An unreconciled setback, death, respawn or connection change.
+- Missing equipment or effect data the damage adapter needs.
+- A pending incoherent health/absorption pair.
+- A detected server-tick stall (server time not advancing while the client does).
+
+### What this does not promise
+
+The budget bounds module-issued risk. Damage from other players, mobs or the environment can still arrive between observations.
+
+### Tests that must pass before Phase 2 closes
+
+- [x] Summed bound blocks the third self-6 reservation at effective health 20, margin 2.
+- [x] Absorption is subtracted only once (estimate excludes it; effective health includes it).
+- [x] Armour that could break before arrival widens every outstanding bound.
+- [x] Server stall beyond 40 client ticks: no reservation retires, and a late-landing attack is still covered.
+- [x] Delays beyond the p99 tail: Conservative retires nothing early; Anarchy statistical mode records a miss.
+- [x] Split absorption then health updates: no retirement until coherent.
+- [x] Unrelated healing after the explosion retires correctly without double counting.
+- [x] Zero-damage detonation retires only after the `Barrier` probe is acknowledged and one further server tick has passed; under `Strict` it remains debt and blocks only margin-crossing sends, and `Meteor-style` retires it on the observed explosion.
+- [x] Tracking removal does not retire.
+- [x] Rejected attack retires only after a barrier with the crystal still present.
+- [x] Failure after each packet step in dispatch: risk is retained once any causative packet may have left.
+- [x] Death and respawn in the same world: self debt cleared, friend debt and hazards kept.
+- [x] Hidden prior hurt on the target: `guaranteedLower` is 0 and lethal override does not fire.
+- [x] Friend health `CENSORED`: ceiling still applies, survival check skipped.
+- [x] Queue overflow and stall detection suspend detonations until reconciled.
+- [x] Grouping disabled path is exercised in every test above; grouping tests run only behind its flag.
+
+## Phase 0: API audit and observation recorder
+
+Before any planner exists, record what 26.2 actually sends during crystal combat. Every later model is tested against these traces instead of against assumptions.
+
+**Goal:** an audit file of pinned API signatures, and a set of recorded traces covering every event the engine will consume.
+
+**Needs authorisation:** recording requires launching the client against a local test server you control. Get that go-ahead before step 0.4.
+
+### 0.1 API audit (desk work, no launch)
+
+- [x] Record exact 26.2 Mojmap signatures and source paths for: entity add/remove packets, block update packets (single and section), block-change acknowledgement, explosion packet, health/food packet, entity data (health, absorption), effect add/remove, equipment, damage event, entity status (totem pop), player position/setback, respawn, dimension change and bundle delimiters.
+- [x] Confirm which of these Meteor exposes as events, on which thread, and whether before or after vanilla applies the packet. Build 35's Receive fires before handling; find or add an after-application hook.
+- [x] Read the 26.2 `LivingEntity` hurt path. Record the invulnerability timer, the immunity window `W`, that the previous raw hit is subtracted before mitigation, which damage types bypass the cooldown, and whether a stronger in-window hit broadcasts a damage event. Until 0.4 records the trace, `CombatMotionModel` must assume an in-window stronger hit may still cause knockback (conservative for target envelopes and self bounds).
+- [x] Read `CombatRules` mitigation and confirm the nondecreasing damage-to-input ratio under fixed armour, toughness and protection (a grouping proof obligation).
+- [x] Read `EndCrystal.hurtServer`: confirm a crystal damaged by an explosion-tagged source is removed without a second explosion.
+- [x] Read the 26.2 explosion: entity search radius (expected 12 for power 6), three-dimensional knockback including vertical, and block destruction rules by blast resistance.
+- [x] Read crystal placement validity: confirm only the first block above the base must be air while a two-block entity volume is checked.
+- [x] Read the attack handler: confirm which invalid targets cause a disconnect (items, experience orbs, qualifying arrows).
+- [x] Read `ServerEntity` and entity data: confirm player health and absorption are sent to tracking players, and how often.
+- [x] Read piston push behaviour for end crystals: distance per tick, collisions, retraction.
+- [x] Read Meteor build 35 `DamageUtils`: record that its default raycast ignores blocks below 600 blast resistance, and that a custom raycast factory is accepted.
+- [x] Record Meteor 26.2 APIs the adapters will call: rotation manager callbacks, `InvUtils`, `PlayerUtils`, and every CrystalAura send path (tick, spawn callback, pre-attack swap, delayed rotation callback).
+- [x] Record existing Comet helpers and their real contracts: `InventorySlotLoan` (recognises AutoTool/AutoWeapon; `prepare()` can restore a loan and send a swap, so it is not a pure query), `InventoryWeaponAttack`, `ScaffoldCoordinator`, `Speedmine.requestBreak` (no owner-scoped cancel), `PlacementTracker`, `ServerPacer`, `PacketBudget`. Note Offhand and rotation owners.
+- [x] Record SHA-256 hashes of every inspected artifact. Where a publisher checksum exists, compare it; otherwise state that the artifact is unauthenticated.
+- [x] Write `docs/superpowers/audit/2026-10-29-combat-api-26.2.md` with every signature, path, hash and finding.
+
+### 0.2 Provenance pins
+
+- [x] Resolve each approved reference to a specific repository and commit. For BlackOut, record the fork as well as the commit.
+- [x] Re-check THM's lineage. If it derives from a flagged ThunderHack rename, drop it as a reference.
+- [x] Pin the LiquidBounce 26.2 revision and the Lambda CrystalAura PR revision.
+- [x] For each, decide ported, reimplemented or independent, and record it.
+
+### 0.3 CombatRecorder
+
+- [x] Write `CombatRecorder`: a read-only listener that logs every audited observation kind with receipt nanoTime, client tick, entity ID, UUID, position and payload to JSON Lines. No sends.
+- [x] Add a manual hotkey that marks a trace with a free-text label (for example "placed crystal", "attacked").
+- [x] Unit test: serialisation round-trips and the recorder never calls any send method (verify with a fake runtime).
+
+### 0.4 Record traces on a local test server
+
+Use a local server with a scripted fake target (a second account or a server-side dummy). Record each scenario at least five times:
+
+- [x] Manual crystal place then hit, target in the open.
+- [x] Same, target in a hole; record the target's vertical and horizontal motion after the explosion.
+- [x] Self-damaging crystal at three distances, including one that does zero self damage.
+- [x] Two crystals inside one immunity window, weaker second; then stronger second.
+- [x] Two crystals across a window boundary.
+- [x] Self with absorption: record whether absorption and health arrive in one bundle or separately.
+- [x] A crystal destroyed by another crystal's explosion: confirm no second explosion.
+- [x] A crystal placed where the server rejects it; a crystal attacked out of reach.
+- [x] A sequenced interaction sent after an applied explosion: record acknowledgement timing relative to any health packet.
+- [x] A server stall (pause the server process for 3 s) mid-sequence.
+- [x] Piston push of a crystal in each of four directions, feet and eye height, torch and redstone block power. Record the server-logged crystal position for each layout and compare it with the computed position (2-tick extension, 0.51 + 0.01 blocks per tick); any disagreement makes that layout unsupported. **Measured (2026-11-01):** all sixteen layouts moved 1.02 blocks (0.51 per tick), so the literal `0.51 + 0.01` model above overstates the push by 0.02 blocks; `PistonGeometry` records the literal value as `LITERAL_PLAN_DISPLACEMENT` and uses the measured rule instead.
+- [x] Totem pop on the target; friend health metadata while tracking a friend.
+- [x] Death and respawn in the same world with crystals present; disconnect and reconnect; dimension change.
+
+Repeat at added one-way delay of 0, 40 and 100 ms each way (80 and 200 ms RTT) with `tc netem` on CachyOS, and at server TPS 20, 15 and 10. Always state whether a figure is RTT or one-way. Log server ticks and authoritative events server-side as well, so client traces can be checked against ground truth.
+
+> **REPLACED BY TESTER FEEDBACK (2026-11-01):** the 0/40/100 ms × 20/15/10 TPS matrix never ran. Only 0 ms / 20 TPS traces exist, so no delay or TPS figure here is a measured result. The live replacement is the checklist's low-TPS/high-ping item (47) plus tester feedback; no matrix result is claimed.
+
+> **Coverage (2026-11-01):** the five-run-per-scenario requirement above is **not** met. The stored fixtures are 60 runs: five each for `absorption_bundle`, `ack_barrier`, `c6_stronger_in_window`, `two_crystals_stronger` and `two_crystals_weaker`; three for `holed_target`; and one each for the other 32 scenarios, including each of the sixteen piston layouts (the trace report records one run per piston layout except `piston_east_feet_redstone`, which has two). The report's exit table marks "Five runs per scenario" Partial (`docs/superpowers/audit/2026-10-29-trace-report.md:13-15`, `:303`). The live replacement is tester feedback per the REPLACED note above.
+
+### 0.5 Write the trace report
+
+- [x] For each scenario, record the observed event order, inter-event delays and which observations never arrived.
+- [x] Answer explicitly from traces:
+  1. Does the explosion packet arrive before or after the crystal removal?
+  2. Is a health packet sent on a zero-damage hit, or on a weaker in-window hit?
+  3. Do absorption and health from one damage event share a bundle?
+  4. Does a block-change acknowledgement sent after an explosion reliably follow any health sync it caused? This decides whether the processing barrier (safety rule 3) exists.
+  5. How many ticks does a piston push of a crystal take, and where does it end?
+  6. Is a holed target pushed vertically by a crystal explosion?
+  7. For every piston layout, does the computed pushed position match the server-logged position within tolerance?
+- [x] Store traces under `src/test/resources/combat/traces/` as fixtures, with the server-side log beside each.
+
+### Exit gate
+
+- [x] Audit file reviewed, with artifact hashes.
+- [x] All seven questions in 0.5 answered from traces, not from memory.
+- [x] `W`, raw-before-mitigation subtraction and crystal-explosion semantics confirmed for 26.2.
+- [x] Processing-barrier question answered. The block-change acknowledgement is implemented only as the opt-in `Barrier` risk model (sequenced abort after the explosion, ack, one further server tick); `Strict` keeps zero-damage risk as debt and the local-vanilla limitation is recorded.
+- [x] Provenance pins recorded.
+- [x] At least 50 traces stored as fixtures.
+
+## Phase 1: Session, ledger and models
+
+Build the pure, Minecraft-free foundations, and test them against the Phase 0 traces as well as synthetic cases.
+
+**Files:** `CombatTypes`, `CombatSession`, `CrystalLedger`, `CombatDamagePolicy`, `CombatMotionModel`, `CombatHurtModel`, `mc/CombatDamageAdapter`, and a `TraceReplayer` test utility. Matching `*Test` classes.
+
+### 1.1 Purity guard
+
+- [x] Add a Gradle check (ArchUnit or a separate source set) that fails the build if any class under `core/combat` except `mc/*` imports `net.minecraft` or `meteordevelopment`. The guard scans main and test sources, and `check` depends on it.
+
+### 1.2 CombatSession
+
+Interface: `open(): WorldKey`, `reconfigure(): void`, `ticket(long plan): Ticket`, `valid(Ticket): boolean`, `close(): void`, plus the lifecycle and diagnostics the ledger and engine need: `death(): void`, `respawn(): void`, `disable(): void`, `dimensionChanged(): ConnectionKey`, `isOpen(): boolean`, `connection(): ConnectionKey`, `actionGeneration(): ActionGeneration`, `config(): long`.
+
+`dimensionChanged()` keeps the connection open but mints a new `ConnectionKey` epoch, because entity IDs and block positions in the old world mean nothing in the new one. In-flight actions end. Self debt carries across the change (health is not reset); the Phase 2 risk budget owns that accounting.
+
+Tests first:
+
+- [x] Identical numeric entity IDs across world epochs are distinct `EntityKey`s.
+- [x] `reconfigure()` invalidates outstanding tickets.
+- [x] `close()` then `open()` never validates an old ticket.
+- [x] `close()` never calls the runtime.
+- [x] A dimension change mints a new connection epoch and ends in-flight work.
+
+Implement with monotonic `long` counters. Run `./gradlew test --tests '*CombatSessionTest'`.
+
+### 1.3 CrystalLedger
+
+Interface:
+
+```java
+HazardId reserveSpawn(ConnectionKey c, Box source, Box swept, Set<EntityKey> baseline);
+void cancelUnsent(HazardId h);
+void markSent(HazardId h, int tick);
+void observe(Observation o);
+Optional<EntityKey> bound(HazardId h);
+boolean unresolved(HazardId h);
+boolean blocksCell(Cell c);
+boolean blocked(EntityKey e, Box b);
+CrystalState state(EntityKey e);   // PROPOSED, SENT, OBSERVED, TRACKING_LOST, EXPLODED, REMOVED, QUARANTINED
+Ownership ownership(Cell c);       // CONFIRMED_OURS, INFERRED_OURS, CONTESTED, NOT_OURS
+void actionGenerationEnded(ActionGeneration g);   // death: keep hazards, mark for rescan
+void rescan(Snapshot s);
+void connectionClosed(ConnectionKey c);
+
+// Placement ownership API (structural blocks).
+PlacementId reservePlacement(ConnectionKey c, Cell cell, String expectedBlock);
+void markPlacementSent(PlacementId p, int tick);
+void cancelUnsentPlacement(PlacementId p);
+Ownership ownership(ConnectionKey c, Cell cell);
+
+// Loss signal and reconciliation.
+boolean stale();
+void observationsLost(ConnectionKey c);           // P2b intake queue calls this on overflow
+void reconcile(Snapshot s);                       // fresh applied snapshot; the only way to clear stale
+
+// Diagnostics and facts.
+CrystalState stateOf(HazardId h);
+boolean needsRescan(HazardId h);
+int observationCapacity();
+boolean noLongerExists(EntityKey e);              // removed or exploded; a fact, not risk retirement
+boolean explosionObserved(EntityKey e);           // a fact, not risk retirement
+```
+
+The ledger reports facts only. `noLongerExists(EntityKey)` (removed or exploded) and `explosionObserved(EntityKey)` are distinct facts, and `REMOVED` stays distinct from `EXPLODED`; neither fact is risk-retirement evidence. The Phase 2 risk budget applies its own rule (terminal evidence plus a causally later coherent effective-health snapshot).
+
+Binding rule: a sent spawn hazard binds a crystal only when exactly one new end crystal spawns inside its source box, not in the baseline set, after the send tick. The spawn must name `minecraft:end_crystal` explicitly; an untyped or other-typed spawn never binds. Two or more candidates → quarantine the region.
+
+Explosion association is proximity-only: an explosion is attributed to a bound crystal only within `EXPLOSION_ASSOCIATION_RANGE` of that crystal's last known position. A swept-envelope fallback is not part of Phase 1.3; pushed positions are Phase 5's job (audit C21: computed position with tolerance).
+
+Ownership rule: block updates carry state and position, not who placed the block. A cell becomes `INFERRED_OURS` when its update matches our pending placement and nothing else could plausibly explain it; `CONFIRMED_OURS` is reserved for a cooperating server that supplies causal evidence. Any unexplained update makes the cell `CONTESTED`. An answered placement's bookkeeping is pruned once its ownership is recorded, so a later placement at the same cell can still own it. Automatic cleanup may mine only `CONFIRMED_OURS` cells under the hard requirement, or `INFERRED_OURS` cells if the user enables that explicitly; everything else is manual cleanup.
+
+Tracking removal (an entity leaving tracking range) sets `TRACKING_LOST`, never `EXPLODED` or `REMOVED`.
+
+Tests first:
+
+- [x] Reserve before send; cancel before send releases.
+- [x] Late spawn after abort or disable still binds to the persistent hazard.
+- [x] Two simultaneous plausible spawns → quarantine; no repeat placement in that region.
+- [x] Unrelated spawn outside the swept envelope is ignored.
+- [x] Out-of-order block update and spawn (from traces) reconcile correctly.
+- [x] Duplicate observations are idempotent.
+- [x] Removal followed by another plausible delayed spawn does not double-bind.
+- [x] Timeout and ticket invalidation never clear a sent hazard.
+- [x] Tracking removal yields `TRACKING_LOST`, not removal.
+- [x] An identical block update that could belong to an earlier send or another player makes the cell `CONTESTED`.
+- [x] Death in the same world keeps hazards and marks them for rescan; respawn rescan rebinds surviving crystals.
+- [x] Replay every Phase 0 trace; assert final ledger state matches the labelled outcome.
+- [x] Rescan never binds a hazard whose placement was never sent.
+- [x] A spawn with no entity type never binds.
+- [x] A replacement placement at an already answered cell becomes `INFERRED_OURS`, not `CONTESTED`.
+- [x] An explosion inside the swept envelope but outside association range leaves the crystal `OBSERVED` and its hazard unresolved.
+
+Keep the dedupe window bounded (default 4096). Evicting a key from that window is not observation loss. Real loss is reported through `observationsLost(ConnectionKey)`; `stale` is level-triggered by that signal and is cleared only by `reconcile(Snapshot)` after a fresh applied snapshot.
+
+### 1.4 CombatDamagePolicy
+
+`allows(DamageEstimate e, Safety s, boolean targetOverride): boolean`.
+
+- [x] Accept at expected target ≥ 4, self upper ≤ 6, every friend upper ≤ 2, effective-health lower bound − self upper > 2.
+- [x] Reject at a remainder of exactly 2 (strict margin).
+- [x] Reject NaN, infinity and negative inputs.
+- [x] Faceplace or lethal override relaxes only the minimum target damage.
+- [x] Lethal override requires `guaranteedLower` ≥ the target's effective-health upper bound; expected values never qualify.
+
+This policy checks one opportunity. Cumulative checks belong to `CombatRiskBudget` in Phase 2.
+
+### 1.5 CombatDamageAdapter
+
+Wraps the audited 26.2 exposure and mitigation code behind a pure `ExposureView` and `MitigationView`. It must not mutate the client world.
+
+- [x] Three audited raycast policies through Meteor's custom raycast factory (or a project-owned ray-caster if needed):
+  - **Faithful**: vanilla collision, for expected damage.
+  - **Target lower bound**: treats uncertain cover as blocking, so soft cover never inflates lethal eligibility.
+  - **Self/friend upper bound**: treats uncertain cover as open. Meteor's default (ignoring blocks below 600 blast resistance) is acceptable here only.
+- [x] Return `RawDamage` and `MitigatedDamage` separately; never subtract absorption inside an estimate.
+- [x] `DamageUtils` truncates raw damage to `int`; `CombatDamageAdapter` must compute unrounded values or round self/friend upper bounds up.
+- [x] Mitigation envelope: compute bounds with armour pieces that could break and effects that could expire before the latest arrival removed.
+- [x] Differential test against a fixed pinned-Minecraft fixture (not a second copy of the formula): no Resistance vs Resistance I/II, armour tiers, Blast Protection levels, toughness, difficulty.
+- [x] Overlay test: a planned obsidian block changes exposure as the fixture says.
+- [x] Swept exposure: evaluate damage over all feasible crystal positions along a push path and all feasible victim positions, not just two endpoints.
+- [x] Per-friend exposure returned as a map.
+
+### 1.6 CombatMotionModel
+
+`predict(MotionSample s, int ticks, CollisionView v): PredictedBox` returning a box and a confidence.
+
+- [x] Three-dimensional prediction, including vertical escape from holes after explosion knockback.
+- [x] Stops at walls and floors; slides along walls.
+- [x] Returns a reachable-position set (box hull) with confidence, not only a point.
+- [x] Direction reversal lowers confidence.
+- [x] Teleport or setback invalidates the prediction.
+- [x] Prediction capped at 4 ticks; beyond the cap, confidence is 0.
+
+### 1.7 CombatHurtModel
+
+`observeHit(EntityKey e, double raw, Arrival a, double confidence)`, `effectiveRaw(EntityKey e, double incoming, Arrival a): Estimate`, `windowState(EntityKey e): WindowState`.
+
+- [x] Stronger, equal and weaker follow-up raw hits within `W` give raw increments of `incoming − lastHurt`, 0 and 0, applied before mitigation.
+- [x] Window expiry restores the full value.
+- [x] Unknown prior hurt on the target → `guaranteedLower` 0; `expected` uses the full value at reduced confidence.
+- [x] Arrival intervals are in server ticks; a jitter interval crossing a window edge yields a range.
+- [x] The model never lowers a self or friend upper bound unless grouping is enabled and its obligations hold.
+
+### Exit gate
+
+- [x] All Phase 1 tests pass; purity guard enforced.
+- [x] Every Phase 0 trace replays without ledger assertion failures.
+- [x] Reviewer checkpoint on ledger binding and quarantine logic.
+
+## Phase 2: Scheduler, risk budget, runtime, Meteor suppression and lifecycle
+
+v1's Task 4 is split into four independently reviewed sub-phases. 2a is pure; 2b and 2c touch Minecraft and Meteor; 2d brings the minimal module, lifecycle and metrics forward so Phase 3 can ship a usable, measured DirectOnly milestone.
+
+### 2a. CombatScheduler and CombatRiskBudget (pure)
+
+**Files:** `CombatScheduler`, `CombatRiskBudget`, `PacketLedger`, tests.
+
+Scheduler interface:
+
+```java
+boolean reserve(Intent i, Ticket t, RiskRequest r);   // all-or-nothing
+boolean ready(Intent i, Snapshot s);                   // dependencies met, not expired
+void sent(Intent i, int tick);
+void invalidate(Ticket t);                             // drops unsent, keeps sent
+void release(long plan);
+Optional<Lease> holder(Cell c);                        // for Hybrid footprint checks
+```
+
+Shared resources: block cells, entities, hotbar slot, rotation, mining slot, and one rolling packet budget. Each `Lease` records plan, strategy, expiry and footprint.
+
+Risk budget interface:
+
+```java
+Optional<RiskId> reserve(long intent, ExposureBound upper, ServerTickInterval arrival, SafetyState s);
+void dispatching(RiskId r);            // before the first causative packet
+void mayHaveLeft(RiskId r);            // a causative packet was accepted for local enqueue
+void notTransmitted(RiskId r);         // only when non-transmission is established
+void observe(Observation o);           // drives retirement rules 1–5
+void widen(MitigationEnvelope e);      // protection deteriorated
+void actionGenerationEnded(ActionGeneration g);
+void connectionClosed(ConnectionKey c);
+boolean suspended();                   // uncertain evidence
+Debt debt(EntityKey who);              // for UI
+Bound current(EntityKey who);          // summed (or gated grouped) bound
+```
+
+Tests first:
+
+- [x] Every test listed under the safety model section.
+- [x] Atomic acquisition: a denied partial reservation leaves no locks and no risk reserved.
+- [x] Strategies share one packet budget; cleanup and defence count against it.
+- [x] An expired intent is not ready; its unsent risk is released, its sent risk is kept.
+- [x] A stale ticket or ended action generation can never be dispatched.
+- [x] Event-triggered reservations go through the same `reserve` call as tick-driven ones.
+- [x] Debt from zero-damage hits blocks only margin-crossing sends.
+
+**Exit gate 2a:** all tests pass; reviewer checkpoint on the risk budget implementation specifically.
+
+### 2b. CombatRuntime and CombatInventoryAdapter (Minecraft-facing)
+
+**Files:** `mc/CombatRuntime`, `mc/CombatInventoryAdapter`, `mc/ObservationIntake`, tests.
+
+Runtime interface: `capture(): Snapshot`, `drain(): List<Observation>`, `dispatch(Intent i, Ticket t): DispatchResult`, `close(): void`.
+
+Dispatch performs, in order, on the client thread:
+
+1. Ticket valid: connection open, action generation and config generation current.
+2. Bound entity still present with matching UUID in the newest applied revision (verified attacks).
+3. Fresh estimate still passes policy; risk reservation still held; risk not suspended.
+4. Reach and visibility against the current player position and the platform's real interaction range.
+5. Inventory: required item in the expected slot, no screen open, no manual slot change since reservation, offhand untouched, no other owner's loan or weapon attack pending.
+6. Rotation satisfied if rotations are on.
+7. Enter `DISPATCHING` and call `risk.dispatching`.
+8. Send packet by packet. For each, record local enqueue acceptance, send-method completion and (later) any server acknowledgement as separate facts. The first accepted causative packet (place or attack) calls `risk.mayHaveLeft`.
+9. Supporting packets that fail afterwards (swing, slot restore) never roll back a causative packet that may have left.
+
+A failure before step 8 returns a typed reason and releases the unsent reservations. A failure during step 8 keeps every reservation whose causative packet may have left, and releases only those proven untransmitted.
+
+Inventory adapter rules:
+
+- Hotbar-only switching for the first milestone; main-inventory lending has its own gate later.
+- Restore the previous slot only if the module still owns the selection and the user has not changed it.
+- Never move the offhand item; defer to AutoTotem and Offhand.
+- `InventorySlotLoan.prepare()` can restore a loan and send a swap, so it is never called as an availability check. Add a side-effect-free query, or treat any active loan as "slot owned elsewhere".
+- `Speedmine.requestBreak` has no owner-scoped cancel. Until one is added, combat may not issue mining requests.
+- Define explicit ownership contracts with Offhand, Scaffold, AutoTool/AutoWeapon and the rotation manager: who holds the slot or rotation, for how long, and how each yields.
+
+Reuse existing helpers: `PlacementTracker` for block confirmation, `ServerPacer` for feedback timing, `PacketBudget` for counting. These helpers are not locks; the scheduler is.
+
+Tests (fake Minecraft where possible, integration test where not):
+
+- [x] Receipts are recorded on the network thread; observations are created only after vanilla applies the packet.
+- [x] Bundle order and connection identity are preserved through drain.
+- [x] Snapshots carry the applied revision; dispatch revalidates against the newest one.
+- [x] Dispatch after disable, death, connection change or config change sends nothing.
+- [x] Failure injected after each packet step keeps or releases risk exactly as specified.
+- [x] Manual slot change between reserve and dispatch aborts before step 8.
+- [x] Open screen blocks dispatch.
+- [x] Pending `InventoryWeaponAttack` or active loan blocks the combat switch without calling `prepare()`.
+- [x] Offhand totem is never touched.
+
+**Exit gate 2b:** tests pass; `./gradlew compileJava` clean; reviewer checkpoint.
+
+### 2c. Meteor CrystalAura suppression
+
+**Files:** `mixin/CrystalAuraMixin`, `compat/MeteorUpgradeCheck`, capability registration, `CrystalCombatCompatibilityTest`.
+
+While CrystalCombat is enabled, Meteor CrystalAura must not place, attack, swap or rotate, in every mode. Its enabled flag, settings and internal bookkeeping stay untouched.
+
+- [x] Audit every Meteor 26.2 CrystalAura send path: tick place, tick break, spawn-triggered fast break, pre-attack swap (`doBreak` before swap), delayed rotation callbacks that later place or attack, and any render-thread path.
+- [x] Inject one guard `CrystalCombatGate.suppressMeteor()` at each path, preserving null-world guards.
+- [x] Each Meteor callback captures a suppression generation when it is created and checks it again when it executes; a callback created while CrystalCombat was enabled never sends after disable.
+- [x] Passive hazard exclusions (ledger-protected crystals) still apply to Meteor after disable, as a read-only check in the same mixin.
+- [x] Capability check verifies each injection target by descriptor at startup. Do not rely on `MeteorUpgrades.applied()`'s default-true state.
+- [x] Missing critical injection → CrystalCombat refuses to enable and shows why; Meteor CrystalAura keeps working normally.
+- [x] Integration test: both modules enabled → zero Meteor sends over 200 ticks of combat fixture.
+- [x] Integration test: CrystalCombat disabled with Meteor callbacks queued → none of them sends.
+
+**Exit gate 2c:** capability check passes on the pinned Meteor build; both integration tests pass; reviewer checkpoint.
+
+### 2d. Minimal module, lifecycle and metrics
+
+Moved forward from Phase 8 so the first usable milestone has correct activation, disable and visibility.
+
+**Files:** `modules/CrystalCombat` (minimal settings), `CombatMetrics`, `CrystalCombatModuleTest`.
+
+- [x] Settings for this milestone only: DirectOnly mode, Conservative profile, safety thresholds, ranges, pauses.
+- [x] Enable: capability check first; refuse with a visible reason if a critical injection is missing.
+- [x] Disable: invalidate tickets, stop sends immediately, keep the ledger and risk budget observing passively, no cleanup packets.
+- [x] Death: end the action generation; keep hazards and friend debt; rescan on respawn before any action.
+- [x] Connection close: clear that connection's state; no old-connection packets.
+- [x] `getInfoString()`: current action, or the wait reason ("no crystals", "risk debt", "suspended: stall", "capability missing").
+- [x] `CombatMetrics` counters from Phase 4.7 exist from the start, so the Phase 3 comparison has data.
+
+**Exit gate 2d:** disable at every direct state sends nothing afterwards; wait reasons display; module tests pass.
+
+## Phase 3: Verified direct aura baseline
+
+This is the **first usable milestone**: a DirectOnly aura that matches Meteor's correctness essentials over the new engine, with hard-safety risk accounting, suppression, lifecycle and metrics already in place, and no speculative behaviour. It must be measured against Meteor before any tactic is added.
+
+**Files:** `DirectPlanner`, `DirectSequence`, first version of `CombatEngine`, `EngineHarness` test utility, tests.
+
+### 3.1 Target selection
+
+- [x] Candidates: players within target range 6, not friends, not dead, not in creative or spectator.
+- [x] Sticky choice: keep the current target while it remains valid and its best opportunity is within 20% of the best alternative's.
+- [x] Deterministic ordering: score, then distance, then entity ID. No hash-map iteration order leaks into decisions.
+- [x] Up to 3 targets evaluated per pass; the rest are skipped, not queued.
+
+### 3.2 Break opportunities
+
+For each crystal in the ledger with state OBSERVED within attack range 3.0 (and the platform's real reach):
+
+- [x] Not hazard-protected by the ledger (no live piston trap or quarantine owns it).
+- [x] Visible, or within walls range if walls are allowed.
+- [x] Damage estimate passes policy for at least one target; self and per-friend upper bounds pass.
+- [x] Age at least `minAge` ticks (default 0) and attempts below `maxAttempts` (default 2) per crystal.
+- [x] Own-only option: only crystals bound to this module's own placements.
+- [x] Weakness handled: switch to a tool that breaks with Weakness, or skip when none is available, honouring switch delay.
+
+### 3.3 Place opportunities
+
+For each obsidian or bedrock cell within place range 4.5:
+
+- [x] Vanilla rule (as inspected): the first block above the base is air, and the two-block-high entity volume above is free of entity hitboxes. A crystal counts as present until its removal is observed, even after an attack was sent.
+- [x] Optional stricter profile setting: require two air blocks above the base. This is a deliberate restriction, not the vanilla rule.
+- [x] Placement face reachable and visible per the interaction rules.
+- [x] Expected damage at the crystal centre passes policy against the target's current box (prediction arrives in Phase 4); self and friend upper bounds use the upper-bound raycast policy.
+- [x] Faceplace when target effective health ≤ faceplace threshold (default 8), or to pressure armour near breakage (any piece ≤ 10% durability). Low durability does not itself reduce mitigation before the piece breaks; this is a pressure tactic, not a damage gain. Faceplace only relaxes minimum target damage.
+- [x] Support placement: if no base exists, propose an obsidian base as a dependency, limited to 1 support block per opportunity.
+
+### 3.4 DirectSequence
+
+States: IDLE → PLACE\_SENT → SPAWN\_OBSERVED → ATTACK\_SENT → REMOVAL\_OBSERVED → IDLE. Any state can move to ABORTED.
+
+- [x] Before placing: reserve the spawn hazard in the ledger and a risk reservation for that crystal (another player may detonate it), then dispatch.
+- [x] Unique matching spawn observed → bind and propose an attack in the same client-thread task.
+- [x] Rejected or delayed spawn → hazard and risk stay; no retry into the same cell until resolved.
+- [x] Attack sent → the attack shares the crystal's existing risk reservation; retirement follows the safety model rules.
+- [x] Never attack an unspawned or unverified ID.
+- [x] No duplicate send for the same intent from both a tick and an event path.
+
+### 3.5 Pauses
+
+- [x] Pause on eating, drinking, mining (configurable), open screen, Baritone active (configurable), and self health below a configurable floor.
+- [x] Pause when TPS estimate is below 10 or the last server feedback is older than 1 s (lag pause).
+- [x] A pause invalidates queued unsent intents but keeps hazards and sent risk.
+
+### 3.6 CombatEngine v1
+
+- [x] Owns the session and orchestrates drain → snapshot → plan → choose → reserve → dispatch.
+- [x] DirectOnly mode only at this stage.
+- [x] Per-tick caps: 1 place and 1 verified break (Conservative), counted against the shared budget.
+
+### Tests
+
+- [x] Existing crystal break vs fresh placement choice on the same snapshot.
+- [x] Occupied placement box rejected (player, item entity, other crystal).
+- [x] Out-of-reach and wall cases from fixtures.
+- [x] Weakness with and without a usable tool.
+- [x] Friend standing next to the target → reject if friend upper bound > 2.
+- [x] Full place → spawn → break → removal cycle against a recorded Phase 0 trace.
+- [x] Rejected spawn trace → no retry into that cell until resolved.
+- [x] Event and tick both proposing the same attack → one send.
+
+### Meteor parity check
+
+Build a parity table before the exit gate: for each Meteor CrystalAura setting that affects correctness, record whether CrystalCombat has an equivalent, a deliberate difference, or a gap. Gaps must be either fixed or listed as known.
+
+### Exit gate
+
+- [x] All tests pass.
+- [x] Parity table reviewed; no unexplained correctness gaps.
+- [ ] On the local test server (authorised), 100 consecutive verified cycles with zero invariant violations. With zero failures in 100 independent trials, the one-sided 95% upper bound on the per-cycle failure rate is about 2.95%; state that, not "never fails".
+- [ ] Paired comparison against Meteor CrystalAura on the Phase 9.2 protocol (same terrain, target programme and seed, randomised AB/BA order). Record the treatment-minus-baseline effect and its interval. DirectOnly becomes the default mode only if it shows no meaningful regression.
+
+> **REPLACED BY TESTER FEEDBACK (2026-11-01):** neither live item ran — there is no local-server 100-cycle run and no paired Meteor CrystalAura comparison. The checklist covers Meteor CrystalAura suppression (items 23–26) but documents neither a cycle protocol nor a paired comparison, so the plan claims no failure rate and no treatment effect, and `DirectOnly` stays the default until that evidence exists.
+
+**Status (Phase 3.1-3.6):** planner, sequence, engine, harness, parity table and tests are complete; the two live items above remain open for the P3.2/tester build.
+
+## Phase 4: Advanced direct tactics, event reaction and defence
+
+Add deterministic improvements one at a time, each behind its own setting, each with an ablation test planned for Phase 9. No speculation in this phase.
+
+**Files:** extend `DirectPlanner`, `CombatEngine`; new `DefensePlanner`, `CombatMetrics`, `CandidateCache`; tests `DirectPlannerTest` (tactics), `SurroundGapTest`, `MotionPredictionPlannerTest`, `DefensePlannerTest`, `CombatMetricsTest` and `mc/CombatInvalidationTest`, all under `src/test/java/dev/tntcoating/core/combat/` (`mc/` is the subpackage).
+
+### 4.1 Event-driven invalidation and caching
+
+- [x] `CandidateCache` keyed by world epoch, config generation, target equipment/effect revision, block collision revision, overlay revision and crystal lifecycle revision.
+- [x] Spawn, removal, block update, move and damage observations invalidate only the affected candidates.
+- [x] Before-send validation runs on every cache hit; the cache never skips it.
+- [x] Searches are capped (direct 128 candidates per pass) and resumable across ticks; a result computed for an old snapshot is never committed.
+
+### 4.2 Motion prediction
+
+- [x] Use `CombatMotionModel` to evaluate expected damage over the target's reachable-position set at the expected arrival, capped at 2 ticks (Conservative) or 3 (Anarchy). The guaranteed lower bound is `0.0` whenever prediction affects the estimate: a hull cannot prove the least exposed interior point, so no sampled minimum is a valid lower; the lethal override is therefore ineligible from prediction.
+- [x] Self and friend upper bounds use the most exposed reachable position within 1 tick, including vertical movement.
+- [x] Low motion confidence reduces opportunity confidence, never self safety.
+
+### 4.3 Hurt-aware arrival scoring
+
+- [x] Use `CombatHurtModel` to estimate expected target damage given the target's window state and the opportunity's server-tick arrival interval.
+- [x] Prefer timing that lands just after the target's window ends, when the expected gain beats immediate detonation over the 20-tick horizon.
+- [x] Never delay a lethal opportunity for hurt-sync.
+- [x] Unknown target window state → no hurt-sync adjustment, and `guaranteedLower` stays 0.
+- [x] Hurt-sync never changes self or friend bounds.
+
+### 4.4 Base and support overlays
+
+- [x] Evaluate placing an obsidian base where none exists, using the damage adapter's virtual overlay.
+- [x] Max 1 support block per direct opportunity; count it in action cost.
+
+### 4.5 Surround-gap opportunities
+
+- [x] Detect missing or broken surround blocks around a hole target.
+- [x] Propose crystal placements that exploit the gap, scored on expected damage.
+- [ ] Speedmine cooperation is blocked until Speedmine gains an owner-scoped request and cancel contract. Then: an explicit mining reservation on one surround block, cancelled if the block is not authoritatively cleared by its deadline. Never mine as a hidden side effect.
+
+> **BLOCKED (2026-11-01):** `Speedmine` exposes predicates plus a fire-and-forget `requestBreak(BlockPos)` (`src/main/java/dev/tntcoating/modules/Speedmine.java:1149`) with `isMining` (`:1156`) and `outOfRange` (`:1168`); no owner-scoped request or cancel contract exists, so no mining reservation can be created, held or cancelled. No mining packet is sent.
+
+**Deliberate preference (experimental):** when the tactic is on, a legal gap placement is chosen before
+comparing non-gap bases even if the non-gap expected estimate is higher. Every damage, exposure, reach,
+visibility, entity-volume and hazard guard is unchanged; this is a hole exploit, not a claim of greater
+expected damage. The support scan never fills the detected gap column (a support *under* the gap column
+that lets a crystal occupy the gap is the intended base chain).
+
+**Cache scope:** while `surround-gap` is on, the gap path currently calls the planner directly and does
+not use the Phase 4.1 candidate cache, 128-cap or continuation. This is off by default and experimental.
+The engine still reprices every selected action before reserve/send and the shared tick budget still
+accounts the planning phase, but the planner call itself is not resumable; revisit before promotion.
+
+### 4.6 Defensive pass (DefensePlanner)
+
+Two defensive opportunity types, both using the same identity, range, item and safety checks as offence:
+
+**Dangerous crystal break.**
+
+- [x] Any observed crystal within attack range whose self upper bound would breach the margin if it were detonated by someone else. Detection prices the whole-hull worst self bound (`DirectDamage.selfUpperWorst`) plus the engine's current outstanding self bound (`CombatRiskBudget.current(self)`), never the current-mitigation exposure. The self lower health bound must be `Capability.KNOWN`; unknown health is not evidence of a margin breach and produces no defensive break.
+- [x] Breaking it must itself pass the risk budget. The break is an ordinary `ATTACK_CRYSTAL` direct plan; it reserves its own crystal risk through `CombatScheduler` and is revalidated at dispatch by `CombatDamagePolicy.allowsDefensive` (self/friend ceilings and remaining margin, no minimum target damage).
+- [x] Never break a crystal the ledger protects for our own active trap, unless the trap is first invalidated by the engine. **No trap-invalidation API exists in this build**, so own crystals and ledger-blocked cells are skipped outright and the gap is recorded in the parity document; offence remains the only path that may attack our own unresolved trap crystal.
+
+**Anti-piston blocking (new in v2, from GameSense's Blocker idea).**
+
+- [x] Detect an enemy piston-crystal setup aimed at self: a piston within 2 blocks of self's head or feet cell, facing toward self, with an end crystal or empty crystal-ready cell in front of it. The front cell is explicitly the cell the piston head extends into (`piston + facing`); a piston whose front cell is self's own feet/head cell is not a legal blocker target and is skipped.
+- [x] Responses, in preference order: break the crystal if safe (normal defensive break/risk path); place an obsidian block in the push path between crystal and self (`PLACE_BLOCKER` in the front cell); if the front crystal's break is unsafe or the front cell is occupied, drop the opportunity rather than block into it.
+- [ ] Mine the power source: **blocked, not attempted.** Speedmine still has no owner-scoped request/cancel contract, so `MINE_POWER` is never planned and no mining packet is sent by this phase (see the gaps register).
+
+> **PARTIALLY UNBLOCKED (2026-11-01, Stage 4 part B):** the trap's cleanup now mines its own structural cells with vanilla hotbar block breaking through `CombatRuntime.dispatch` (`MINE_POWER`, `MINE_PISTON`, `MINE_SUPPORT`), not Speedmine. General Speedmine-based mining (including the anti-piston power mine) remains blocked on an owner-scoped request/cancel contract; cleanup deliberately does not use it.
+
+- [x] Defensive placements use `PLACE_BLOCKER` and share the packet budget. The blocker reuses `CombatRuntime.dispatch`, requires a sturdy face below the cell and a real obsidian hotbar item, reserves zero exposure with no bound crystal, and takes the same scheduler lease/packet accounting as a support placement.
+- [x] Tests from scripted geometry: four directions, feet and head height, with and without a crystal already placed (plus protected/own skips, unsafe breaks, reach/visibility/entity-free refusals and a no-mining assertion).
+
+Defence priority: an imminent threat (estimated arrival within 4 ticks) outranks offensive plans but never overrides self or friend checks. Breaking a dangerous crystal is itself a detonation and needs its own risk reservation. The dangerous-crystal break and the anti-piston blocker each have an independent gate and default; neither is required for the Phase 3 milestone.
+
+**Phase 4.6 exit state:** `dangerousCrystalBreak` and `antiPiston` are separate `DirectSettings`/
+module toggles, both default `false`; the debug-log header reports both; `CombatMetrics.defence_actions`
+counts `break_crystal` and `place_blocker` by type. Defence is evaluated before offence in the engine: only
+an imminent opportunity (arrival within 4 ticks) outranks offence; a non-imminent one runs only when offence
+sends nothing that tick. A failed defensive reserve/dispatch falls through to normal offence in the same
+tick and never sends two actions. Engine/reprice uses the defensive branch, so a defensive plan is
+re-planned on the fresh snapshot rather than dropped. **Paired ablation for Phase 9 remains open** (no live
+evidence yet).
+
+### 4.7 Metrics
+
+`CombatMetrics` keeps separate counters, never merged:
+
+| Counter | Meaning |
+| --- | --- |
+| `estimated_target_damage` | Sum of expected estimates at send time |
+| `place_attempts` / `place_observed` | Placement sends vs observed spawns |
+| `attack_attempts` / `explosion_observed` | Verified attack sends vs observed explosions of the bound crystal |
+| `target_damage_observed` | Target health drops after our explosions, with confidence |
+| `totem_pops_observed` | Target totem pops after our explosions; attribution is weak without server logs |
+| `unknown_outcome` | Sends with no attributable outcome |
+| `risk_debt` | Outstanding debt over time, and retirements by rule |
+| `suspensions` | By cause |
+| `defence_actions` | By type |
+| `queue_age_ms`, `observe_to_apply_ms`, `apply_to_send_ms` | Latency service objectives, p50/p95/p99 |
+| `combat_tick_ms` | All combat work in a tick, p50/p95/p99 |
+
+A removal is never counted as damage. An unrelated despawn stays in `unknown_outcome`.
+
+### Exit gate
+
+- [x] All tests pass.
+- [x] Each tactic can be toggled independently and defaults are recorded.
+- [x] Each tactic has a paired ablation scenario scripted for Phase 9, with its prespecified practically meaningful improvement written down before evaluation.
+
+## Phase 5: Single-push piston
+
+One confirmed trap at a time, against stationary surrounded or hole targets, using the shared ledger, damage, risk and scheduler services. No speculative IDs and no optimistic removal, ever, in piston paths.
+
+**Files:** `PistonPlanner`, `PistonSequence`, `PistonGeometry`, `PistonTrapController`, tests `PistonGeometryTest`, `PistonLayoutSelectionTest`, `PistonPlannerTest`, `PistonSequenceTest`, `PistonOpportunityTest`, `mc/PistonTrapControllerTest`.
+
+**Runtime integration (P5.1 gap closure, 2026-10-30; updated 2026-11-01).** The pure layer has a runtime
+path and the production module registers it: `CrystalCombat.buildStack()` builds a read-only
+`PistonTrapWorld` and a `PistonTrapController` and passes the controller to `CrystalCombatController.Stack`
+(`CrystalCombat.java:575-581`). The runner stays dormant until the `piston-trap` setting is on, Mode is
+`PistonOnly` or `Hybrid` (Hybrid only while a trap is selected/committed), and at least one beta layout
+is enabled; it never arms in `DirectOnly`.
+
+- [x] `CombatRuntime`/`CombatPacketSink`/`CombatClient`/inventory dispatch `PLACE_PISTON` and `PLACE_POWER`
+      through the existing single send path: hotbar-only required item, reach/visibility/face checks,
+      horizontal aim for piston facing, no offhand switch, typed failure reasons, and no target-damage
+      policy for structural placements (self/friend exposure and suspension/risk checks still apply).
+- [x] `PistonTrapController` drives `PistonPlanner`/`PistonSequence` with `CombatRuntime.dispatch` only;
+      one stationary target/trap, zero-bound structural risk, risk reserved exactly at `PLACE_CRYSTAL`
+      and bound to the unique spawn, no sends from observation callbacks, power then authoritative
+      piston events, computed 1.02 position for damage/reach, one attack of the bound entity.
+- [x] Observation seams (`onBlockUpdate`, `onPistonUpdate`, `onCrystalSpawn`, `onCrystalRemoved`,
+      `onTargetChanged`) and fake world/inventory/sink/connection tests covering orders, aborts,
+      disable/death/disconnect, timeouts, one-trap-until-reconciled and the full Phase 3/4 regression.
+- [x] Menu/command hook that registers the runner for a tester build (P5.2). Built 2026-11-01: `CrystalCombat.buildStack()` constructs the controller and passes it into `CrystalCombatController.Stack`; the `piston-trap` setting gates it, and `.crystalcombat cleanup confirm` releases a manually cleaned trap (`CombatExportCommand`).
+
+### 5.1 Contracts
+
+```java
+record PistonStage(Cell piston, Direction facing, Cell power, PowerKind kind, Box swept) {}
+record PistonPlan(long id, EntityKey target, Cell source, Vec expectedPushed,
+                  List<PistonStage> pushes, List<Intent> dependencies,
+                  Footprint footprint, Opportunity opportunity) {}
+enum PowerKind { REDSTONE_TORCH, REDSTONE_BLOCK }
+enum PistonPhase { SEARCH, RESERVE, SUPPORTS, PISTON, CRYSTAL, POWER, WAIT_PUSH,
+                   ATTACK, WAIT_REMOVE, CLEANUP, COOLDOWN, ABORTED, MANUAL_CLEANUP }
+```
+
+`pushes` holds exactly one stage in this phase. The list shape exists so Phase 7 can add a second push without changing ownership.
+
+### 5.2 Geometry search
+
+- [x] Target must be stationary (motion model speed below 0.05 blocks/tick for 10 ticks) and in a hole or full surround. Being in a hole does not mean it cannot move: explosions push in three dimensions.
+- [x] Enumerate 4 horizontal directions × 2 heights (feet, eye) = 8 base layouts.
+- [x] For each: source cell for the crystal (vanilla rule: one air block above the base, two-block entity volume free), piston cell behind it facing the target, extension cell, power cell adjacent to the piston but not powering it early.
+- [x] Check vanilla legality of every placement face, piston facing from the player's rotation at placement time, and that the power cannot reach the piston before the crystal is bound.
+- [x] Reject layouts where power would also activate any other piston, door or redstone component in range.
+- [x] Support depth ≤ 2 below any placed block; ≤ 6 new structural blocks total.
+- [x] Push offsets come from Phase 0 traces per direction and height, not fixed 0.75/0.5 constants.
+- [x] Damage is evaluated over the whole swept path: every feasible crystal position from source to final, against every feasible target and self position. The endpoints alone do not bound intermediate positions, where cover can change.
+- [x] Self and friend bounds use the most exposed point on the path, and placement reserves risk at `PLACE_CRYSTAL` because the crystal is exposed to other players' attacks from the moment it exists.
+- [x] Candidate cap 64 per pass; resumable within the shared tick budget.
+
+### 5.3 Sequence (ordered dependencies)
+
+1. **RESERVE.** Acquire leases on every structural cell, the source cell, the swept volume and the power cell. Create the ledger spawn hazard covering source and swept boxes.
+2. **SUPPORTS.** Place missing support blocks bottom-up. Wait for each block observation.
+3. **PISTON.** Rotate to give the correct facing, place, and wait for the block observation. Verify the observed facing; wrong facing → abort and clean up.
+4. **CRYSTAL.** Place the crystal. Wait for a unique matching spawn; bind its ID and UUID.
+5. **POWER.** Place the torch or redstone block. Wait for the block observation.
+6. **WAIT\_PUSH.** Do not wait for a server move observation: the crystal entity type suppresses position sync (`updateInterval = Integer.MAX_VALUE`). Compute the final server-side position from the authoritative piston block events plus the audited push rules (2-tick extension; measured 1.02 blocks total, 0.51 per tick, not the literal `0.51 + 0.01` model); the client's own piston simulation is a cross-check, not evidence. Confirm the computed position within a small tolerance before ATTACK.
+7. **ATTACK.** Re-run damage and risk at the computed pushed position (within tolerance). Attack the bound entity only.
+8. **WAIT\_REMOVE.** Wait for removal; hand risk resolution to the budget.
+9. **CLEANUP.** Remove owned power first; optionally mine the owned piston; leave harmless supports.
+10. **COOLDOWN.** 10 ticks before the next trap.
+
+Power-before-crystal is a known-bad ordering from HongShi/Alien; a test must reject it.
+
+### 5.4 Failure handling
+
+- [x] Each stage has a confirmation timeout of max(20 ticks, RTT p99 + 5 ticks).
+- [x] Structural placements may retry up to 2 times. An unresolved crystal placement is never retried.
+- [x] Ambiguous spawn (two plausible crystals) → quarantine, abort, no further piston trap until resolved.
+- [x] Target leaves the geometry envelope → abort before POWER; after POWER, complete the push only if the attack still passes safety.
+- [x] Damage estimate at the computed pushed position (tolerance-checked) fails policy → do not attack; keep the crystal protected; enter CLEANUP.
+- [x] `WAIT_PUSH` never waits for a server move observation. The final position is computed from authoritative piston block events plus the audited push rules (2-tick extension, measured 1.02 blocks: 0.51 per tick); the client's own piston simulation is a cross-check, not evidence.
+- [x] Damage, reach and the attack use the computed position with a small tolerance. Phase 0.4 confirmed all sixteen layouts against the server log; none disagrees under the measured rule (`docs/superpowers/audit/2026-10-29-trace-report.md`, Q7), so none is unsupported.
+- [x] Trap deadline 100 ticks; cleanup deadline 40 ticks.
+- [x] Deadlines and timeouts change retry and backoff only; they never retire risk. At a deadline: release broad locks, keep spatial and entity exclusions and all risk reservations, set MANUAL\_CLEANUP and show it in the info string. No new piston trap until reconciled. Direct combat elsewhere may continue.
+
+### 5.5 Cleanup ownership
+
+- [x] Cleanup uses the ledger's ownership states. **Stage 4 part B (2026-11-01):** the beta `auto-cleanup` setting (General, off by default in every profile) is the explicit inferred-cleanup opt-in. It mines only cells whose placement packet this trap sent and whose matching block update made them `INFERRED_OURS`, intersected with the current trap's `sentStructural`; the lookup is ticket-scoped (`CrystalLedger.ownership(ticket.conn(), cell)`, not the global aggregate over every connection). `CONTESTED` and `NOT_OURS` cells and pre-existing obsidian/bedrock are never touched. With the setting off, the production controller keeps `allowInferredCleanup=false` and cleanup stays manual.
+- [x] Automatic cleanup emits `MINE_POWER`/`MINE_PISTON`/`MINE_SUPPORT` intents through `CombatRuntime.dispatch` only, with the hotbar tool chosen by `CombatInventoryAdapter.toolSlot` (slots 0-8, never the offhand) and no Speedmine, other module or detonation. Order is power → piston → supports; ownership and the exact block id are re-checked immediately before each action, and changed/contested cells are skipped. A missing tool sends nothing for that cell and leaves it to the manual path; a torch cell needs no tool, so it can still be removed with the selected item.
+- [x] Cleanup consumes packet budget only through `CombatScheduler.reservePackets` (no risk entry, lease debt or hazard), and the reservation is released when the action is sent or abandoned. It shares the 20-tick starvation rule through `CleanupPriority` (`request`/`sample`/`prioritise` from `PistonTrapController.tickCleanup`; `CombatEngine.hybridTick` yields the next free slot only when the trap's feasibility probe confirms it can reserve this tick, including packet budget and hotbar slot, while still evaluating non-imminent defence). The 40-tick cleanup deadline now goes straight to `MANUAL_CLEANUP` with the remaining blocks (no cleanup retry). Disable, death, respawn and connection close stop cleanup and cancel the vanilla destruction it started; connection close clears the local destruction state without a send.
+- [x] Tests: `PistonTrapControllerTest.autoCleanup*` plus `disableMidCleanupCancelsTheVanillaDestructionItStarted`, `midBreakBlockChangeCancelsDestructionAndSendsNoFurtherBreak`, `cleanupDeadlineCancelsDestructionBeforeManualFallback`, `deathAndRespawnCancelTheDestructionInProgress`, `connectionCloseClearsDestructionWithoutSendingAnything`, `switchingCleanupCellsCancelsThePreviousDestruction`, `cleanupUsesTicketScopedOwnershipNotAnotherConnectionsState`, `cleanupCreatesNoRiskEntriesAndReleasesItsPacketReservation`, and the real pre-existing-support scenario (an obsidian/bedrock support cell present before the trap is never broken and stays listed in the manual remainder); `CombatRuntimeDispatchTest.stopDestruction*` / `mineDispatch*`, `PistonSequenceTest.cleanupDeadlineEscalatesStraightToManualWithoutRetrying` / `inferredCleanupCanBeToggledOnALiveSequence`, `CrystalLedgerTest.aStateOnlyUpdateOfOurBlockKeepsInferredOwnership` / `aStateOnlyUpdateOfAPendingPlacementLeavesItPending`, `CleanupPriorityTest.aWaitIsNotPrioritisedWhileTheCleanupCannotActuallyReserve`, `HybridEngineTest.aDueCleanupThatCannotReserveGivesTheTickBackToDirect`, `CombatInventoryAdapterTest.toolSlot*`.
+- [x] Any unexplained block update on a cell makes it `CONTESTED`; contested cells are never touched automatically.
+- [x] Disable at any phase: stop sending immediately, keep hazards and risk; no cleanup packets.
+- [x] Death mid-trap: end the action generation; keep the trap's hazards; show manual cleanup if needed. Respawn clears the pending block and sets the sequence's manual-cleanup flags; no test covers debris reconciliation on respawn.
+
+### Tests
+
+- [x] All 8 layouts with and without existing bases.
+- [x] Support depth 2 accepted, 3 rejected; 6 structural blocks accepted, 7 rejected.
+- [x] Torch and redstone block legality; power that would activate another component is rejected.
+- [x] Wrong observed piston facing → abort.
+- [x] Full happy path replayed from Phase 0 piston traces.
+  > **DONE (2026-11-01):** `mc/PistonTraceReplayTest.everyRecordedPistonFixtureReplaysTheWholeTrapThroughTheController` (`src/test/java/dev/tntcoating/core/combat/mc/PistonTraceReplayTest.java:76`) replays all sixteen fixtures through the real `PistonTrapController`/`PistonSequence`. It takes the piston/power blocks, crystal spawn, arena floor and the `piston_tick_start`/`piston_tick_end` progress values with their recorded tick offsets from the fixture JSONL, and feeds those recorded progress values straight into the sequence's `pistonProgress` at the recorded offsets (no fixed one- or two-tick delay and no controller-derived push timing). It asserts the controller derives the recorded source/piston/power cells and the ordered phase history, and that the single attack follows the last recorded extension tick and targets the recorded crystal entity. The computed push's final crystal position and displacement are compared with the crystal positions in `server_tick_end` (tolerance 0.01), so the push assertion is fixture-driven instead of a second `PistonGeometry.trace` call. The synthetic `PistonSequenceTest.happyPathFollowsTheExactOrderedDependencies` remains as the ordering unit test.
+- [x] Swept path passing a more exposed intermediate position than either endpoint → bound uses the intermediate.
+  > **DONE (2026-11-01):** `PistonPlannerTest.selfBoundPricesTheSweptMidPointNotOnlyItsEndpoints` (`src/test/java/dev/tntcoating/core/combat/PistonPlannerTest.java:200`) places the player so only the +0.51 mid frame is inside the blast radius: the plan is rejected with `SELF_BOUNDS`, and the same endpoints outside the radius are accepted only when the mid frame is also outside. `PistonPlanner.exposedDamage` already takes the max over `PistonPush.positions()` (start, mid, final), so the production bound was correct.
+- [x] Target pushed vertically out of the hole by an outside explosion → trap aborts.
+  > **DONE (2026-11-01):** the controller aborts with `target-pushed-vertically` when the verified target rises faster than a normal jump (more than 0.45 blocks per tick; a vanilla jump peaks at about 0.42) during POWER or WAIT_PUSH and the client has recent evidence from either source: an applied explosion observation whose centre is within eight blocks of the target, or a non-plan block change within four blocks, both within three server ticks. The explosion observation arrives through the runtime's passive `setExplosionObserver` seam on the client-thread observation path; `PistonTrapController.onExplosion` only records the tick and never sends, reserves or clears a hazard. The abort sends no attack, keeps the risk reservation and the crystal hazard, sets `manualCleanupRequired` and logs `manual-cleanup-blocks`, and records `trap-aborted-after-power` when POWER was already sent. Evidence is cleared on plan begin, reconcile, disable, death, respawn and connection close. `explosionLiftInWaitPushAbortsWithoutABlockUpdate` (`:470`) proves the no-block-update case, `explosionFarFromTheTargetDoesNotAbort` (`:513`) proves the eight-block radius, `sustainedHalfBlockRiseWithExplosionAborts` (`:535`) proves the strict 0.45 threshold catches a sustained 0.5/tick rise, and `explosionDuringSupportsDoesNotAbort` (`:562`) proves the POWER/WAIT_PUSH phase guard. The older tests keep the block-update path (`:412`), normal jumps (`:350`), the trap's own placements (`:593`) and downward motion (`:681`) from misfiring. Residual limitation: no detection when the server sends neither an explosion observation nor a nearby non-plan block change.
+- [ ] Late and ambiguous spawns; ID reuse across connections.
+- [x] Target movement before and after POWER.
+- [ ] Disable and death at each phase → no further sends, hazards and risk retained.
+  > **DEFERRED (2026-11-01):** the every-phase disable/death loop is deferred to Stage 5 (its "disable at every direct, piston and cleanup phase sends nothing afterwards" item). Current coverage is only WAIT_PUSH (`PistonSequenceTest.java:207-229`) and early PISTON (`mc/PistonTrapControllerTest.java:321-338`, `:697-731`); no test loops CRYSTAL/POWER/ATTACK/WAIT_REMOVE/CLEANUP.
+- [x] Cleanup with inferred-only ownership stays manual by default; contested blocks untouched.
+
+### Exit gate
+
+- [x] All tests pass.
+- [ ] Local test server (authorised): for each of the 8 layouts × 2 power kinds, ≥ 19 of 20 complete cycles, zero wrong-entity attacks, zero policy violations, zero stale-world sends.
+
+> **REPLACED BY TESTER FEEDBACK (2026-11-01):** this 8 × 2 × 20-cycle server gate never ran. The sixteen layouts are covered offline by the geometry, planner, sequence and controller tests. Live evidence comes from the checklist's per-layout run sheet (items 59.1–59.16: one run per direction × height × power), not from a 20-cycle-per-layout gate.
+
+- [x] Unsupported layouts are listed explicitly in the module docs.
+  > **DONE (2026-11-01):** `docs/modules/crystal-combat.md` now has an "Unsupported or unconfirmed layouts" section (`docs/modules/crystal-combat.md:81`): all sixteen layouts are beta, the trace report's Q7 check found none disagreeing with the expected outcome, so the unsupported/unconfirmed list is explicitly empty, and any layout outside the sixteen is rejected with `UNSUPPORTED_LAYOUT` and has no trace evidence.
+
+## Phase 6: Hybrid with footprint-scoped concurrency
+
+Hybrid ships serialised first: during a committed trap, direct plans wait. Footprint-scoped concurrency is the target design, but it must earn its place through a paired comparison against serialised Hybrid and DirectOnly. If it does not beat them, it stays off.
+
+**Files:** extend `CombatEngine`, `CombatScheduler`, `CombatMetrics`; new `FootprintConflict`; tests `HybridChoiceTest`, `FootprintConflictTest`, `InterleavingTest`.
+
+### 6.1 Choice
+
+`CombatEngine.choose(List<Opportunity> all, Snapshot s): Optional<Opportunity>`.
+
+1. Hard filter: drop anything that fails policy, the risk budget, ledger exclusions or footprint conflicts with a committed plan.
+2. Lethal first: among survivors, the earliest credible lethal opportunity (confidence ≥ 0.7, target lower bound ≥ effective target health).
+3. Otherwise rank by `confidence × usefulDamage20 / max(1, etaTicks)`.
+4. Tie-break by lower self upper bound, then fewer actions, then stable opportunity ID.
+5. Record the winner and each rejected opportunity's reason in metrics.
+
+Unknown values reduce confidence. No invented probabilities.
+
+### 6.2 Hysteresis
+
+- [x] Before a plan's first irreversible action, switch only if another safe plan's utility exceeds it by 20% for 3 consecutive ticks.
+- [x] After any crystal or power action, finish or abort safely; never abandon live structures to chase a score.
+- [x] Safety invalidation overrides hysteresis immediately.
+
+### 6.3 Footprint conflict rules
+
+Two plans may hold leases at the same time only if every rule below passes. Distance alone is never enough.
+
+| Check | Conflict if |
+| --- | --- |
+| Structural | A's explosion could break any of B's structural, power, source or piston cells under the inspected blast-resistance rules |
+| Entity | A's explosion search volume (12 blocks for power 6) includes B's bound crystal, or A would attack it |
+| Swept | A's explosion could damage or displace anything inside B's swept volume |
+| Target motion | A's explosion could move the target, in three dimensions, out of B's geometry envelope, given collision geometry and exposure |
+| Resources | Both need the same slot or rotation in the same tick (resolved by serialising, not by rejection) |
+| Risk | Combined reservations fail the budget |
+
+When compatibility cannot be established for any row, serialise.
+
+Under the inspected vanilla rules, a direct explosion can destroy the trap crystal before its intended attack, but it does not trigger a second crystal explosion: `EndCrystal.hurtServer` removes a crystal hit by an explosion-tagged source without exploding it. The trap therefore loses its damage rather than detonating early. Server modifications can differ, so Phase 0 confirms this on the target server type. Torches and pistons break easily; redstone blocks can break at close range.
+
+Knockback: the inspected explosion computes a three-dimensional push, including a vertical component, and has no full-hole exemption. Its entity search reaches 12 blocks for a power-6 crystal, so there is no fixed 6-block cutoff. Bound the target's possible motion against collision geometry and exposure, including vertical escape; if that bound cannot keep the target inside the envelope, the plans conflict.
+
+### 6.4 Concurrency stages
+
+1. **Serialised (ships first).** During a committed trap, direct plans are blocked; defence evaluation continues. Validate Hybrid choice logic and measure it against DirectOnly.
+2. **Footprint-scoped (gated).** Direct plans run alongside a trap when every check in 6.3 passes, behind the explicit `footprint-concurrency` setting (default false in every preset). The implementation and code-level tests are present; promotion still requires the paired comparison (`docs/testers/checklist.md` items 77–80) and all invariant gates clean, so the stage stays off.
+
+### 6.5 Defence interaction
+
+- [x] Defensive opportunities are evaluated every tick, including during a trap.
+- [x] A defensive break of a crystal the trap protects is allowed only if the engine first invalidates the trap. (No trap-invalidation API exists: the ledger excludes the trap crystal, so the break is impossible rather than gated.)
+- [x] Cleanup intents share budgets and cannot be starved: after 20 ticks waiting, cleanup gets the next free slot. **Stage 4 part B (2026-11-01):** `PistonTrapController.tickCleanup` requests `CleanupPriority` with the trap's `Deadline` and only dispatches after `prioritise()`; `CombatEngine.hybridTick` yields after `recordChoice` when due (non-imminent defence still runs); `PistonTrapControllerTest.autoCleanupRemovesOwnedPowerThenPistonThenSupports` enters CLEANUP at tick 9, waits ticks 10-29 and sends its first break at tick 30; `cleanupDeadlineFallsBackToManualWithTheRemainingBlocks` covers the 40-tick fallback.
+
+> **DONE (2026-11-01, Stage 4 part B):** cleanup has a real intent origin and packet path. The trap emits `MINE_POWER`, `MINE_PISTON` and `MINE_SUPPORT` intents for its own `INFERRED_OURS` cells, reserves each through `CombatScheduler` and the shared packet budget, and dispatches vanilla hotbar block breaks through `CombatRuntime.dispatch` only. The scheduling hook is no longer decision-only: a due cleanup yields the engine's direct send and gets the next free slot after `CleanupPriority.STARVATION_TICKS` (20) server ticks. A missing tool or an unactionable cell clears the priority rather than starving direct play, and the 40-tick cleanup deadline falls back to `MANUAL_CLEANUP` with the remaining blocks.
+
+### Tests
+
+- [x] DirectOnly, PistonOnly and Hybrid pick as specified on scripted snapshots.
+- [x] Surrounded target where direct faceplace is still better → direct wins. (`CombatChoiceTest.higherUtilityDirectFaceplaceWinsOverASurroundedTrapCandidate`, `HybridEngineTest.surroundedTargetWhereDirectFaceplaceRanksHigherChoosesDirect`.)
+- [x] Oscillating scores → no thrash under hysteresis.
+- [x] Missing piston materials → piston opportunities absent with a visible reason. (`PistonPlannerTest.missingPistonMaterialSuppressesThePistonOpportunity` and the crystal/support/torch/block siblings, `PistonTrapControllerTest.everyMissingTrapMaterialSuppressesThePlanWithoutReservingOrSending`, `missingMaterialsAreVisibleInTheInfoString`, `missingMaterialsAreLoggedOnceNotEveryTick`.) Starting a specific plan re-checks that plan's own power item before any reservation (`PistonTrapControllerTest.removingThePreviewedPlansOwnPowerItemPreventsTheReservation`, `redstoneBlockPlanStillStartsWhenOnlyTheTorchIsGone`).
+- [x] Direct explosion reaching the trap crystal → crystal destroyed, no second explosion; trap aborts and its risk is retired only by evidence. (Code-level: `FootprintConflictTest` entity row, `PistonTrapControllerTest.directExplosionDestroysTheTrapCrystalWithoutASecondExplosionAndKeepsRisk`.)
+- [x] Direct explosion intersecting power or piston cells → conflict. (`FootprintConflictTest`, STRUCTURAL row.)
+- [x] Explosion 8–12 blocks away pushing the target vertically out of a hole → conflict. (`FootprintConflictTest`, TARGET_MOTION row, no hole exemption.)
+- [x] Unrelated direct action whose search volume and motion bound both miss the trap → allowed concurrently. (`FootprintConflictTest` compatibility case; `HybridConcurrencyTest` admits it through the engine with the setting on.)
+- [x] Mixed traces: interleave direct, piston, defence and cleanup over 1,000 randomised seeds; assert zero conflicting sends, no double slot ownership, no stale callbacks, and the risk budget never exceeded. These seeds test logic; they are not independent real encounters.
+
+### Exit gate
+
+- [x] Serialised Hybrid: all tests pass and metrics record decision reasons.
+- [ ] Footprint-scoped concurrency: tests pass and the paired comparison meets its prespecified threshold, or it stays off. (Code-level tests pass; the setting ships off and the paired comparison is outstanding, so it stays off.)
+
+## Phase 7: Gated experiments
+
+Each increment below (double push and optimistic presentation) is independently mergeable, off by default, and may never reach a validated preset. Run the complete regression suite after each one. Basic piston and direct effectiveness must never depend on them.
+
+### 7.1 Head-height layouts and double push
+
+**Files:** `DoublePushPlanner`, extend `PistonGeometry`, tests.
+
+> **Evidence gate (30 Oct 2026):** the committed trace corpus contains exactly the 16 Phase 5 layouts
+> (4 directions × feet/eye × torch/redstone), one measured single-push displacement of 1.02 blocks. It
+> contains no head-height and no double-push run, so no additional layout has measured pushed offsets.
+> The plan requires each layout to be validated separately and forbids guessing offsets; 7.1 is therefore
+> not implementable from this evidence. No `DoublePushPlanner` or head-height geometry was added. New local
+> traces (authorised server, both stages observed) are required before this experiment starts.
+
+- [ ] Additional head-height layouts beyond Phase 5's eye-height set, each validated as a separate layout with its own measured pushed offsets.
+- [ ] Perpendicular double push: two `PistonStage`s in one plan, with their own support and power dependencies, executed as a DAG.
+- [ ] The two swept envelopes must not overlap a structural cell of the other stage.
+- [ ] Partial push (first push observed, second fails) → abort, attack only if safe at the actual position, otherwise protect and clean up.
+- [ ] Damage recomputed after each observed push.
+- [ ] No triple push.
+- [ ] Optional fire placement: off, and only after its own full safe-cycle fixture passes.
+- [ ] Gate: ≥ 19/20 per declared double-push layout on the local server.
+
+### 7.2 Optimistic presentation removal
+
+**Files:** `OptimisticCrystalView`, mixin into crystal rendering and client collision, tests. Reference: Marlow's Crystal Optimizer (MIT) for the presentation approach; reimplement.
+
+> **Latency gate (30 Oct 2026):** render hiding requires RTT p99. No RTT estimator exists in this build:
+> `CombatMetrics` records queue-age, observe-to-apply and apply-to-send latency, not client-server round
+> trips, and there is no acknowledged attack packet to derive one. A fixed deadline would not implement
+> the plan's expiry rule and would make rollback counts meaningless. Render hiding, collision filtering
+> and early cell reuse are therefore blocked on a measured RTT source (or an explicit user decision to
+> use a named fixed upper bound). No render/collision mixin was added.
+
+Three separate experiments, in this order, each with its own gate:
+
+1. **Render hiding only.** After a verified attack send, stop rendering the crystal until RTT p99 + 5 ticks; on server removal drop the overlay; on expiry restore visuals and count a rollback. Collision, movement prediction and other modules see the crystal unchanged.
+2. **Collision filtering (separate).** Hiding collision changes movement prediction and other modules' behaviour even while the ledger keeps the crystal. Needs its own desynchronisation and rollback tests, including movement prediction near the hidden crystal and interaction with Scaffold and Surround.
+3. **Early cell reuse (separate).** Placing into the cell before removal is observed: at most 1 pending reuse per base, rejection counting and exponential backoff.
+
+For all three:
+
+- [ ] The overlay never changes ledger state or risk accounting.
+- [ ] Never applied to piston-bound crystals.
+- [ ] No duplicate entities, no ghost cell after rollback, connection close clears overlays.
+- [ ] Render hiding must pass before collision filtering is attempted.
+
+### 7.3 ID prediction: removed from this plan
+
+No client-side precondition can establish an unseen entity's identity. No visible crystal holder nearby does not exclude unseen spawns, pending server activity or entity allocation outside tracking range; a quiet prior tick does not prove the next numeric ID; and there is no independent source for the UUID before spawn. The inspected attack handler also disconnects a player who attacks an item, experience orb or qualifying arrow, so a wrong guess can kick the user.
+
+Speculative attacks therefore leave the hard-safety milestone and every profile that claims the invariants. They may be reconsidered only as a separate design with an explicitly weaker, user-visible contract, or with server-provided identity acknowledgement. The fast spawn-confirmed path remains the low-latency solution.
+
+### Exit gate for each increment
+
+- [ ] Its own tests pass; the full regression suite passes.
+- [ ] Off in every preset until Phase 9 shows a measured benefit and no acceptance problems.
+
+## Phase 8: Module, UI and lifecycle
+
+**Files:** `modules/CrystalCombat`, `render/CrystalCombatRender`, `CrystalCombatModuleTest`; register in `TntCoatingAddon`.
+
+### Settings groups
+
+| Group | Settings |
+| --- | --- |
+| General | Mode (DirectOnly / PistonOnly / Hybrid), Profile (Conservative / Anarchy / Custom), target range, friend handling |
+| Safety | Min target damage, max self damage, remaining-health margin, max friend damage, anti-suicide (locked on), grouped bound (gated), statistical quiet window (Anarchy only, labelled), debt display |
+| Direct | Place range, attack range, walls range, per-tick caps, faceplace threshold, armour threshold, own-only, support placement |
+| Timing | Prediction ticks (target, self), hurt-sync on/off |
+| Piston | Enabled layouts, power kinds, max structural blocks, cleanup policy (mine piston y/n) |
+| Defence | Dangerous-crystal break, anti-piston blocker, Speedmine cooperation |
+| Pauses | Eating, mining, screens, Baritone, health floor, lag pause |
+| Inventory | Switch mode (hotbar only / lending), switch delay, restore slot — **deferred in Stage 5**: no lending code or settings ship (see note) |
+| Experimental | Double push, render hiding, collision filtering, early reuse (each with a warning line) |
+| Render | Plan outline, pushed-position marker, damage label with confidence |
+
+**Stage 5 implementation note (2026-11-01).** The shipped groups are General, Safety, Direct, Timing,
+Piston, Defence, Pauses, Experimental, Render and Diagnostics. Diagnostics is a documented deviation
+(tester log, identity export and incident key). The Inventory group is absent because inventory lending
+is deferred behind the gated box below; this build adds no lending, switch-delay or restore-slot
+setting, so hotbar-only switching is unchanged.
+
+Implemented settings: mode, profile and target range; locked anti-suicide and the four safety
+thresholds; place, attack and walls ranges, own-only, support and surround-gap; motion prediction and
+hurt-sync; piston-trap, auto-cleanup and the sixteen layout toggles; dangerous-crystal break and
+anti-piston; the seven pause toggles/floors; footprint-concurrency; the read-only `show-risk-debt`
+overlay (Render group); debug-log, export-include-identities and incident-marker-key.
+
+Settings in the table with no backend are deliberately not invented: per-tick caps, faceplace and
+armour thresholds, prediction ticks, power kinds, max structural blocks, cleanup policy, Speedmine
+cooperation, switch delay and restore slot, double push, render hiding, collision filtering, early reuse,
+plan outline, pushed-position marker and damage label. The read-only debt/suspension overlay is the only
+Render-group surface implemented. Old settings files are migrated from the pre-Stage-5 groups (General and
+Ranges) by `CrystalCombat.fromTag` before Meteor loads them, so a moved key keeps its saved value.
+
+Profile changes invalidate queued unsent intents. They never clear hazards or sent risk.
+
+Selecting Conservative writes the four safety settings through their setters. Each setter has an
+`onChanged -> configChanged()` handler, and the profile switch calls `configChanged()` once more, so one
+user action can run the shared reconfigure path up to five times. This is chatty but safe: it sends
+nothing, never changes a hazard or sent risk, and every intermediate value is legal; the final call
+applies the same four audited defaults.
+
+### Lifecycle
+
+- [x] Give the Phase 8 settings surface a lifecycle without inventing per-mode rules: every shipped
+  setting sits in its planned group; settings that affect planning or safety run the shared
+  client-tick/config-change path, while render and diagnostic settings are read where they are used.
+  `CrystalCombatPhase8SettingsTest` walks the setting and group inventory; `CrystalCombatConfigChangeTest`
+  drives a switch through the real controller/runtime path in one mode. Per-mode disable is covered by the
+  Stage 4/5 disable tests
+  (`CrystalCombatEngineModuleTest.disableAfterASentAttackSendsNothingElseAndRetainsTheHazard`,
+  `PistonTrapControllerTest.disableAtEveryPistonAndCleanupPhaseSendsNothingAfterwards`), not by this box.
+- [x] Profile switching between Conservative and Custom runs through the shared reconfigure path:
+  Conservative re-applies the four audited defaults, Custom keeps the player's values, and both profiles
+  still pass `CombatProfiles.productionSafety`. The plan's third profile is not implemented, so there is no
+  statistical quiet window to show. There is no player-facing "what changed" diff view; the switch only
+  updates the settings. Covered by `CrystalCombatPhase8SettingsTest` and `CrystalCombatConfigChangeTest`.
+- [x] Render reads state only; render callbacks never progress any sequence. `CrystalCombatRender` is
+  handed one published snapshot, and `CrystalCombatRiskSnapshotTest` proves it is published on the client
+  tick and cleared on disable and on leaving the world (including the module's `onGameLeft` path).
+- [x] Render shows outstanding risk debt and suspension causes (read-only snapshot display; not the full
+  outline/pushed-position/damage-label render). `RiskDebtSnapshotTest`,
+  `CrystalCombatRiskSnapshotTest` and the render assertions in `CrystalCombatPhase8SettingsTest`.
+
+### Inventory lending (gated)
+
+- [ ] Main-inventory lending only after dedicated tests for cursor items, open containers, manual selection during a loan, and offhand priority all pass. **Deferred in Stage 5:** no lending code, settings or loan path was added, and none of those four test groups exists yet. The gate stays closed; hotbar-only switching is unchanged.
+
+### Exit gate
+
+- [x] Module tests pass; full `./gradlew test` and compile pass. Stage 5 full run: `./gradlew cleanTest test --no-build-cache` → 282 suites, 2733 tests, 0 failures/0 errors.
+- [x] Disable at every direct, piston and cleanup phase verified to send nothing afterwards. `PistonTrapControllerTest.disableAtEveryPistonAndCleanupPhaseSendsNothingAfterwards` covers RESERVE, SUPPORTS, PISTON, CRYSTAL, POWER, WAIT_PUSH, ATTACK, WAIT_REMOVE, CLEANUP, COOLDOWN and MANUAL_CLEANUP; `CrystalCombatEngineModuleTest` covers direct placement and the sent-attack case (`disableAfterASentAttackSendsNothingElseAndRetainsTheHazard`).
+
+## Phase 9: Validation and release preparation
+
+This phase produces the evidence. Each live step needs its own authorisation: local test server first, then any public server only with explicit permission for that session.
+
+### 9.1 Build checks
+
+- [ ] `./gradlew clean build`, `python3 scripts/test_check_docs.py`, `python3 scripts/check_docs.py` in `26.2/`.
+- [ ] Inspect the JAR for mixin registration and capability metadata; confirm the source ZIP and notices match.
+
+### 9.2 Matched comparisons (local server)
+
+Compare under identical terrain, equipment, scripted target programme and seed, at 80 and 200 ms RTT (stated as RTT) and server TPS 20, 15 and 10. Each comparison is paired: the same scenario runs once with the baseline and once with the treatment, from an independent reset.
+
+1. Meteor CrystalAura vs CrystalCombat DirectOnly baseline (Phase 3 milestone)
+2. DirectOnly baseline vs + each Phase 4 tactic individually
+3. DirectOnly vs PistonOnly on holed targets
+4. DirectOnly vs serialised Hybrid
+5. Serialised Hybrid vs footprint-scoped Hybrid
+6. Baseline vs each Phase 7 experiment individually
+7. Conservative vs Anarchy statistical quiet window (report the miss rate)
+8. Optionally, a closed client you hold a licence for, as a black-box opponent only
+
+Protocol: randomise AB/BA order per pair; keep failed runs; separate tuning seeds from evaluation seeds; predeclare the primary metric, the practically meaningful improvement and the stopping rule before evaluation. Log authoritative attack acceptance, explosions, health changes and server ticks on the server side; client-side totem timing alone cannot attribute third-party damage. Report:
+
+- Primary: paired treatment-minus-baseline effect on observed target damage per 20 ticks, with its confidence interval
+- Time to first observed target damage; totem pops per minute (server-attributed)
+- Self damage taken; invariant violations (must be zero)
+- Packets per second, rejections, rollbacks, debt and suspension time
+- Latency service objectives and combat tick time p50/p95/p99
+
+### 9.3 Performance
+
+- [ ] The 1 ms budget covers **all combat work in a client tick**: queue drain, applied-revision stamping, snapshot capture, event-triggered passes, validation and every planner pass. Per-pass candidate caps alone cannot bound an event storm.
+- [ ] A shared deadline and work counter; coalesced invalidations; optional planning deferred when reconciliation uses the budget. Reconciliation itself is never skipped.
+- [ ] Event-storm test (50+ spawns and block updates in one tick) stays within budget or degrades by deferring optional work only.
+- [ ] Profile whole-client runs with Java Flight Recorder on CachyOsPC before choosing any optimisation. Report allocation, frame-time tails and cache hit rates.
+- [ ] Reject any speedup that reduces correctness or observed outcomes.
+
+### 9.4 Live observation (only with explicit authorisation)
+
+- [ ] Record acceptance of placements and attacks, push behaviour and damage on the target server, with real conditions and sample sizes.
+- [ ] Documentation separates locally validated, live-observed and experimental behaviour. No "best client" claim.
+
+### 9.5 Docs and release artefacts
+
+- [ ] `docs/modules/crystal-combat.md`, `docs/validation/crystal-combat.md`, README index, CHANGELOG, THIRD\_PARTY\_NOTICES.
+- [ ] Publishing is a separate decision.
+
+## Phase 10: Version ports
+
+Port only after 26.2 passes Phase 9.
+
+| Tree | Java | Meteor | Notes |
+| --- | --- | --- | --- |
+| `26.1.2/` | 25 | build 42 | Re-audit Meteor APIs; rerun Phase 0 traces |
+| `1.21.11/` | 21 | vendored build 82 | Audit build 82 independently; never infer from build 86 caches |
+
+For each tree:
+
+- [ ] Carry pure `core/combat` code and tests unchanged where possible.
+- [ ] Re-implement `mc/*` adapters, mixins and capability checks against that tree's pinned APIs.
+- [ ] Rerun Phase 0 recording and replay tests; confirm `W`, push offsets and event order.
+- [ ] Repeat direct, piston, callback, cleanup and ownership validation, plus each advanced feature claimed for that version.
+- [ ] Mark any unvalidated feature/version combination unavailable in validated profiles.
+
+## Defaults and rationale
+
+Every number here is a starting point to measure in Phase 9, not an established optimum. Health values are in health points (2 per heart).
+
+| Setting | Conservative | Anarchy | Rationale |
+| --- | --- | --- | --- |
+| Mode | Hybrid | Hybrid | Hybrid falls back to direct when no trap is better |
+| Target range | 6 | 6 | Covers place range plus target movement |
+| Place range | 4.5 | 4.5 | Inside vanilla block interaction reach |
+| Attack range | 3.0 | 3.0 | Inside vanilla entity reach; execution still checks real reach |
+| Walls range | 3.0 | 3.0 | Avoids through-wall attempts most servers reject |
+| Min target damage | 4 | 4 | Two hearts; below this a crystal rarely pressures a geared player |
+| Max self damage per crystal | 6 | 6 | Per-opportunity ceiling; the summed risk budget handles accumulation |
+| Remaining-health margin | > 2 | > 2 | Leaves one heart against outside damage between observations |
+| Max friend damage | 2 | 2 | Per friend, independent budgets |
+| Faceplace health | 8 | 8 | Four hearts including absorption |
+| Faceplace armour | ≤ 10% | ≤ 10% | Pressures armour near breakage; it does not reduce mitigation before the piece breaks |
+| Places per tick | 1 | 2 | Anarchy allows doubling where the server accepts it |
+| Verified breaks per tick | 1 | 2 | Same |
+| Rolling packet budget | 60 / 20 ticks | 100 / 20 ticks | See arithmetic below; Anarchy lowers on rejection |
+| Rotations | On | On | Off only by explicit user choice |
+| Target prediction | 2 ticks | 3 ticks | Typical RTT range on EU servers |
+| Self prediction | 1 tick | 1 tick | Worst of current and predicted |
+| Hurt-sync | Off | On | Needs Phase 9 evidence before Conservative |
+| Switch hysteresis | 20% for 3 ticks | 20% for 3 ticks | Prevents thrash between near-equal plans |
+| Max attempts per crystal | 2 | 2 | Limits wasted packets; risk from earlier attempts is kept |
+| Piston stage timeout | max(20, RTT p99 + 5) ticks | same | Long enough for a round trip and a push |
+| Trap deadline | 100 ticks | 100 ticks | Five seconds before giving up |
+| Cleanup deadline | 40 ticks | 40 ticks | Two seconds |
+| Structural retries | 2 | 2 | Never for crystal placements |
+| Max new structural blocks | 6 | 6 | Bounds build time and material use |
+| Support depth | 2 | 2 | Same |
+| Combat work budget (all work per tick) | 1 ms / tick | 1 ms / tick | On CachyOsPC; adjust from JFR measurements |
+| Candidate caps | 128 direct, 64 piston | same | Bounded search |
+| Zero-damage retirement | `Barrier`: ack plus one tick; `Strict`: debt | same | `Meteor-style` retires on the observed explosion; only `Barrier` sends the probe; the plan's statistical quiet window is superseded and disabled |
+| Experiments | All off | All off | Must earn their place in Phase 9 |
+
+Aggressive reach, rotations off and every experiment need an explicit per-setting opt-in. Nothing is enabled automatically based on server name.
+
+### Packet budget arithmetic
+
+One full direct cycle is roughly:
+
+| Packet | Count |
+| --- | --- |
+| Place interaction | 1 |
+| Swing for place | 1 |
+| Attack | 1 |
+| Swing for attack | 1 |
+| Slot switch to crystals and back (when needed) | 0–2 |
+| **Total counted** | **4–6** |
+
+Rotation updates ride on movement packets and are not counted here.
+
+So Conservative's 60 packets per 20 ticks allows about 10–15 crystal cycles per second, and Anarchy's 100 allows about 16–25. A tick cap of 1 place and 1 break limits Conservative to 20 cycles per second anyway, so the budget, not the tick cap, is the usual limit. Defence, piston and cleanup actions draw from the same budget.
+
+If Phase 9 shows the budget is the bottleneck without rejections, raise it in steps of 10 and remeasure.
+
+## Test matrix and acceptance gates
+
+Four tiers, each required before the next: pure unit tests, trace replay, pinned-Minecraft integration tests, and authorised local-server scenarios. Live public-server observation is a fifth, optional tier.
+
+### Scenario matrix
+
+| Dimension | Values |
+| --- | --- |
+| Target state | Static open, moving open, holed, full surround, partial surround |
+| Target defence | No armour, full netherite + Blast Protection IV, Resistance I/II, absorption 4/16; armour breaking between hits; Resistance expiring mid-sequence |
+| Target hurt state | Fresh, hidden prior hurt, stronger and weaker follow-ups |
+| Friends | None, adjacent to target, adjacent to self; health KNOWN, UNKNOWN, CENSORED |
+| Self state | Full health, low health, absorption, Weakness, eating, screen open; death and respawn in the same world |
+| Network | 80 and 200 ms RTT; ±30 ms jitter; delays beyond the p99 tail |
+| Server | TPS 20, 15, 10; a stall longer than 40 client ticks |
+| Observation order | In order, duplicated, delayed, out of order, split absorption/health, missing health packet, tracking removal |
+| Explosion semantics | Crystal destroyed by explosion without a second explosion; vertical knockback out of a hole; intermediate swept-path exposure |
+| Dispatch | Failure after each packet step; delayed Meteor callbacks after disable |
+| Piston | 4 directions × feet/eye × torch/redstone block |
+| Ownership | Contested cleanup, inferred-only ownership |
+| Load | Event storms (50+ spawns and updates in one tick) |
+| Mixed | Direct + piston + defence + cleanup interleaved; several individually safe but cumulatively lethal attacks before a delayed health update |
+| Experiments | Render-hiding rollback, collision desync, reuse rejection |
+
+### Invariant gates (zero tolerance)
+
+These must be exactly zero across every tier and every run:
+
+- Wrong-entity attacks (no speculative path exists)
+- Policy violations (self, friend or margin breach caused by module-issued explosions) in Conservative
+- Risk retired by a timeout in Conservative
+- Sends after disable, death, connection change or config change
+- Concurrent sends from Meteor CrystalAura while CrystalCombat is enabled
+- Double slot or rotation ownership
+- Automatic mining of a contested cell
+
+### Success-rate gates
+
+A small sample cannot show high reliability. Using exact (Clopper–Pearson) two-sided 95% intervals, 19 of 20 successes gives a lower bound of 75.13% and 48 of 50 gives 86.29%. Neither establishes a 95% true-success floor. For invariant gates, zero failures in 100 independent identical trials bounds the failure rate at about 2.95% (one-sided 95%), and 1,000 at about 0.30%. These are calculated bounds, not measured reliability, and randomised trace seeds are not independent real encounters. Choose the method and sidedness before each evaluation.
+
+| Gate | Sample | Pass | What it shows |
+| --- | --- | --- | --- |
+| Smoke gate per declared piston layout | 20 | ≥ 19 | Works at all; two-sided 95% lower bound about 75% |
+| Default-preset piston layouts | 50 | ≥ 48 | Two-sided 95% lower bound about 86% |
+| Direct verified cycles | 100 consecutive | 100 invariant-clean | Failure rate below about 2.95% (one-sided 95%) |
+| Double push per layout | 20 | ≥ 19 | Same as smoke gate |
+
+State the sample size, method and sidedness alongside every rate.
+
+### Ablation rules
+
+- Report the paired treatment-minus-baseline effect and its confidence interval over independently reset scenario runs. Overlap between two separate intervals is not a test of the paired difference.
+- Promote a feature only when the interval supports a prespecified practically meaningful improvement, every invariant gate passes, and secondary regressions stay within predeclared limits.
+- Pair terrain, target programme and seed; randomise AB/BA order; keep failed runs; separate tuning seeds from evaluation seeds; predeclare stopping rules.
+- A feature that adds any invariant violation is excluded regardless of benefit.
+
+## Risks, open questions and decisions
+
+### Risks
+
+| Risk | Effect | Mitigation |
+| --- | --- | --- |
+| The `Barrier` ack barrier is confirmed only on a local vanilla server | On a laggy, proxied or modified server the probe may not order health sync, so `Barrier` could retire early | `Barrier` is opt-in; `Strict` is the default and never sends the probe; a lost, late or mismatched ack keeps debt |
+| Grouping obligations cannot be proven | Summed bound throttles bursts | Accept the summed bound; Conservative stays safe and slower |
+| Cached artifacts differ from publisher releases | Audit findings wrong | Hash every artifact; compare with publisher checksums where available |
+| Meteor 26.2 internals change before release | Suppression mixin breaks | Descriptor capability check refuses activation; pin build |
+| Hybrid rarely beats DirectOnly | Piston complexity without benefit | Paired Phase 9 comparison decides; DirectOnly stays default if so |
+| Footprint checks too conservative | Concurrency rarely enabled | Measure conflict rejections by reason; stay serialised |
+| Footprint checks too permissive | Direct explosion destroys trap crystal or moves target | Serialise when compatibility cannot be established; interleaving tests |
+| Ledger ambiguity in crowded fights | Quarantines block traps | Count quarantines; tighten source box only if traces justify it |
+| Ownership cannot be proven in vanilla | Cleanup is mostly manual | Show manual cleanup clearly; inferred cleanup is the explicit `auto-cleanup` opt-in (off by default), which removes only `INFERRED_OURS` cells |
+| Combat work exceeds 1 ms in event storms | Frame drops | Shared deadline, coalescing, deferral; JFR before optimising |
+| Server anticheat rejects patterns | Rejections, setbacks | Backoff; Conservative profile; no automatic bypass claims |
+| Provenance error | Licence violation in a GPL release | Phase 0 pins; per-file mode headers; review at each checkpoint |
+
+### Open questions
+
+- [ ] Does the `Barrier` probe's block-change acknowledgement order health sync on the target server type, not only local vanilla? (Phase 9; only `Barrier` sends it; `Strict` never does.)
+- [ ] Exact 26.2 immunity window, raw-before-mitigation order, and cooldown-bypassing damage types (Phase 0).
+- [ ] Do absorption and health from one damage event share a bundle? (Phase 0.)
+- [ ] Crystal-hit-by-explosion and vertical knockback behaviour on the target server type, not just vanilla (Phase 0/9).
+- [ ] Measured piston push offsets and durations per direction and height (Phase 0).
+- [ ] Which BlackOut fork the pinned commit comes from, and THM's lineage (Phase 0).
+- [ ] Can `InventorySlotLoan` gain a side-effect-free query, and Speedmine an owner-scoped cancel? (Phase 2b.)
+- [ ] Whether you hold a licence for any closed client to use as a black-box baseline (Phase 9, optional).
+- [ ] Final user-facing names for modes and profiles (Phase 8).
+
+### Decision log
+
+| Date | Decision | Reason |
+| --- | --- | --- |
+| 2026-10-28 | Single `CrystalCombat` module with three modes over a shared engine | One owner for packets, slots and risk |
+| 2026-10-28 | Risk resolution uses event + quiet window, not health packets alone (superseded in v2.1) | v1 could deadlock on zero-damage hits |
+| 2026-10-28 | Grouped immunity bound with top-two per close-arrival group (v2.1: gated, summed first) | Sound with outside hits; less throttling on bursts |
+| 2026-10-28 | Phase 0 trace recording before foundations | Build models against observed 26.2 behaviour |
+| 2026-10-28 | Split v1 Task 4 into 2a/2b/2c | Separate review of pure logic, adapters and Meteor suppression |
+| 2026-10-28 | Footprint-scoped concurrency is core Hybrid work | Serialised Hybrid loses direct pressure during traps |
+| 2026-10-28 | Anti-piston blocking added to defence | Opponents will piston too; GameSense Blocker precedent |
+| 2026-10-28 | ID prediction narrowed to no-other-crystal-actor conditions (superseded in v2.1: removed) | v1 bound was nearly always unsatisfiable |
+| 2026-10-28 | Cracked, decompiled and leaked clients excluded entirely | Licence and GPL provenance |
+| 2026-10-28 | 48/50 gate for default piston layouts | 19/20 only bounds success at about 75% |
+| 2026-10-28 | v2.1: timeouts never retire risk; retirement needs terminal evidence and a coherent snapshot | Technical review: percentiles do not bound the tail; stalls break timeouts |
+| 2026-10-28 | Conservative keeps hard-guarantee debt; Anarchy may opt into a labelled statistical quiet window | Chosen by the user; keeps one profile with a true guarantee |
+| 2026-10-28 | Summed bound first; grouped bound gated on proof obligations | Grouping is a mathematical inference, not yet a gameplay proof |
+| 2026-10-28 | Reserve risk at PLACE\_CRYSTAL | Others can detonate our crystal before we attack it |
+| 2026-10-28 | ID prediction removed from the plan | No client precondition can prove unseen identity; wrong targets can disconnect |
+| 2026-10-28 | Crystal hit by explosion: destroyed, no second explosion; 3D knockback, no hole exemption | Inspected 26.2 bytecode (to confirm in Phase 0) |
+| 2026-10-28 | First usable milestone is DirectOnly with suppression, lifecycle, risk and metrics | Lifecycle and integration bugs surface earliest |
+| 2026-10-28 | Hybrid ships serialised; footprint concurrency must win a paired comparison | Concurrency safety depends on geometry that must be proven |
+| 2026-10-28 | Paired effects for ablation; 1 ms budget covers all combat work per tick | Interval overlap is not a paired test; per-pass caps miss event storms |
+| 2026-10-29 | Explosion→crystal association is proximity-only (`EXPLOSION_ASSOCIATION_RANGE`); no swept-envelope fallback | Pushed positions are Phase 5's job (C21); a swept fallback attributed unrelated explosions to our crystal |
+| 2026-10-29 | Dedupe-window eviction is not observation loss; `stale` is set only by `observationsLost` and cleared only by `reconcile(Snapshot)` | A bounded dedupe window loses no applied observation; real loss is an intake-queue overflow that P2b reports |
+| 2026-10-29 | A dimension change mints a new `ConnectionKey` epoch and ends in-flight work; old-epoch hazards and ownership stop blocking | Entity IDs and block positions are world-scoped; self debt carries and Phase 2 owns it |
+| 2026-10-29 | The ledger reports `noLongerExists` and `explosionObserved` as separate facts, keeping `REMOVED` distinct from `EXPLODED`; neither retires risk | Retirement needs terminal evidence plus a causally later coherent snapshot; that rule belongs to the Phase 2 budget |
+| 2026-10-29 | Answered placement bookkeeping is pruned on answer | Otherwise every answered placement permanently contested its cell and blocked a later placement there |
+| 2026-10-29 | Over-quarantine of a live bound crystal when a second spawn appears in its source is accepted for now | Conservative and review-approved; revisit if traces show unnecessary traps |
+| 2026-10-29 | Keep the extra placement-ownership, session lifecycle and diagnostics APIs | Needed by later phases and traces; documented in the 1.2/1.3 interfaces above |
+| 2026-11-01 | Phase 2b counts packets inside `CombatScheduler` (`packetCapacity`, `packetUsed(int)`, backed by `PacketLedger`) instead of reusing `PlacementTracker`/`ServerPacer`/`PacketBudget` | Those helpers are placement-pipeline bookkeeping: `PlacementTracker` follows one sent placement to its authoritative block update, `ServerPacer` is an adaptive rate control driven by accepted/failed placements, and `PacketBudget` is a one-second bucket with placement-specific costs (`placementCost`, a single `perSecond` limit). None counts combat dispatch packets or exposes a profile-sized rolling window, and reusing them would tie the single dispatch path to the placement pipeline. `PacketLedger` is the pure tick-based 20-tick window (conservative 60, anarchy 100) shared by direct, trap and defence |
+| 2026-11-01 | Phase 2c's "integration test" is a synthetic 200-tick gate loop, not an in-game run | `CrystalCombatGateTest.bothModulesEnabledSendsNothingOverTwoHundredTicks` (`src/test/java/dev/tntcoating/core/combat/CrystalCombatGateTest.java:151-166`) drives the gate with synthetic ticks: the unit-test JVM has no client or Meteor tick loop. The mixin wiring itself is real (`CrystalAuraMixin`, descriptor-checked by `MeteorUpgradeCheck`), so in-game two-module suppression stays a tester item |
+| 2026-11-01 | Phase 6.5's defensive break of a trap-protected crystal is impossible rather than gated | No trap-invalidation API exists in 26.2 or in this build, so a defensive break cannot be "allowed once the trap is invalidated". The ledger excludes the trap crystal, so own and ledger-blocked cells are skipped outright and the break is unreachable; offence remains the only path that may attack our own unresolved trap crystal |
+| 2026-11-01 | Stage 3 correction (BUG A/B): Hybrid `previewPlan` takes the observational world sample (refresh plus stationary-counter advance, deduplicated once per server tick) before planning; a completed trap pass that found no plan restarts on the next call, while a completed pass that found a plan stays sticky | In Hybrid the trap is ticked only after the engine selects it, so on a fresh session nothing advanced the stationary trackers and `previewPlan` always returned empty. The planner also latched a completed empty pass forever (`complete` short-circuit), so PistonOnly and Hybrid could never rescan after a target moved during the first pass. Sampling in the preview leaves PistonOnly's trap tick as its only sample point and the preview still never dispatches, reserves or leases; the sticky found-plan case keeps a Hybrid offer alive from the offer tick to the selection tick |
+| 2026-11-01 | Stage 4 part B adds the beta `auto-cleanup` setting (General, default `false` in every profile; description "Beta: removes only the power, piston and supports this module placed and saw confirmed. Contested blocks are always left for you.") | The trap registers a ledger placement for each structural dispatch before `CombatRuntime.dispatch` and marks it sent on `SENT`; cleanup intersects ticket-scoped `CrystalLedger.ownership(ticket.conn(), cell) == INFERRED_OURS` with the current trap's `sentStructural`, so contested, unconfirmed and pre-existing blocks never enter the set. A state-only block update (same block id, for example the piston's `extended` property) keeps `INFERRED_OURS` (also while a placement is still pending), because it cannot transfer who placed the block; an air→block replacement still contests. Ownership and the exact block id are re-checked immediately before each action. Removal is a vanilla hotbar block break (`MultiPlayerGameMode.continueDestroyBlock`) through the single dispatch path, and the runtime tracks the cell being destroyed and sends the vanilla `stopDestroyBlock` cancellation on every halt or transition (disable, death, respawn, connection close without a send, cell change or switch, deadline, completion, abort, reconcile), with `CombatInventoryAdapter.toolSlot` (slots 0-8, never offhand) and no Speedmine/other module. Order is power → piston → supports. Cleanup consumes packet budget only through `CombatScheduler.reservePackets` (no risk entry), uses `CleanupPriority` (20-tick starvation; engine yields only when the trap's feasibility probe confirms it can reserve) and a 40-tick cleanup deadline that now goes straight to `MANUAL_CLEANUP`, not an ABORTED cleanup retry. Tests: `PistonTrapControllerTest.autoCleanup*` plus the destruction-cancellation, ticket-scoped, no-risk and pre-existing-support cases, `CombatRuntimeDispatchTest.stopDestruction*` / `mineDispatch*`, `PistonSequenceTest.cleanupDeadlineEscalatesStraightToManualWithoutRetrying`, `CrystalLedgerTest.aStateOnlyUpdateOfOurBlockKeepsInferredOwnership` / `aStateOnlyUpdateOfAPendingPlacementLeavesItPending`, `CleanupPriorityTest.aWaitIsNotPrioritisedWhileTheCleanupCannotActuallyReserve`, `HybridEngineTest.aDueCleanupThatCannotReserveGivesTheTickBackToDirect`, `CombatInventoryAdapterTest.toolSlot*` |
+
+| 2026-11-01 | Stage 5 ships the Phase 8 settings groups General/Safety/Direct/Timing/Piston/Defence/Pauses/Experimental/Render, with Diagnostics as a documented deviation; Inventory is absent because lending is deferred, and plan settings without a backend are not exposed | Meteor persists settings per group, so the move is paired with a defensive `CrystalCombat.fromTag` migration from the old General/Ranges layout (destination values already present win; unknown groups and settings are preserved in the migrated tag only, because Meteor drops data it does not load on the next save; a second migrate is a no-op). Per-tick caps, faceplace and armour thresholds, prediction ticks, power kinds, max structural blocks, cleanup policy, Speedmine cooperation, switch delay and restore slot, double push, render hiding, collision filtering, early reuse, plan outline, pushed-position marker and damage label have no implementation and are documented as not implemented rather than invented. Tests: `CrystalCombatSettingsMigrationTest`, `CrystalCombatPhase8SettingsTest` |
+| 2026-11-01 | Stage 5 adds `CUSTOM` beside `CONSERVATIVE`; Anarchy remains unimplemented and is not offered. Conservative re-applies the four audited defaults when selected; a profile change runs `configChanged()` → `CrystalCombatController.onConfigChanged()` → `CombatRuntime.onConfigChanged()` → `session.reconfigure()` | The switch must invalidate queued unsent leases and intents without touching hazards or already-sent risk. `reconfigure()` ends the action generation and `releasePlanBookkeeping()` releases scheduler plans, while `CombatRiskBudget.actionGenerationEnded` terminates only RESERVED/DISPATCHING entries, so SENT risk and hazards survive. Both profiles pass `CombatProfiles.productionSafety`, so no floor moves. Selecting Conservative sets four settings, and each has an `onChanged -> configChanged()` handler, so one user action can run the reconfigure path up to five times; this is chatty but safe (no sends, no hazard or SENT-risk change, and every intermediate value is legal). Test: `CrystalCombatConfigChangeTest` |
+| 2026-11-01 | Render shows outstanding risk debt and suspension causes through a read-only `Render2DEvent` overlay fed by a volatile `RiskDebtSnapshot` published in `sampleRisk()` and cleared on disable and on leaving the world; `show-risk-debt` is a Render-group setting, default on | The render callback must not query the world, budget or ledger, send packets or advance a sequence. The snapshot is the only channel; it is empty while disabled, after the world is left, or when there is no debt and no suspension. The plan's full outline, pushed-position marker and damage-label render are not implemented. Tests: `RiskDebtSnapshotTest`, `CrystalCombatRiskSnapshotTest`, `CrystalCombatPhase8SettingsTest` |
+| 2026-11-01 | Disable coverage was extended to every direct, piston and cleanup phase | `PistonTrapControllerTest.disableAtEveryPistonAndCleanupPhaseSendsNothingAfterwards` disables at RESERVE, SUPPORTS, PISTON, CRYSTAL, POWER, WAIT_PUSH, ATTACK, WAIT_REMOVE, CLEANUP, COOLDOWN and MANUAL_CLEANUP, then asserts no further sink attempt while outstanding risk is retained; `CrystalCombatEngineModuleTest.disableAfterASentAttackSendsNothingElseAndRetainsTheHazard` covers direct placement and attack |
+| 2026-11-01 | Stage 6 adds the `risk-model` Safety setting with three models: `Strict` (default; rule-1 health evidence only, no probe), `Barrier` (Strict plus one packet-only sequenced abort probe; ack plus one further server tick retires only pre-probe, no-health-change reservations; local-vanilla confirmation only) and `Meteor-style` (retire on observed explosion/removal, still sum sent-not-exploded crystals) | The three behaviours have different evidence standards, and the user needs to choose throughput versus protection. Only `Barrier` sends, through `CombatRuntime.dispatch` with a packet-only lease and the vanilla prediction sequence; the probe aborts destroy state at an inert air cell, so it changes no block, item or offhand. A lost, late or wrong ack keeps debt, and no model switch or profile change ever clears sent risk. Tests: `CombatRiskModelBudgetTest`, `CombatRuntimeBarrierProbeTest`, `CrystalCombatRiskModelTest`, `ClientPacketSinkProbeTest`, `CombatDebugHostRiskModelTest` |
+| 2026-11-01 | `AnarchyQuietWindow` is superseded and disabled; no production path can enable it | Elapsed time is not terminal evidence. The three-model design replaces it: `Barrier` retires only on the sequenced ack plus one tick, and `Strict` keeps debt. No module setting or profile constructs an enabled window, `CombatProfiles.profileBudget` refuses one, and the shipped budget passes `AnarchyQuietWindow.disabled()`; the class and its retirement tests stay only to pin the dormant path |
+
+Numeric defaults, profile names and delivery order are recommendations awaiting your approval.
