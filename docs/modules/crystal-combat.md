@@ -1,11 +1,13 @@
 # CrystalCombat
 
+Current build: **tester.4** — [cross-version timing test notes](../testers/tester-4-handout.md).
+
 [Documentation index](../README.md) · [Project README](../../README.md)
 
 Module: **crystal-combat**.
 
 **CrystalCombat** is the audited crystal-aura / piston-crystal combat module for Meteor 1.21.11. It is
-**DirectOnly by default**. The piston trap is an opt-in beta in the `-tester.3` build and is not
+**DirectOnly by default**. The piston trap is an opt-in beta in the `-tester.4` build and is not
 server-confirmed. This is beta software: test on worlds where losing gear is acceptable.
 
 ## Versions
@@ -16,13 +18,12 @@ unless the table says otherwise.
 | Minecraft | Java | Meteor build | Status | Unavailable on this version |
 | --- | --- | --- | --- | --- |
 | 26.2 | 25 | `26.2-20261009.074120-35` | reference implementation | — |
-| 26.1.2 | 25 | `26.1.2-20260810.135545-42` | ported; tester build 3 | `motion-prediction`, `hurt-sync` |
-| 1.21.11 | 21 | `1.21.11-82` | ported; tester build 3 | `motion-prediction`, `hurt-sync` |
+| 26.1.2 | 25 | `26.1.2-20260810.135545-42` | ported; tester build 4 | — |
+| 1.21.11 | 21 | `1.21.11-82` | ported; tester build 4 | — |
 
-On **Minecraft 1.21.11** the `motion-prediction` and `hurt-sync` settings remain visible but are
-**not available on 1.21.11**: the port audit records the stronger in-window hit's knockback and motion
-behaviour as unconfirmed on this branch (audit §6.2), so enabling the module with either setting on is
-refused with a visible reason. Every other setting and behaviour described here is available.
+Motion prediction and hurt-sync are available on all three versions starting with tester.4.
+They remain opt-in experimental settings; stronger-hit behavior on the older versions
+still needs tester evidence.
 
 The module sends only through one runtime dispatch path. Planners never send, rotations are requested
 only from dispatch, and the offhand item is never touched. Meteor's own CrystalAura is suppressed while
@@ -415,10 +416,9 @@ manual-removal instructions.
   place, and never uses Speedmine, the offhand or a detonation. Missing the needed hotbar tool sends
   nothing; obsidian supports usually exceed the 40-tick cleanup deadline and end in manual cleanup.
 - The production raw-hit feed for hurt-aware timing is absent; the setting cannot act on a real client.
-  On 1.21.11 both `hurt-sync` and `motion-prediction` are unavailable and refuse activation (port
-  audit §6.2).
+
 - Move prediction, support, surround-gap and defence are experimental and off by default. They never
-  relax a self or friend bound. Move prediction is unavailable on 1.21.11.
+  relax a self or friend bound.
 - Metrics exist without a UI surface in this build; most stay zero.
 - No client or server was launched to validate this build. See the [tester guide](../testers/README.md),
   [tester build 3 handout](../testers/tester-3-handout.md) and

@@ -6,7 +6,7 @@ build adds the three-option risk model, the risk-debt/suspension display and bet
 Test only where losing gear is acceptable. The full reference is the [tester README](README.md).
 
 This edition is for **Minecraft 1.21.11** (Meteor build 82). `motion-prediction` and `hurt-sync` are
-**not available on 1.21.11** and refuse activation; do not report either as a bug.
+available starting with tester.4; record the version and build stamp with timing feedback.
 
 ## Install
 

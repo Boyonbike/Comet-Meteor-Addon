@@ -1,5 +1,10 @@
 # CrystalCombat ports overview
 
+**Update: tester.4** removes the motion-prediction/hurt-sync version restriction at
+the project owner’s request. Both are now selectable on all three versions. Runtime
+validation remains pending. The tester.3 findings below are historical.
+See [tester.4 notes](../testers/tester-4-handout.md).
+
 Updated 2026-11-01 after the three-version parity pass. Source baseline for the ports:
 `363b410fa945e361c707b997a97556d0e5ef7398` (26.2).
 

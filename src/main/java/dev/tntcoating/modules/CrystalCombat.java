@@ -248,14 +248,14 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Boolean> motionPrediction = sgTiming.add(new BoolSetting.Builder()
         .name("motion-prediction")
-        .description("Experimental: prices the target at its predicted reachable positions and self/friends at the most exposed predicted position. Off keeps the Phase 3 current-box model; not promoted until Phase 9 evidence. Not available on Minecraft 1.21.11: the stronger-hit knockback and motion behaviour is unconfirmed here (audit §6.2).")
+        .description("Experimental: prices the target at its predicted reachable positions and self/friends at the most exposed predicted position. Off keeps the Phase 3 current-box model; not promoted until Phase 9 evidence. Available for cross-version testing; stronger-hit behavior still needs live validation.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> hurtSync = sgTiming.add(new BoolSetting.Builder()
         .name("hurt-sync")
-        .description("Experimental: re-ranks the target using its observed damage-immunity window and waits for the window to expire when that is expected to be worth it. Off keeps the Phase 3 estimates. No raw-hit feed is wired yet, so the model stays unknown in production. Not available on Minecraft 1.21.11: the stronger-hit knockback behaviour is unconfirmed here (audit §6.2).")
+        .description("Experimental: re-ranks the target using its observed damage-immunity window and waits for the window to expire when that is expected to be worth it. Off keeps the Phase 3 estimates. No raw-hit feed is wired yet, so the model stays unknown in production. Available for cross-version testing; stronger-hit behavior still needs live validation.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
@@ -572,15 +572,9 @@ public final class CrystalCombat extends Module {
         return settingsRefusal(mode.get(), profile.get(), antiSuicide.get(), safety());
     }
 
-    /**
-     * Features whose 1.21.11 behaviour the audit records as UNCONFIRMED and safety-relevant (audit §6.2).
-     * They stay visible so a tester can see why they are missing, but activation is refused and a live
-     * runtime is disabled if one is switched on.
-     */
+    /** Experimental timing is available on every supported version for cross-version testing. */
     static String versionRefusal(boolean motionPrediction, boolean hurtSync) {
-        if (!motionPrediction && !hurtSync) return null;
-        return "motion-prediction and hurt-sync are not available on Minecraft 1.21.11 "
-            + "(the stronger-hit knockback model is unconfirmed; audit §6.2)";
+        return null;
     }
 
     /**

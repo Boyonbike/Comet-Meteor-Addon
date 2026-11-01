@@ -1,15 +1,15 @@
-# CrystalCombat tester build 3
+# CrystalCombat tester build 4
 
-This is the third **tester build** of CrystalCombat (`tester.3`). It is not a release build. It exists
+Current build: **tester.4** — [cross-version timing test notes](tester-4-handout.md).
+
+This is the fourth **tester build** of CrystalCombat (`tester.4`). It is not a release build. It exists
 so testers can exercise the audited DirectOnly baseline, the **beta PistonOnly** single-push trap and
 the serialised Hybrid mode on real servers, and send back evidence. The suggested testing order is in
 [`tester-3-handout.md`](tester-3-handout.md).
 
 **Minecraft 1.21.11 edition.** This branch is Minecraft 1.21.11 with Meteor Client
-**1.21.11-82** (build 82). `motion-prediction` and `hurt-sync` are **not available on
-1.21.11**: they stay visible in the Timing group but enabling either refuses activation, because the
-port audit records the stronger-hit knockback/motion behaviour as unconfirmed here. Do not report those
-two settings as bugs — test everything else.
+**1.21.11-82** (build 82). `motion-prediction` and `hurt-sync` are available for testing on this version.
+Their stronger-hit behavior still needs live validation; record results for each setting separately.
 
 > **Beta warning:** test only on servers where losing gear is acceptable. CrystalCombat can misplace,
 > break or attack a crystal, spend pots, or leave you standing in an explosion. The piston trap is
@@ -174,16 +174,16 @@ behaviour or packet APIs, and evidence from it will not be comparable.
 
 1. Install Fabric Loader 0.19.3+ for Minecraft 1.21.11 and a Java 21 runtime.
 2. Put Meteor Client **1.21.11-82** in `mods/`.
-3. Put `comet-0.27.0-tester.3-mc1.21.11.jar` from `build/libs/` in `mods/` as well.
+3. Put `comet-0.27.0-tester.4-mc1.21.11.jar` from `build/libs/` in `mods/` as well.
 4. **Keep the matching
-   `build/distributions/comet-0.27.0-tester.3-mc1.21.11-source.zip` with the jar.** Comet's distributed jar
+   `build/distributions/comet-0.27.0-tester.4-mc1.21.11-source.zip` with the jar.** Comet's distributed jar
    is GPL-3.0-only and the source archive is the corresponding source for exactly this tested build; it
    must travel with the jar. Both files are produced by the same build and the source zip contains
    `src/` and `THIRD_PARTY_NOTICES.md`.
 5. Launch the game, open Meteor's module list and enable `CrystalCombat` under **Comet**.
 
 The module's info string shows the active risk model and then a build bracket, for example
-`[risk: strict] [v0.27.0-tester.3 <short commit> tester.3]`: the first bracket is the model, the
+`[risk: strict] [v0.27.0-tester.4 <short commit> tester.4]`: the first bracket is the model, the
 second carries the version, short commit and tester label. A `-dirty` commit means the build was
 made from an uncommitted working tree; the export's `build.txt` records the same value. Please
 include that version line in feedback.

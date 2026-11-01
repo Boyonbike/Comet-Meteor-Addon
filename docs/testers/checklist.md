@@ -9,8 +9,8 @@ build; run it before Phase 2c enables automatic combat.
 **1.21.11-82** (build 82). The packet hooks, CrystalAura suppression surface, metadata
 accessors and build stamp were verified from the pinned artifacts by
 [the port audit](../superpowers/audit/2026-11-01-combat-api-1.21.11.md). `motion-prediction` and
-`hurt-sync` are unavailable on this version and must refuse activation (audit §6.2); treat that refusal
-as expected behaviour.
+`hurt-sync` are available for cross-version testing. Enable each separately, then both,
+and verify activation and mid-session toggles do not disable the module.
 
 ## Prerequisites
 
