@@ -12,7 +12,7 @@ Repository: `~/Desktop/Comet Metior Addon/26.2` (branch `26.2`, common git dir `
 | 5 Phase 8 UI and lifecycle | DONE | 2026-11-01 | `166cf57` | 2733 / 282 suites, 0 failures | PASS after 1 follow-up fix round + delta re-review PASS |
 | 6 risk-model setting | DONE | 2026-11-01 | `067cfd5` | 2776 / 287 suites, 0 failures | PASS after 2 fix rounds (same-bundle health evidence both orders) + final delta re-review PASS |
 | 7 Tester build 3 | DONE | 2026-11-01 | `4f0e141` (docs) + tester.3 build | 2776 / 287 suites, 0 failures | PASS (7 non-blocking, 6 fixed in the same commit) |
-| 8 Final report | | | | | |
+| 8 Final report | DONE | 2026-11-01 | this commit | 2776 / 287 suites, 0 failures | orchestrator |
 
 ## Stage 1 — Secure the work — DONE (2026-11-01)
 
@@ -180,3 +180,62 @@ Documentation commit `4f0e141` (no `src/`, `build.gradle.kts` or `libs.versions.
 Review: reviewer `9c237c76` (read-only) returned PASS with no blocking issues; 7 non-blocking nits, of which 6 were fixed in the same commit (migration durability wording, Pauses destination list, real info-string shape `[risk: ...] [v0.27.0-tester.3 <commit> tester.3]`, auto-cleanup stop list including respawn and mode switch, "when risk is suspended" wording, ordinary-path ack wording). The seventh (tester.3 artifacts not built yet) is the handoff gate resolved by the build below.
 
 Build verification is recorded in Stage 8.
+
+## Stage 8 — Final report — DONE (2026-11-01)
+
+Final `./gradlew cleanTest test --offline`: **287 suites / 2776 tests, 0 failures, 0 errors, 0 skipped**, newest results read back from `build/test-results/test/*.xml`.
+
+### Commits per stage
+
+| Stage | Commits |
+| --- | --- |
+| 1 Secure the work | `7487801` core+runtime, `63d71f3` combat tests, `0c4c373` trace fixtures, `cd72f09` module/mixins/registration, `6166577` gametest harness, `06fb691` docs, `6166fd4` elytra/Highway, `3a36aae` ChatTools; sibling trees `8d61af3` (26.1.2) and `59c5840` (1.21.11) |
+| 2 Plan and docs match reality | `01d0e75`, `2d64d75` |
+| 3 Phase 6 gaps | `b7bec51`, `0f227ac` |
+| 4 Phase 5 test gaps + auto-cleanup | `ec3d365` part A, `361e5f8` part B, `12a7d3b` |
+| 5 Phase 8 UI and lifecycle | `166cf57`, `2463bfd` |
+| 6 risk-model setting | `067cfd5`, `fa86098` |
+| 7 Tester build 3 | `1ba8821` (inventory-manager spec note), `4f0e141` tester docs, `b17a507` |
+| 8 Final report | this commit |
+
+Nothing was pushed (`PUSH: never`); the developer pushes himself.
+
+### Review verdicts
+
+- Stage 1: orchestrator spot-check (8 ordered commits, tests before/after matched 2620).
+- Stage 2: reviewer FAIL with 6 blocking doc claims → fix round → PASS (5 non-blocking carried).
+- Stage 3: reviewer FAIL with 2 blocking (plan-own power, stale world snapshot in Hybrid) → fix round → PASS; an orchestrator-discovered Hybrid preview deadlock and exhausted-pass starvation were fixed as BUG A/B before that PASS.
+- Stage 4 part A: FAIL (jump false positive, POWER window, tautological replay) → FAIL (missing explosion evidence) → PASS.
+- Stage 4 part B: FAIL (vanilla destruction not stopped) → PASS after the stop/scheduler/engine fix round.
+- Stage 5: PASS; one follow-up fix round for the stale snapshot after leaving a world and test/doc honesty → delta PASS.
+- Stage 6: FAIL (same-bundle health evidence, explosion-then-health) → FAIL (health-then-explosion at the same revision) → final delta PASS.
+- Stage 7: PASS, no blocking (7 non-blocking; 6 fixed in `4f0e141`, the artifact nit resolved by the build).
+- Stage 8: this log; no product change.
+
+### Tester build 3 artifacts
+
+- Jar: `build/libs/comet-0.27.0-tester.3-mc26.2.jar`
+- Source zip: `build/distributions/comet-0.27.0-tester.3-mc26.2-source.zip`
+- Manifest in the jar: `Comet-Version: 0.27.0-tester.3`, `Comet-Git-Commit: <final HEAD short hash>` (no `-dirty`), `Comet-Tester-Build: true`, `Comet-Tester-Suffix: tester.3`, `Comet-Minecraft-Version: 26.2`, `Comet-Meteor-Build: 26.2-20261009.074120-35`.
+
+The jar and source zip are rebuilt from a clean tree after this entry is committed, so their manifest commit is the final HEAD and contains this log.
+
+### Carried-forward non-blocking issues
+
+- Stage 3: the "surrounded faceplace" engine test uses a different unbound trap target and an ordinary direct placement; the plan-own-power shortfall after a torch→block swap is debug-only and the sticky completed plan cannot re-plan an alternative layout until reconcile; production `PistonTrapWorld` sampling has no direct unit test; material-gate `Result` can report complete while internal scan state is untouched; `lastSampleTick` is not reset on reconcile; a sticky completed plan survives a layout change.
+- Stage 4 part A: the fake `explode` helper bypasses `applyObservation`; replay attack-tick assertion is weak; the 3-tick evidence window has an off-by-one when an explosion is applied before the controller tick; a jump-boost lift within 3 ticks of a real explosion aborts conservatively; "all 16 layouts beta" and "list empty" wording; "blocks this trap placed" is SENT-only.
+- Stage 4 part B: `autoCleanupNeverBreaksBlocksThatExistedBeforeTheTrap` keeps re-breaking power so the support assertion is vacuous; `cleanupCanReserve` reads `scheduler.clock()` and omits suspension; `tickCleanup` can drop priority without stopping an already-started destruction (tool removed mid-break); `stopDestruction()` cancels whatever block `mc.gameMode` is destroying, including a manual break; `stopBreak` is the only send outside `CombatRuntime.dispatch` (guarded cancellation, documented); the production disable order is not exercised by a permanent test; the no-risk test does not assert packet-ledger spend.
+- Stage 5: settings test is source introspection; retention assert is guarded by `if (outstanding > 0)`; `unresolvedHazard()` scans ids 1..32; Conservative selection can run `configChanged()` up to five times (safe); migration preserves unknown data only in the migrated tag (Meteor drops it on the next save); the render deliverable is debt/suspension only (no plan outline, pushed-position marker or damage label).
+- Stage 6: no dedicated map-growth/stale-connection regression for `latestHealthRevision` (bounded by construction); METEOR crystal-gone outstanding path has no direct test; `BARRIER_RETIRE_TOTAL` wording is ambiguous; the probe delay guard has no liveness watchdog; a normal probe can emit a harmless server WARN; `EnumSetting` supports only one concatenated description; zero-bound self/friend health snapshots still block the barrier (conservative, cannot cause unsafe placement).
+
+### Blocked or deferred
+
+- Phase 7.1 head-height/double-push: blocked on trace evidence (no such traces exist in the corpus).
+- Phase 7.2 render hiding, collision filtering and early reuse: blocked on a latency/RTT source.
+- Inventory lending: deliberately deferred; design note committed as `1ba8821`.
+- Local-server 8-layout × 2-power-kind gate: replaced by tester feedback (offline coverage + tester checklist).
+- Computed trap position remains computed, not server-confirmed (audit C21).
+- Speedmine surround reservation: still blocked (block is public, but no owner-scoped cancel).
+- No client or server can be launched in this environment, so runtime behaviour, Barrier ack ordering on real servers and packet logs were not personally observed.
+
+Stopped as instructed: no Phase 7, no version ports and no P9 triage were started.
