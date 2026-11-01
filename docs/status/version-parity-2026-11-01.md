@@ -1,5 +1,10 @@
 # Three-version feature parity — 2026-11-01
 
+**Update: tester.4** removes the motion-prediction/hurt-sync version restriction at
+the project owner’s request. Both are now selectable on all three versions. Runtime
+validation remains pending. The tester.3 findings below are historical.
+See [tester.4 notes](../testers/tester-4-handout.md).
+
 Scope: match existing features and fixes across Minecraft 1.21.11, 26.1.2 and 26.2,
 while retaining the Java, Minecraft and Meteor adapters required by each version.
 No remote branches were pushed.

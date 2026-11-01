@@ -107,16 +107,12 @@ final class CrystalCombatSettingsTest {
         assertTrue(trap.contains("public void reconcile()"));
     }
 
-    /** Audit §6.2: the stronger-hit motion model is unconfirmed on 26.1.2, so both dependents are refused. */
     @Test
-    void unvalidatedMotionFeaturesAreRefusedOnThisVersion() {
+    void allExperimentalTimingCombinationsAreAvailableToTesters() {
         assertNull(CrystalCombat.versionRefusal(false, false));
-        String motion = CrystalCombat.versionRefusal(true, false);
-        String hurt = CrystalCombat.versionRefusal(false, true);
-        assertNotNull(motion);
-        assertNotNull(hurt);
-        assertTrue(motion.contains("not available on Minecraft 26.1.2"), motion);
-        assertTrue(hurt.contains("not available on Minecraft 26.1.2"), hurt);
+        assertNull(CrystalCombat.versionRefusal(true, false));
+        assertNull(CrystalCombat.versionRefusal(false, true));
+        assertNull(CrystalCombat.versionRefusal(true, true));
     }
 
     private static int count(String text, String needle) {

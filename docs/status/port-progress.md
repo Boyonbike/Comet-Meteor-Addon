@@ -1,5 +1,10 @@
 # CrystalCombat port progress — Minecraft 26.1.2 (T1)
 
+**Historical port report:** tester.4 subsequently unlocked motion prediction and
+hurt-sync on all versions for testers. Any disabled-feature statements below describe
+tester.3. See [current tester notes](../testers/tester-4-handout.md).
+
+
 Port of CrystalCombat from the Minecraft 26.2 tree. Source of every copied file is the
 26.2 commit recorded as `PORT_BASE` below; no file is copied from the 26.2 working tree.
 
