@@ -1,6 +1,6 @@
 # Comet documentation
 
-Guides for Comet **0.26.27**, Minecraft **1.21.11**. [Project README](../README.md).
+Guides for Comet **0.27.0**, Minecraft **1.21.11**. [Project README](../README.md).
 
 Open Meteor’s **Comet** category, right-click a module, and expand its settings groups. Meteor upgrades share their toggle and configuration with their original category entries. See [settings and compatibility](guides/module-settings.md).
 

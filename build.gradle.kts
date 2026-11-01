@@ -148,6 +148,7 @@ val sourceDistribution = tasks.register<Zip>("sourceDistribution") {
         into("docs")
         exclude("superpowers/**")
     }
+    from("relay") { into("relay") }
     // Meteor build 82 resolves only from here, since upstream pruned it.
     from("vendor") { into("vendor") }
     from("gradlew", "gradlew.bat", "build.gradle.kts", "settings.gradle.kts", "gradle.properties",
