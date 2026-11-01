@@ -68,6 +68,14 @@ their scaffold source into this implementation:
   https://github.com/RedCarlos26/HIGTools/tree/cd83cfbf1ed65bb647de16749b4197f78f341642
   — configured-height requirements; GPLv3.
 
+- KassuK1/BlackOut pinned Phase 5 revision: `4c18af3f58040e4ff4337b81cf627daacbdfba14`,
+  https://github.com/KassuK1/BlackOut/tree/4c18af3f58040e4ff4337b81cf627daacbdfba14
+  — piston trap geometry/order studied as an ideas-only reference for the Phase 5 requirements.
+  The Phase 5 `PistonGeometry`/`PistonPlanner`/`PistonSequence` implementation is original Comet
+  code written from the plan, audit and the project's own Phase 0 traces; no BlackOut source was
+  copied. GameSense PR #95 was likewise reimplemented from its described ordering/hole ideas only.
+  GPLv3.
+
 Trouser-Streak's `c6fb1dda9d7beb9f06066e5676848fac0d8faac0` was an ideas-only
 reference for height and expansion. No grant for its modifications was verified,
 and none of its source is copied. RusherHack and Future documentation supplied
@@ -229,6 +237,13 @@ originated in Meteor is covered by the DEVILS section above. Any Meteor code
 copied or adapted elsewhere remains under GPL-3.0-only and the combined work is
 distributed under the same licence.
 
+Reimplemented idea: Comet's `CombatDamageAdapter` reimplements Meteor Client build
+`26.2-20261009.074120-35`, `DamageUtils.getExposure` (GPL-3.0-only). The exposure
+sampling grid and the 600 blast-resistance floor were reimplemented over Comet's
+pure `ExposureView`, and lower- and upper-bound exposure policies were added. No
+Meteor source was copied. File:
+`src/main/java/dev/tntcoating/core/combat/mc/CombatDamageAdapter.java`.
+
 ## Baritone
 
 Comet optionally integrates with Baritone, the Meteor build:
@@ -258,6 +273,10 @@ Comet is built with Fabric Loader and Fabric API (Apache-2.0) and for Minecraft
 (Mojang EULA). These are runtime dependencies, are not bundled in Comet's JAR,
 and remain subject to their own licences. Comet's Gradle build resolves them
 through Fabric's and Mojang's repositories; see `gradle/libs.versions.toml`.
+
+The Phase 0.4/0.5 combat harness additionally uses Fabric API's
+`fabric-client-gametest-api-v1` (Apache-2.0) as a test-only dependency. It is
+not part of the shipped JAR; see `docs/validation/harness.md`.
 
 ## BepHax code removed
 

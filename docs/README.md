@@ -1,6 +1,6 @@
 # Comet documentation
 
-Guides for Comet **0.26.27**, Minecraft **26.2**. [Project README](../README.md).
+Guides for Comet **0.27.0**, Minecraft **26.2**. [Project README](../README.md).
 
 Open Meteor’s **Comet** category, right-click a module, and expand its settings groups. Meteor upgrades share their toggle and configuration with their original category entries. See [settings and compatibility](guides/module-settings.md).
 
@@ -45,6 +45,8 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 
 ## Combat and inventory
 
+- [CrystalCombat](modules/crystal-combat.md)
+- [Combat Recorder](modules/combat-recorder.md)
 - [Auto Tool](modules/auto-tool.md)
 - [Auto Weapon](modules/auto-weapon.md)
 - [Inventory Tweaks](modules/inventory-tweaks.md)
@@ -66,6 +68,9 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 - [Performance](guides/performance.md)
 - [Upgrading from 0.6.1](guides/upgrading.md)
 - [Build and tests](guides/building.md)
+- [Combat harness](validation/harness.md)
+- [CrystalCombat Meteor parity](validation/crystal-combat-meteor-parity.md)
+- [CrystalCombat Phase 2b real-client checklist](testers/checklist.md)
 - [Licence and credits](guides/credits.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Changelog](../CHANGELOG.md)
