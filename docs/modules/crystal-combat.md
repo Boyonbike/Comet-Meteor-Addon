@@ -39,13 +39,44 @@ maximum friend damage 2. Stricter values are accepted; looser values are refused
 
 ## Settings
 
-- **General** — mode, DirectOnly experimental tactics (motion prediction, hurt-aware timing, support,
-  surround-gap, dangerous-crystal break, anti-piston), the experimental `footprint-concurrency`, debug
-  log, incident marker, piston-trap, `auto-cleanup` and the sixteen beta layouts.
-- **Safety** — the thresholds above; locked anti-suicide.
-- **Ranges** — target, placement, attack and walls ranges.
-- **Pauses** — eating/drinking, mining, screens, Baritone, self-health floor and lag.
-- **Inventory** — hotbar-only switching; never offhand.
+The Phase 8 settings are grouped for the Meteor screen. `show-risk-debt` (Render group, default on)
+draws outstanding risk debt and every active suspension cause in the top-left corner. It is fed by an
+immutable snapshot published on the client tick; the render callback never queries the budget, ledger or
+world and never advances a sequence. It shows nothing while the module is disabled, before the stack
+exists, when there is neither debt nor a suspension, or after leaving the world:
+`CrystalCombatController.onLeft()` clears the snapshot (including the module's `onGameLeft` path), so a
+closed connection cannot leave stale debt or suspension on screen until the next enabled tick.
+
+- **General** — mode, profile and target range.
+- **Safety** — min target damage, max self damage, remaining-health margin, max friend damage and locked
+  anti-suicide.
+- **Direct** — place, attack and walls ranges, own-only, support and surround-gap.
+- **Timing** — motion prediction and hurt-sync.
+- **Piston** — piston-trap, beta auto-cleanup and the sixteen beta layout toggles.
+- **Defence** — dangerous-crystal break and anti-piston.
+- **Pauses** — eating/drinking, mining, screens, Baritone, health floor and lag.
+- **Experimental** — footprint-scoped concurrency.
+- **Render** — the read-only `show-risk-debt` overlay.
+- **Diagnostics** — opt-in debug log, identity export and incident marker (documented deviation from the
+  Phase 8 table).
+- **Inventory** — deliberately absent. Main-inventory lending is deferred behind its gate, so this build
+  adds no lending, switch-delay or restore-slot setting; hotbar-only switching is unchanged.
+
+`Profile` offers **Conservative** and **Custom**. Conservative re-applies the four audited defaults when
+selected; Custom keeps the player's values. Both pass through `CombatProfiles.productionSafety`, so
+neither can move a floor. There is no player-facing "what changed" view: the switch only updates the
+settings and runs the shared reconfigure path. Selecting Conservative sets four settings, each with its
+own `onChanged -> configChanged()` handler, so one user action can run that path up to five times; it is
+chatty but safe (no sends, no hazard or sent-risk change, and every intermediate value is legal). The
+plan's third profile is not implemented and is not offered. Old settings files are migrated from the
+pre-Stage-5 groups (General/Ranges) by `CrystalCombat.fromTag` before Meteor loads them, so saved keys
+keep their values; unknown groups and settings survive only in the migrated tag, because Meteor drops
+data it does not load on the next save.
+
+Settings that appear in the plan's table but have no backend are not exposed rather than invented:
+per-tick caps, faceplace and armour thresholds, prediction ticks, power kinds, max structural blocks,
+cleanup policy, Speedmine cooperation, switch delay and restore slot, double push, render hiding,
+collision filtering, early reuse, plan outline, pushed-position marker and damage label.
 
 Motion prediction and hurt-aware timing are off by default. Hurt-aware timing has no production
 raw-hit feed in this build, so it stays inert; the parity document records the gap. Dangerous-crystal
@@ -81,7 +112,7 @@ path: no cleanup packet, mining request or block-break action is added by the li
 
 ### Beta auto-cleanup
 
-The `auto-cleanup` setting (General group, off by default in every profile) lets the trap remove what it
+The `auto-cleanup` setting (Piston group, off by default in every profile) lets the trap remove what it
 placed after the crystal is resolved. Its description is exactly:
 
 > Beta: removes only the power, piston and supports this module placed and saw confirmed. Contested blocks are always left for you.
@@ -252,7 +283,7 @@ line is only written through the existing debug hook; the log never changes a de
 
 ## Footprint-scoped concurrency (Phase 6.4 stage 2, experimental)
 
-`footprint-concurrency` (General, default **off**) is the only way to admit a direct plan while a trap is
+`footprint-concurrency` (Experimental, default **off**) is the only way to admit a direct plan while a trap is
 committed. With it off, Hybrid is exactly the serialised stage above. With it on, the engine still treats
 every committed trap as blocking by default: a direct plan is admitted only through a positive
 `FootprintConflict` verdict against the live trap footprint. A trap that is active but whose ranking view
@@ -301,11 +332,12 @@ manual-removal instructions.
 
 ## Limitations
 
-- DirectOnly, beta PistonOnly and serialised Hybrid with Conservative are the only accepted
-  configurations. Hybrid runs direct plans during a committed trap only when
-  `footprint-concurrency` is explicitly on and `FootprintConflict` proves every 6.3 row; otherwise the
-  committed trap serialises. The concurrent path is experimental, off by default and not promoted: no
-  live paired comparison exists yet.
+- DirectOnly, beta PistonOnly and serialised Hybrid with Conservative or Custom and locked anti-suicide
+  are the accepted configurations; the plan's third profile is not offered, not silently approximated.
+  Hybrid changes which plan is chosen, not how a packet is sent.
+- Hybrid runs direct plans during a committed trap only when `footprint-concurrency` is explicitly on and
+  `FootprintConflict` proves every 6.3 row; otherwise the committed trap serialises. The concurrent path
+  is experimental, off by default and not promoted: no live paired comparison exists yet.
 - Hybrid's trap ranking uses a deliberate discount: eta is the serialised lower bound (one action per
   tick) and confidence is `WEAK`, because the pushed-position damage is an estimate, not an observed
   value. Neither is a measured probability. This is recorded as an open question for the Phase 9

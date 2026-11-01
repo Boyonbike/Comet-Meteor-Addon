@@ -21,6 +21,7 @@ import dev.tntcoating.core.combat.CombatRiskBudget;
 import dev.tntcoating.core.combat.ConnectionKey;
 import dev.tntcoating.core.combat.EffectiveHealth;
 import dev.tntcoating.core.combat.EntityKey;
+import dev.tntcoating.core.combat.HazardId;
 import dev.tntcoating.core.combat.Mode;
 import dev.tntcoating.core.combat.Observation;
 import dev.tntcoating.core.combat.ObservationKind;
@@ -2203,6 +2204,115 @@ final class PistonTrapControllerTest {
         }
     }
 
+    /**
+     * Stage 5 acceptance: disabling through the controller at every direct/piston/cleanup phase must
+     * stop every send afterwards and must not retire outstanding risk or a hazard. The direct placement
+     * and attack cases live in {@link CrystalCombatEngineModuleTest}; this covers every piston phase the
+     * harness can reach without a live client.
+     */
+    @Test
+    void disableAtEveryPistonAndCleanupPhaseSendsNothingAfterwards() {
+        Map<String, java.util.function.Consumer<Harness>> phases = new LinkedHashMap<>();
+        phases.put("RESERVE", harness -> {
+            // RESERVE is only observable before startPreviewed(): beginPlan() calls
+            // reservationAccepted() in the same call and moves the sequence to SUPPORTS. Prepare a
+            // real, unsent plan through the production preview seam, then disable before it can start.
+            assertTrue(harness.controller.previewPlan(1, TickBudget.unlimited()).isPresent(),
+                "the RESERVE case prepares a real, unsent plan");
+        });
+        phases.put("SUPPORTS", harness -> harness.tick(1));
+        phases.put("PISTON", harness -> {
+            harness.tick(1);
+            harness.tick(2);
+            harness.tick(3);
+        });
+        phases.put("CRYSTAL", harness -> {
+            harness.tick(1);
+            harness.tick(2);
+            harness.tick(3);
+            harness.confirmPiston();
+            harness.tick(4); // dispatch the crystal: a real, sent, unresolved spawn hazard
+        });
+        phases.put("POWER", Harness::advanceToPower);
+        phases.put("WAIT_PUSH", Harness::advanceToWaitPush);
+        phases.put("ATTACK", harness -> {
+            harness.advanceToWaitPush();
+            harness.world.powered.add(PISTON);
+            harness.tick(8);
+        });
+        phases.put("WAIT_REMOVE", harness -> {
+            harness.advanceToWaitPush();
+            harness.world.powered.add(PISTON);
+            harness.world.extended.add(PISTON);
+            harness.tick(7);
+            harness.tick(8);
+            harness.tick(9);
+        });
+        phases.put("CLEANUP", Harness::advanceToCleanup);
+        phases.put("COOLDOWN", harness -> {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            for (int tick = 10; tick < 30; tick++) {
+                harness.tick(tick);
+            }
+            harness.tick(30);
+            harness.world.blocks.remove(POWER);
+            harness.observeBlock(POWER, "minecraft:redstone_torch", "minecraft:air");
+            harness.tick(31);
+            harness.world.blocks.remove(PISTON);
+            harness.observeBlock(PISTON, "minecraft:piston", "minecraft:air");
+            harness.tick(32);
+            Cell support = new Cell(-1, -61, 0);
+            if (harness.world.blocks.containsKey(support)) {
+                harness.world.blocks.remove(support);
+                harness.observeBlock(support, "minecraft:obsidian", "minecraft:air");
+            }
+            harness.tick(33);
+        });
+        phases.put("MANUAL_CLEANUP", harness -> {
+            harness.advanceToPower(); // a sent crystal hazard is already in the ledger
+            harness.tick(105);
+            assertTrue(harness.controller.manualCleanupRequired());
+        });
+
+        for (Map.Entry<String, java.util.function.Consumer<Harness>> phase : phases.entrySet()) {
+            Harness harness = new Harness();
+            try {
+                phase.getValue().accept(harness);
+                assertEquals(phase.getKey(), harness.controller.phase().name(),
+                    "the harness reached the intended phase");
+                HazardId hazard = harness.unresolvedHazard().orElse(null);
+                if (!Set.of("RESERVE", "SUPPORTS", "PISTON").contains(phase.getKey())) {
+                    assertNotNull(hazard,
+                        phase.getKey() + ": the phase holds a sent crystal hazard");
+                }
+                int attempts = harness.fixture.sink.attempts;
+                int outstanding = harness.fixture.budget.outstanding();
+                int breaks = harness.fixture.sink.count(BREAK);
+                harness.controller.disable();
+                for (int tick = 1000; tick < 1005; tick++) {
+                    harness.tick(tick);
+                }
+                assertEquals(attempts, harness.fixture.sink.attempts,
+                    phase.getKey() + ": no packet attempt after disable");
+                assertEquals(breaks, harness.fixture.sink.count(BREAK),
+                    phase.getKey() + ": no cleanup break after disable");
+                assertEquals(outstanding, harness.fixture.budget.outstanding(),
+                    phase.getKey() + ": disable keeps outstanding risk");
+                if (outstanding > 0) {
+                    assertTrue(harness.controller.riskRetained(),
+                        phase.getKey() + ": sent risk stays retained");
+                }
+                if (hazard != null) {
+                    assertTrue(harness.fixture.crystals.unresolved(hazard),
+                        phase.getKey() + ": disable keeps the sent hazard unresolved");
+                }
+            } finally {
+                harness.controller.disable();
+            }
+        }
+    }
+
     private static Cell broke(FakeSink.Send send) {
         var pos = send.hit().getBlockPos();
         return new Cell(pos.getX(), pos.getY(), pos.getZ());
@@ -2257,6 +2367,22 @@ final class PistonTrapControllerTest {
 
         PistonSequence sequence() {
             return controller.activeTrap().orElseThrow();
+        }
+
+        /**
+         * The one unresolved spawn hazard this harness holds. A fresh ledger numbers its first
+         * reservation 1, and this harness reserves no other spawn hazard, so a short scan identifies
+         * the trap's sent hazard through public ledger state instead of a private controller field.
+         */
+        Optional<HazardId> unresolvedHazard() {
+            HazardId found = null;
+            for (long id = 1; id <= 32; id++) {
+                HazardId candidate = new HazardId(id);
+                if (!fixture.crystals.unresolved(candidate)) continue;
+                assertTrue(found == null, "expected at most one unresolved spawn hazard");
+                found = candidate;
+            }
+            return Optional.ofNullable(found);
         }
 
         void tick(int serverTick) {

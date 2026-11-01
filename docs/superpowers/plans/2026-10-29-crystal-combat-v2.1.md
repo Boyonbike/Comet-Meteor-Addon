@@ -1195,27 +1195,67 @@ Speculative attacks therefore leave the hard-safety milestone and every profile 
 | Piston | Enabled layouts, power kinds, max structural blocks, cleanup policy (mine piston y/n) |
 | Defence | Dangerous-crystal break, anti-piston blocker, Speedmine cooperation |
 | Pauses | Eating, mining, screens, Baritone, health floor, lag pause |
-| Inventory | Switch mode (hotbar only / lending), switch delay, restore slot |
+| Inventory | Switch mode (hotbar only / lending), switch delay, restore slot — **deferred in Stage 5**: no lending code or settings ship (see note) |
 | Experimental | Double push, render hiding, collision filtering, early reuse (each with a warning line) |
 | Render | Plan outline, pushed-position marker, damage label with confidence |
 
+**Stage 5 implementation note (2026-11-01).** The shipped groups are General, Safety, Direct, Timing,
+Piston, Defence, Pauses, Experimental, Render and Diagnostics. Diagnostics is a documented deviation
+(tester log, identity export and incident key). The Inventory group is absent because inventory lending
+is deferred behind the gated box below; this build adds no lending, switch-delay or restore-slot
+setting, so hotbar-only switching is unchanged.
+
+Implemented settings: mode, profile and target range; locked anti-suicide and the four safety
+thresholds; place, attack and walls ranges, own-only, support and surround-gap; motion prediction and
+hurt-sync; piston-trap, auto-cleanup and the sixteen layout toggles; dangerous-crystal break and
+anti-piston; the seven pause toggles/floors; footprint-concurrency; the read-only `show-risk-debt`
+overlay (Render group); debug-log, export-include-identities and incident-marker-key.
+
+Settings in the table with no backend are deliberately not invented: per-tick caps, faceplace and
+armour thresholds, prediction ticks, power kinds, max structural blocks, cleanup policy, Speedmine
+cooperation, switch delay and restore slot, double push, render hiding, collision filtering, early reuse,
+plan outline, pushed-position marker and damage label. The read-only debt/suspension overlay is the only
+Render-group surface implemented. Old settings files are migrated from the pre-Stage-5 groups (General and
+Ranges) by `CrystalCombat.fromTag` before Meteor loads them, so a moved key keeps its saved value.
+
 Profile changes invalidate queued unsent intents. They never clear hazards or sent risk.
+
+Selecting Conservative writes the four safety settings through their setters. Each setter has an
+`onChanged -> configChanged()` handler, and the profile switch calls `configChanged()` once more, so one
+user action can run the shared reconfigure path up to five times. This is chatty but safe: it sends
+nothing, never changes a hazard or sent risk, and every intermediate value is legal; the final call
+applies the same four audited defaults.
 
 ### Lifecycle
 
-- [ ] Extend the 2d lifecycle to every mode, profile and experimental setting; no new lifecycle rules here.
-- [ ] Profile switching between Conservative and Anarchy shows what changes, including when the statistical quiet window turns on.
-- [ ] Render reads state only; render callbacks never progress any sequence.
-- [ ] Render shows outstanding risk debt and suspension causes.
+- [x] Give the Phase 8 settings surface a lifecycle without inventing per-mode rules: every shipped
+  setting sits in its planned group; settings that affect planning or safety run the shared
+  client-tick/config-change path, while render and diagnostic settings are read where they are used.
+  `CrystalCombatPhase8SettingsTest` walks the setting and group inventory; `CrystalCombatConfigChangeTest`
+  drives a switch through the real controller/runtime path in one mode. Per-mode disable is covered by the
+  Stage 4/5 disable tests
+  (`CrystalCombatEngineModuleTest.disableAfterASentAttackSendsNothingElseAndRetainsTheHazard`,
+  `PistonTrapControllerTest.disableAtEveryPistonAndCleanupPhaseSendsNothingAfterwards`), not by this box.
+- [x] Profile switching between Conservative and Custom runs through the shared reconfigure path:
+  Conservative re-applies the four audited defaults, Custom keeps the player's values, and both profiles
+  still pass `CombatProfiles.productionSafety`. The plan's third profile is not implemented, so there is no
+  statistical quiet window to show. There is no player-facing "what changed" diff view; the switch only
+  updates the settings. Covered by `CrystalCombatPhase8SettingsTest` and `CrystalCombatConfigChangeTest`.
+- [x] Render reads state only; render callbacks never progress any sequence. `CrystalCombatRender` is
+  handed one published snapshot, and `CrystalCombatRiskSnapshotTest` proves it is published on the client
+  tick and cleared on disable and on leaving the world (including the module's `onGameLeft` path).
+- [x] Render shows outstanding risk debt and suspension causes (read-only snapshot display; not the full
+  outline/pushed-position/damage-label render). `RiskDebtSnapshotTest`,
+  `CrystalCombatRiskSnapshotTest` and the render assertions in `CrystalCombatPhase8SettingsTest`.
 
 ### Inventory lending (gated)
 
-- [ ] Main-inventory lending only after dedicated tests for cursor items, open containers, manual selection during a loan, and offhand priority all pass.
+- [ ] Main-inventory lending only after dedicated tests for cursor items, open containers, manual selection during a loan, and offhand priority all pass. **Deferred in Stage 5:** no lending code, settings or loan path was added, and none of those four test groups exists yet. The gate stays closed; hotbar-only switching is unchanged.
 
 ### Exit gate
 
-- [ ] Module tests pass; full `./gradlew test` and compile pass.
-- [ ] Disable at every direct, piston and cleanup phase verified to send nothing afterwards.
+- [x] Module tests pass; full `./gradlew test` and compile pass. Stage 5 full run: `./gradlew cleanTest test --no-build-cache` → 282 suites, 2733 tests, 0 failures/0 errors.
+- [x] Disable at every direct, piston and cleanup phase verified to send nothing afterwards. `PistonTrapControllerTest.disableAtEveryPistonAndCleanupPhaseSendsNothingAfterwards` covers RESERVE, SUPPORTS, PISTON, CRYSTAL, POWER, WAIT_PUSH, ATTACK, WAIT_REMOVE, CLEANUP, COOLDOWN and MANUAL_CLEANUP; `CrystalCombatEngineModuleTest` covers direct placement and the sent-attack case (`disableAfterASentAttackSendsNothingElseAndRetainsTheHazard`).
 
 ## Phase 9: Validation and release preparation
 
@@ -1462,5 +1502,10 @@ State the sample size, method and sidedness alongside every rate.
 | 2026-11-01 | Phase 6.5's defensive break of a trap-protected crystal is impossible rather than gated | No trap-invalidation API exists in 26.2 or in this build, so a defensive break cannot be "allowed once the trap is invalidated". The ledger excludes the trap crystal, so own and ledger-blocked cells are skipped outright and the break is unreachable; offence remains the only path that may attack our own unresolved trap crystal |
 | 2026-11-01 | Stage 3 correction (BUG A/B): Hybrid `previewPlan` takes the observational world sample (refresh plus stationary-counter advance, deduplicated once per server tick) before planning; a completed trap pass that found no plan restarts on the next call, while a completed pass that found a plan stays sticky | In Hybrid the trap is ticked only after the engine selects it, so on a fresh session nothing advanced the stationary trackers and `previewPlan` always returned empty. The planner also latched a completed empty pass forever (`complete` short-circuit), so PistonOnly and Hybrid could never rescan after a target moved during the first pass. Sampling in the preview leaves PistonOnly's trap tick as its only sample point and the preview still never dispatches, reserves or leases; the sticky found-plan case keeps a Hybrid offer alive from the offer tick to the selection tick |
 | 2026-11-01 | Stage 4 part B adds the beta `auto-cleanup` setting (General, default `false` in every profile; description "Beta: removes only the power, piston and supports this module placed and saw confirmed. Contested blocks are always left for you.") | The trap registers a ledger placement for each structural dispatch before `CombatRuntime.dispatch` and marks it sent on `SENT`; cleanup intersects ticket-scoped `CrystalLedger.ownership(ticket.conn(), cell) == INFERRED_OURS` with the current trap's `sentStructural`, so contested, unconfirmed and pre-existing blocks never enter the set. A state-only block update (same block id, for example the piston's `extended` property) keeps `INFERRED_OURS` (also while a placement is still pending), because it cannot transfer who placed the block; an air→block replacement still contests. Ownership and the exact block id are re-checked immediately before each action. Removal is a vanilla hotbar block break (`MultiPlayerGameMode.continueDestroyBlock`) through the single dispatch path, and the runtime tracks the cell being destroyed and sends the vanilla `stopDestroyBlock` cancellation on every halt or transition (disable, death, respawn, connection close without a send, cell change or switch, deadline, completion, abort, reconcile), with `CombatInventoryAdapter.toolSlot` (slots 0-8, never offhand) and no Speedmine/other module. Order is power → piston → supports. Cleanup consumes packet budget only through `CombatScheduler.reservePackets` (no risk entry), uses `CleanupPriority` (20-tick starvation; engine yields only when the trap's feasibility probe confirms it can reserve) and a 40-tick cleanup deadline that now goes straight to `MANUAL_CLEANUP`, not an ABORTED cleanup retry. Tests: `PistonTrapControllerTest.autoCleanup*` plus the destruction-cancellation, ticket-scoped, no-risk and pre-existing-support cases, `CombatRuntimeDispatchTest.stopDestruction*` / `mineDispatch*`, `PistonSequenceTest.cleanupDeadlineEscalatesStraightToManualWithoutRetrying`, `CrystalLedgerTest.aStateOnlyUpdateOfOurBlockKeepsInferredOwnership` / `aStateOnlyUpdateOfAPendingPlacementLeavesItPending`, `CleanupPriorityTest.aWaitIsNotPrioritisedWhileTheCleanupCannotActuallyReserve`, `HybridEngineTest.aDueCleanupThatCannotReserveGivesTheTickBackToDirect`, `CombatInventoryAdapterTest.toolSlot*` |
+
+| 2026-11-01 | Stage 5 ships the Phase 8 settings groups General/Safety/Direct/Timing/Piston/Defence/Pauses/Experimental/Render, with Diagnostics as a documented deviation; Inventory is absent because lending is deferred, and plan settings without a backend are not exposed | Meteor persists settings per group, so the move is paired with a defensive `CrystalCombat.fromTag` migration from the old General/Ranges layout (destination values already present win; unknown groups and settings are preserved in the migrated tag only, because Meteor drops data it does not load on the next save; a second migrate is a no-op). Per-tick caps, faceplace and armour thresholds, prediction ticks, power kinds, max structural blocks, cleanup policy, Speedmine cooperation, switch delay and restore slot, double push, render hiding, collision filtering, early reuse, plan outline, pushed-position marker and damage label have no implementation and are documented as not implemented rather than invented. Tests: `CrystalCombatSettingsMigrationTest`, `CrystalCombatPhase8SettingsTest` |
+| 2026-11-01 | Stage 5 adds `CUSTOM` beside `CONSERVATIVE`; Anarchy remains unimplemented and is not offered. Conservative re-applies the four audited defaults when selected; a profile change runs `configChanged()` → `CrystalCombatController.onConfigChanged()` → `CombatRuntime.onConfigChanged()` → `session.reconfigure()` | The switch must invalidate queued unsent leases and intents without touching hazards or already-sent risk. `reconfigure()` ends the action generation and `releasePlanBookkeeping()` releases scheduler plans, while `CombatRiskBudget.actionGenerationEnded` terminates only RESERVED/DISPATCHING entries, so SENT risk and hazards survive. Both profiles pass `CombatProfiles.productionSafety`, so no floor moves. Selecting Conservative sets four settings, and each has an `onChanged -> configChanged()` handler, so one user action can run the reconfigure path up to five times; this is chatty but safe (no sends, no hazard or SENT-risk change, and every intermediate value is legal). Test: `CrystalCombatConfigChangeTest` |
+| 2026-11-01 | Render shows outstanding risk debt and suspension causes through a read-only `Render2DEvent` overlay fed by a volatile `RiskDebtSnapshot` published in `sampleRisk()` and cleared on disable and on leaving the world; `show-risk-debt` is a Render-group setting, default on | The render callback must not query the world, budget or ledger, send packets or advance a sequence. The snapshot is the only channel; it is empty while disabled, after the world is left, or when there is no debt and no suspension. The plan's full outline, pushed-position marker and damage-label render are not implemented. Tests: `RiskDebtSnapshotTest`, `CrystalCombatRiskSnapshotTest`, `CrystalCombatPhase8SettingsTest` |
+| 2026-11-01 | Disable coverage was extended to every direct, piston and cleanup phase | `PistonTrapControllerTest.disableAtEveryPistonAndCleanupPhaseSendsNothingAfterwards` disables at RESERVE, SUPPORTS, PISTON, CRYSTAL, POWER, WAIT_PUSH, ATTACK, WAIT_REMOVE, CLEANUP, COOLDOWN and MANUAL_CLEANUP, then asserts no further sink attempt while outstanding risk is retained; `CrystalCombatEngineModuleTest.disableAfterASentAttackSendsNothingElseAndRetainsTheHazard` covers direct placement and attack |
 
 Numeric defaults, profile names and delivery order are recommendations awaiting your approval.

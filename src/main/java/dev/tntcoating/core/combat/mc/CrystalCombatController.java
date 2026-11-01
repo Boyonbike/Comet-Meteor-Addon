@@ -26,6 +26,7 @@ import dev.tntcoating.core.combat.FootprintConflict;
 import dev.tntcoating.core.combat.Mode;
 import dev.tntcoating.core.combat.PistonLayoutSelection;
 import dev.tntcoating.core.combat.PistonSequence;
+import dev.tntcoating.core.combat.RiskDebtSnapshot;
 import dev.tntcoating.core.combat.Observation;
 import dev.tntcoating.core.combat.Opportunity;
 import dev.tntcoating.core.combat.ObservationKind;
@@ -135,6 +136,8 @@ public final class CrystalCombatController {
      */
     private String refusalReason;
     private volatile String info = DISABLED;
+    /** Client-tick-published view for the read-only renderer; never queried from render code. */
+    private volatile RiskDebtSnapshot riskSnapshot = RiskDebtSnapshot.empty();
     private int lastServerTick = -1;
     /** Client tick the host observations are stamped with; the last tick the controller actually applied. */
     private int clientTick;
@@ -235,6 +238,7 @@ public final class CrystalCombatController {
         }
         if (stack != null && stack.pistonTrap() != null) stack.pistonTrap().disable();
         engineGeneration = null;
+        riskSnapshot = RiskDebtSnapshot.empty();
         info = refusalReason != null ? refusalReason : DISABLED;
     }
 
@@ -382,6 +386,11 @@ public final class CrystalCombatController {
 
     /** Connection close: clears that connection's ledger state only, then waits for a new session. */
     public void onLeft() {
+        // The close below retires this connection's risk and ledger state, so the renderer must stop
+        // showing the old debt immediately. Publishing empty here covers every teardown path that calls
+        // onLeft without disable(); the next enabled tick in a new world publishes a fresh snapshot and
+        // onJoined() never restores this one.
+        riskSnapshot = RiskDebtSnapshot.empty();
         if (stack == null) return;
         if (stack.pistonTrap() != null) stack.pistonTrap().connectionClosed();
         if (stack.session().isOpen()) {
@@ -840,6 +849,15 @@ public final class CrystalCombatController {
         return info;
     }
 
+    /**
+     * The risk debt and suspension view published by the last client tick. Safe from any thread, never
+     * queries the world, the budget or the ledger, and is cleared on disable and when leaving the world.
+     * Render code may read only this.
+     */
+    public RiskDebtSnapshot riskSnapshot() {
+        return riskSnapshot;
+    }
+
     public boolean enabled() {
         return enabled;
     }
@@ -926,15 +944,15 @@ public final class CrystalCombatController {
 
     private void sampleRisk() {
         EntityKey self = stack.client().selfKey();
-        if (self != null) {
-            Debt debt = stack.risk().debt(self);
-            metrics.recordRiskDebt(debt.bound());
-        }
+        Debt debt = self == null ? Debt.zero() : stack.risk().debt(self);
+        if (self != null) metrics.recordRiskDebt(debt.bound());
         Set<SuspensionCause> current = stack.risk().suspensionCauses();
         for (SuspensionCause cause : current) {
             if (!lastSuspensions.contains(cause)) metrics.recordSuspension(cause);
         }
         lastSuspensions.clear();
         lastSuspensions.addAll(current);
+        // Publish one immutable view per client tick; the renderer only reads this volatile reference.
+        riskSnapshot = new RiskDebtSnapshot(debt.count(), debt.bound(), List.copyOf(current));
     }
 }

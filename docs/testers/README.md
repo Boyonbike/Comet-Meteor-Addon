@@ -34,12 +34,18 @@ the serialised Hybrid stage on real servers and send back evidence.
   (torch/redstone) has its own on/off setting, all enabled by default. A disabled layout is never
   planned. **Disabling all sixteen leaves PistonOnly inert** (no trap, no direct fallback); the info
   string reports the wait reason instead of silently switching behaviour.
-- **Conservative profile only.** Min target damage 4, max self damage 6, remaining-health margin 2 and
-  friend damage 2 are the production floor. Weaker values refuse to enable.
+- **Conservative and Custom profiles.** Min target damage 4, max self damage 6, remaining-health margin 2
+  and friend damage 2 are the production floor for both. Conservative re-applies those defaults when
+  selected; Custom keeps your values, still inside the floor. Weaker values refuse to enable. The plan's
+  third profile is not implemented and is not offered.
 - **Anti-suicide is locked on.** Turning it off disables the module immediately.
+- **Risk debt overlay.** **show-risk-debt** (Render group, on by default) shows outstanding risk debt and
+  every active suspension cause in the top-left corner. It is read-only and fed by a snapshot published
+  on the client tick; it shows nothing while the module is disabled or when there is no debt or
+  suspension.
 - **No full combat UI; cleanup is manual by default, with an off-by-default beta auto-cleanup.** The
   module's normal Meteor settings screen shows its settings; there is no separate piston screen.
-  **auto-cleanup** (General, default off; description: *Beta: removes only the power, piston and
+  **auto-cleanup** (Piston, default off; description: *Beta: removes only the power, piston and
   supports this module placed and saw confirmed. Contested blocks are always left for you.*) removes
   only the trap's own confirmed cells through vanilla hotbar breaking on the dispatch path. Defence
   tactics are present but default off.
@@ -175,9 +181,9 @@ Review the preview before `confirm`, and do not attach an export publicly if you
 
 ## Known limitations
 
-- DirectOnly, beta PistonOnly and serialised Hybrid with Conservative and locked anti-suicide are the
-  accepted configurations; other profiles are refused, not silently approximated. Hybrid changes which
-  plan is chosen, not how a packet is sent.
+- DirectOnly, beta PistonOnly and serialised Hybrid with Conservative or Custom and locked anti-suicide
+  are the accepted configurations; the plan's third profile is not offered, not silently approximated.
+  Hybrid changes which plan is chosen, not how a packet is sent.
 - The computed final crystal position is not server-confirmed. C21 suppresses crystal position sync;
   the only evidence is the piston block events plus the audited numeric push rules.
 - **Manual cleanup is the default.** With **auto-cleanup** off, the trap does not mine, break or

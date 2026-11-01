@@ -149,6 +149,31 @@ class CrystalCombatEngineModuleTest {
     }
 
     @Test
+    void disableAfterASentAttackSendsNothingElseAndRetainsTheHazard() {
+        EngineHarness harness = ready();
+        CrystalCombatController controller = controller(harness);
+        assertTrue(controller.enable());
+        firstTick(controller);
+        UUID uuid = UUID.randomUUID();
+        harness.client.putCrystal(2005, uuid, CRYSTAL);
+        controller.observeSpawn(new EntityKey(harness.connection, 2005, uuid), CRYSTAL,
+            EngineHarness.END_CRYSTAL);
+        assertEquals(1, harness.attackCount());
+        HazardId hazard = harness.engine.sequence().hazard();
+        RiskId risk = harness.scheduler.riskId(CombatEngine.DIRECT_PLAN, 1L).orElseThrow();
+        int attempts = harness.sink.attempts;
+
+        controller.disable();
+        for (int tick = 2; tick <= 10; tick++) controller.tick(tick);
+
+        assertEquals(1, harness.attackCount(), "no attack after disable");
+        assertEquals(attempts, harness.sink.attempts, "no packet attempt after disable");
+        assertTrue(harness.crystals.unresolved(hazard), "disable never retires the sent hazard");
+        assertEquals(CombatRiskBudget.State.SENT, harness.budget.state(risk),
+            "disable keeps the sent risk outstanding");
+    }
+
+    @Test
     void spawnIsAttackedInTheSameClientThreadTaskAsTheObservation() {
         EngineHarness harness = ready();
         CrystalCombatController controller = controller(harness);
