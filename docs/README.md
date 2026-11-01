@@ -76,6 +76,7 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 - [Combat harness](validation/harness.md)
 - [CrystalCombat Meteor parity](validation/crystal-combat-meteor-parity.md)
 - [CrystalCombat Phase 2b real-client checklist](testers/checklist.md)
+- [CrystalCombat tester build 3 handout](testers/tester-3-handout.md)
 - [Licence and credits](guides/credits.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Changelog](../CHANGELOG.md)

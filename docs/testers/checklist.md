@@ -62,9 +62,11 @@ build; run it before Phase 2c enables automatic combat.
     module's planner or freeze its tick). Expected: the packet reservation moves to the dispatch tick;
     if the rolling window has no room, the intent is blocked and released instead of under-counting.
 14. **Acknowledgement.** With a real server, trigger an interaction with a block-changed prediction.
-    Expected: the send trace records the ack sequence when the server acknowledges the sequenced
-    packet; production keeps `ackSequence = -1` when Meteor cannot expose the prediction sequence, so
-    rule 3 stays unsatisfied (audit C8/C20). This is a known capability gap, not a bug to patch here.
+    Expected: the send trace records the ack sequence when a sequence is known. The ordinary send path
+    keeps `ackSequence = -1` because it does not record a prediction sequence. The **Barrier**
+    risk model is the exception: it sends its side-effect-free probe with the real vanilla prediction
+    sequence, so the server's ack retires harmless reservations (see the tester build 3 items). A
+    missing ack on an ordinary dispatch is expected here, not a bug to patch.
 15. **Rotation queue.** Enable rotations and dispatch with a yaw/pitch outside the tolerance. Expected:
     one rotation request to Meteor Rotations from inside dispatch, no packet send that tick, then a
     successful dispatch on the next tick after the rotation lands. Expected: the request is never
@@ -322,11 +324,12 @@ jar. The info string must show the build version and short commit (for example
 
 ## P5.2 tester build 2 (beta PistonOnly)
 
-Run these on the `-tester.2` jar built with Meteor Client **26.2-20261009.074120-35**, with the
-**Debug log** on unless an item says otherwise. Keep the matching source zip with the jar. The info
-string must show `v0.27.0-tester.2 <commit>` (the commit may end in `-dirty`). **Manual cleanup is the
-default**: the trap never mines or breaks its own supports, piston, power block or crystals. Remove
-debris yourself only when safe, and expect the trap slot to stay occupied until reconciled.
+These scenarios were written for build 2 and still apply to build 3. Run them on the current
+`-tester.3` jar built with Meteor Client **26.2-20261009.074120-35**, with the **Debug log** on unless
+an item says otherwise. Keep the matching source zip with the jar. The info string must show
+`v0.27.0-tester.3 <commit>` (the commit may end in `-dirty`). **Manual cleanup is the default**: the
+trap never mines or breaks its own supports, piston, power block or crystals. Remove debris yourself
+only when safe, and expect the trap slot to stay occupied until reconciled.
 
 ### Per-layout matrix (direction × height × power)
 
@@ -450,11 +453,12 @@ run them on a private test world with obsidian and crystals available.
     20% for three consecutive server ticks (or safety invalidation switches immediately). Counters:
     `hysteresis_holds` grows, `hysteresis_switches` stays low.
 
-75. **Cleanup gap is visible.** Get the trap into manual cleanup (`MANUAL_CLEANUP`, debris on the
-    ground), then watch Hybrid for 20 server ticks with a free slot. Expected: the info string shows
-    `cleanup due: no cleanup intent in this build`, no mining or break packet is sent, `cleanup_waits`
-    and `cleanup_starved` grow, and the trap slot and risk stay occupied until
-    `.crystalcombat cleanup confirm` after the debris is gone.
+75. **Cleanup visibility.** With `auto-cleanup` on, get the trap to its cleanup stage while a direct
+    plan is waiting, then watch Hybrid for 20 server ticks with a free slot. Expected: once cleanup has
+    waited its starvation window the info string shows `cleanup due: waiting for the trap's cleanup
+    slot`, no direct send takes that slot instead, `cleanup_waits` and `cleanup_starved` grow, and the
+    trap's break goes through the packet budget. With `auto-cleanup` off, manual cleanup remains the
+    visible state (`manual cleanup required: remove ...`) and nothing mines.
 
 76. **Hybrid regression.** Repeat checklist items 39–51 and 55–69 in Hybrid. The safety thresholds,
     pauses, ledger protection, manual cleanup, offhand rule and dispatch invariants must behave exactly
@@ -463,7 +467,7 @@ run them on a private test world with obsidian and crystals available.
 ## P6.2 footprint-scoped concurrency (experimental, off by default)
 
 Run these in **Hybrid** with the trap committed on a stationary target. `footprint-concurrency` is in
-**General** and defaults off; it is not promoted and must not be presented as a validated preset. Keep
+**Experimental** and defaults off; it is not promoted and must not be presented as a validated preset. Keep
 **Debug log** on. The settings are otherwise identical between the two runs, so the only difference is
 the new toggle.
 
@@ -514,3 +518,39 @@ the new toggle.
 
 If any direct send appears during a committed trap with the setting off, or a conflicting direct send
 appears with it on, capture the debug export and stop using the setting.
+
+## Tester build 3 additions
+
+Run these on the current `-tester.3` jar after the baseline sections. Keep **Debug log** on. These are
+numbered in the same style as the rest of the checklist; work through them in order.
+
+81. **Risk model selection.** Switch `risk-model` between Strict, Barrier and Meteor-style. Expected:
+    the info string changes to `[risk: strict]`, `[risk: barrier]` or `[risk: meteor-style]`, the
+    debug-log header records `risk-model=<key>`, outstanding debt is kept when the model changes, and
+    only Barrier sends a probe packet.
+82. **Strict retirement.** Place and break a crystal, take no damage, and watch the debt. Expected: the
+    explosion or removal alone does not retire it; a causally later coherent health update does. If no
+    update arrives, the debt stays visible and the aura may wait on `risk debt`.
+83. **Barrier on local vanilla.** On a local vanilla server, use Barrier for a trap or direct crystal.
+    Expected: one side-effect-free `ABORT_DESTROY_BLOCK` probe is sent after our explosion, no block
+    breaks and no inventory or offhand change occurs, and harmless reservations retire after the ack
+    plus one tick. Record what the debug log shows, and a packet log if you have one. Do not run this
+    item on a proxy or anti-cheat server.
+84. **Meteor-style retirement.** Use Meteor-style for a crystal. Expected: the reservation retires when
+    the explosion or removal is observed, while a crystal sent but not yet exploded still counts as
+    debt. This is the weakest model; record any damage taken before the next health update.
+85. **Debt and suspension display.** Toggle `show-risk-debt`. Expected: on, the top-left overlay shows
+    `risk debt: N outstanding (bound X)` and any `suspended: <cause>`, and updates after a
+    health/explosion event; off, it draws nothing. It is read-only and clears on leaving the world.
+86. **Auto-cleanup.** With `auto-cleanup` off, confirm the trap leaves debris and the manual cleanup
+    text lists the blocks. Turn it on for a trap with power and piston debris. Expected: it breaks only
+    this trap's power, piston and supports, power before piston before supports, using a hotbar tool,
+    and stops on disable, death, respawn, a mode switch or a connection change. Obsidian supports will
+    usually exceed the
+    40-tick deadline; manual cleanup of the remainder is the expected outcome, not a failure.
+87. **Settings migration.** Load the build once with a saved tester.2 config. Expected: values from the
+    old General and Ranges groups appear in their new General, Safety, Direct, Timing, Piston, Defence
+    and Experimental groups, `piston-layout-*` values are kept, and Pauses keeps its existing values.
+    Unknown settings are preserved in the migrated tag but Meteor drops unloaded data on the next save,
+    so do not rely on unknown keys surviving later saves. The profile stays Conservative unless you
+    selected Custom.

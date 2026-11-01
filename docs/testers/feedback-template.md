@@ -3,6 +3,14 @@
 Copy this template into your report. Attach the export zip produced by
 `.crystalcombat export confirm` unless you have a reason not to share it.
 
+## Where to send it
+
+Send the filled-in template and the report zip **directly to the developer** — not to a public issue
+tracker, public chat or Discord. Use the same private channel that delivered this build. The developer
+stores received reports at `testers/reports/tester-3/<tester>/` in this repository for the Phase 9
+triage process; testers never need to commit anything themselves. See the
+[tester README](README.md#sending-your-report) for the per-OS export paths and zipping steps.
+
 ## What happened
 
 <!-- One or two sentences. What did CrystalCombat do that you did not expect? -->
@@ -19,14 +27,18 @@ Copy this template into your report. Attach the export zip produced by
 
 ## Build
 
-- Comet info string (from the module, e.g. `v0.27.0-tester.2 fb59152-dirty`):
+- Tester build (`tester.3`; jar `comet-0.27.0-tester.3-mc26.2.jar`):
+- Comet info string (from the module, e.g. `[risk: strict] [v0.27.0-tester.3 <short commit> tester.3]`):
 - Export `build.txt` version / commit / tester suffix:
 - Meteor Client build: <!-- must be 26.2-20261009.074120-35 -->
 - Minecraft / Fabric Loader / Java:
 
 ## Environment
 
-- Server type and region (e.g. anarchy EU, private paper test server):
+- Server type and software (vanilla, Paper, Folia, proxy, other; version if known):
+- Is this a local vanilla server, singleplayer, or another server? <!-- Barrier is only confirmed on
+  local vanilla -->
+- Server region (e.g. anarchy EU, private test server):
 - Approximate ping (ms):
 - Approximate server TPS during the fight:
 - Other combat modules enabled (CrystalAura, AutoTotem, AutoEat, pacing, etc.):
@@ -34,7 +46,10 @@ Copy this template into your report. Attach the export zip produced by
 
 ## CrystalCombat settings
 
-- Mode / profile: <!-- should be DirectOnly / Conservative -->
+- Mode (`DirectOnly` / `PistonOnly` / `Hybrid`): <!-- Hybrid is serialised in this build -->
+- Profile (`Conservative` / `Custom`): <!-- Conservative is the default -->
+- `risk-model` used (`Strict` / `Barrier` / `Meteor-style`): <!-- Strict is the default -->
+- `auto-cleanup` on or off? <!-- off by default -->
 - Safety values changed from defaults:
 - Pauses changed from defaults:
 - Debug log on? (yes/no) — if yes, when was it enabled relative to the event?
@@ -59,10 +74,13 @@ Weakness/eating, moving or holed target, anything else that was going on. -->
 
 ## PistonOnly (beta) details
 
-- Mode (`DirectOnly` / `PistonOnly` / `Hybrid`): <!-- PistonOnly is beta; Hybrid is shipped in its serialised stage -->
+- Mode (`DirectOnly` / `PistonOnly` / `Hybrid`): <!-- PistonOnly is beta; Hybrid is serialised in this
+  build -->
 - Was `piston-trap` on? (yes/no):
 - Chosen layout from the debug log (direction/height/power):
 - Which of the sixteen layout toggles were enabled?
 - Computed final crystal position vs the client's last observed position:
+- If `auto-cleanup` was on, what did it remove before the deadline (power/piston/supports)?
 - Did the trap abort, time out or reach manual cleanup? What did the debug log say?
-- Manual cleanup done? (yes/no) — the trap never mines or breaks its own blocks or crystals:
+- Manual cleanup done? (yes/no) — with `auto-cleanup` off the trap never mines or breaks its own blocks
+  or crystals; with it on, record what it removed:
