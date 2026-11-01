@@ -85,7 +85,9 @@ public final class CombatDamageAdapter {
             if (cell != null) copy.put(cell, OVERLAY_STATE);
         }
         BlockGetter view = copy.isEmpty() ? world : new OverlayBlockGetter(world, copy);
-        return (from, to, policy) -> raycast(view, from, to, policy);
+        // Planned cover is not confirmed protection for self or friends.
+        return (from, to, policy) -> raycast(
+            policy == ExposurePolicy.SELF_FRIEND_UPPER_BOUND ? world : view, from, to, policy);
     }
 
     /** The audited sampling grid over a pure {@link ExposureView}; usable without a live world. */

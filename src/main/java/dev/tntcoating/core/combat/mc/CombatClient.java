@@ -50,6 +50,7 @@ public interface CombatClient {
 
     double blockInteractionRange();
 
+    /** Tests the top face of the supplied support block; callers pass placementCell.below(). */
     boolean supportBelow(Cell cell);
 
     /** Registry id of the block, or {@code null} when the cell is air/unreadable. */
