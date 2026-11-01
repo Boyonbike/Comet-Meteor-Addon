@@ -8,7 +8,7 @@ Repository: `~/Desktop/Comet Metior Addon/26.2` (branch `26.2`, common git dir `
 | 1 Secure the work | DONE | 2026-11-01 | see below | 2620 / 276 suites, 0 failures | orchestrator spot-check |
 | 2 Plan and docs match reality | DONE | 2026-11-01 | `01d0e75` | 2620 / 276 suites, 0 failures | PASS after 1 fix round |
 | 3 Phase 6 gaps | DONE | 2026-11-01 | `b7bec51` | 2645 / 276 suites, 0 failures | PASS after 2 fix rounds |
-| 4 Phase 5 test gaps + auto-cleanup | IN PROGRESS (part A DONE, part B pending) | 2026-11-01 | `ec3d365` (part A) | 2664 / 277 suites, 0 failures | PASS after 2 fix rounds (part A) |
+| 4 Phase 5 test gaps + auto-cleanup | DONE | 2026-11-01 | `ec3d365` (part A), `361e5f8` (part B) | 2699 / 277 suites, 0 failures | part A PASS after 2 fix rounds; part B PASS after 1 fix round |
 | 5 Phase 8 UI and lifecycle | | | | | |
 | 6 risk-model setting | | | | | |
 | 7 Tester build 3 | | | | | |
@@ -102,6 +102,22 @@ Review: first reviewer failed three blockers (jump-strength false positive; the 
 - Jump boost above 0.45 with a real explosion nearby aborts conservatively; the docs only mention the vanilla jump height.
 - A sticky completed plan can still name blocks for a layout that was disabled before reconcile (pre-existing).
 
-### Part B — beta automatic cleanup (`PISTON_AUTO_CLEANUP: build-opt-in`)
+### Part B — beta automatic cleanup (`PISTON_AUTO_CLEANUP: build-opt-in`) — DONE (2026-11-01)
 
-Not started at the time of this entry; next in this stage.
+Commit `361e5f8` (26 files: 13 production, 7 test classes, 3 docs, plus the two extra ledger/scheduler classes). Tests: **2699 tests, 277 suites, 0 failures, 0 errors, 0 skipped** (`./gradlew cleanTest test --no-build-cache`). `python3 scripts/check_docs.py` PASS; `git diff --check` clean.
+
+Delivered:
+- **Setting** `auto-cleanup` (General group, default `false` in every profile) with the exact required description; live through `configChanged` → `CrystalCombatController.setAutoCleanup` → trap.
+- **Ownership gate:** every structural send registers a ledger placement before dispatch and marks it sent on SENT (cancelled on any non-SENT result); production block updates now feed `CrystalLedger` with old/new ids. Cleanup only touches cells that are in this trap's `sentStructural` **and** `ledger.ownership(ticket.conn(), cell) == INFERRED_OURS`; `CONTESTED`/`NOT_OURS` are never touched, and a state-only update keeps a confirmed or pending placement intact while air→block still contests. Ownership and the exact expected block are re-checked immediately before every action.
+- **Dispatch-only removal:** new `MINE_POWER`/`MINE_PISTON`/`MINE_SUPPORT` actions through `CombatRuntime.dispatch` → `CombatPacketSink.breakBlock` → vanilla `mc.gameMode.continueDestroyBlock` on the client thread, with a hotbar tool from `CombatInventoryAdapter` (slots 0-8 only, never the offhand, no Speedmine). Order power → piston → supports.
+- **Safety:** cleanup never starts while the trap crystal is unresolved, never detonates, keeps risk and hazards, and stops its own vanilla destruction (`CombatPacketSink.stopBreak` → `mc.gameMode.stopDestroyBlock`, guarded by client thread + open session/sink/connection) before disable, death, respawn, reconcile, setting-off, contested/changed mid-break, deadline, completion, abort and `BLOCK_CHANGED`. A new mine on a different cell auto-stops the previous one; connection close forgets the local state without sending.
+- **Scheduling:** cleanup uses a packet-only lease from `CombatScheduler.reservePackets` (no risk entry, no debt or hazard, released on send/failure), the shared packet budget and `CleanupPriority`'s 20-tick starvation window with a real feasibility probe. The engine yields the tick to cleanup only when the probe confirms the trap can reserve; a refused probe lets direct offence run. 40-tick deadline → `MANUAL_CLEANUP` with the remaining blocks listed.
+- Docs: module doc and tester README document manual (default) and beta auto-cleanup, the exact description, ticket-scoped inferred ownership, hotbar tool rule, unresolved-crystal gate, starvation window, deadline, and the obsidian-time limitation; plan Phase 5.5 boxes cite tests, the old cleanup-starvation BLOCKED note is replaced and a decision-log row added.
+
+Review: the first read-only reviewer failed one blocker — the vanilla destruction was never cancelled, so the server could finish a contested block after a halt. The fix round added the stop path and the destruction-state tests, plus the reviewer's non-blocking items (ticket-scoped ownership, packet-only lease, engine feasibility gate, pending-placement state-only update, a real pre-existing-block scenario, docs wording). The same reviewer returned **PASS** (277 suites / 2699 tests), also simulating the production controller disable order with a temporary test. Carried-forward non-blocking issues:
+- `autoCleanupNeverBreaksBlocksThatExistedBeforeTheTrap` is weak: cleanup keeps re-breaking the power cell, so the support assertion is vacuous and the plan:1018 claim that pre-existing obsidian stays in the manual remainder is an overclaim (manual text lists only this trap's cells).
+- `cleanupCanReserve` uses `scheduler.clock()` instead of the current engine tick and omits `risk.suspended()`; a stale-true probe can yield the engine's slot once and be refused (direct offence loses that tick). Covered only for probe=false.
+- `tickCleanup` clears priority when no next cell (e.g. tool removed mid-break) without stopping an already-started destruction; several halt stop paths are code-only or uncovered; `onDimensionChanged` neither stops nor forgets.
+- `stopDestruction()` cancels whatever block `mc.gameMode` is destroying, including a player's manual break of a different block.
+- `stopBreak` is the only send outside `CombatRuntime.dispatch`; it is a guarded cancellation, not a combat action, documented as the exception.
+- Tests do not exercise the production controller disable order (reviewer's temporary test passed); the no-risk test does not assert the packet-ledger spend.
