@@ -52,6 +52,11 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 - [Inventory Tweaks](modules/inventory-tweaks.md)
 - [Auto Replenish](modules/auto-replenish.md)
 
+## Combat audit and traces
+
+- [Combat API audit for Minecraft 26.2](superpowers/audit/2026-10-29-combat-api-26.2.md)
+- [Phase 0 trace report](superpowers/audit/2026-10-29-trace-report.md)
+
 ## Chat Tools features
 
 - [Buffered Auto TPY](modules/auto-tpy.md) — buffer, priority retries, friends, whitelist CSV import, blocklist and adaptive timing.

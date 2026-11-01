@@ -312,8 +312,11 @@ this document.
 P5.1 runtime-integration gap closure: `PLACE_PISTON`/`PLACE_POWER` use the single dispatch path and
 `PistonTrapController` drives the planner/sequence from a fake world, inventory and sink. No Minecraft
 client or server was started, no packets were observed live, and no live P5.2 cycle is claimed here.
-The production module does not register the controller yet (see Gaps), so the trap remains dormant
-and is not user-reachable.
+The production module registers the controller (`CrystalCombat.buildStack()` builds `PistonTrapWorld`
+and `PistonTrapController` and passes it to `CrystalCombatController.Stack`, `CrystalCombat.java:575-581`);
+the trap is user-reachable only with Mode `PistonOnly` or `Hybrid` (Hybrid only while a trap is
+selected/committed), `piston-trap` on and at least one beta layout enabled, and is dormant otherwise
+(it never arms in `DirectOnly`).
 
 **Implemented.**
 
@@ -392,12 +395,13 @@ runtime regression through the same fake harness.
 
 **Exit gate (code-level).** Pure contracts, geometry/planner/sequence tests and the new runtime path
 tests pass offline. `PLACE_PISTON`/`PLACE_POWER` can only be produced by a controller instance, and
-the module does not construct one yet; nothing is user-reachable and nothing is dispatched from an
-observation callback. **Gaps:** the production `CrystalCombat.buildStack` hook and hidden
-default-off setting that would register `PistonTrapController` are deferred to P5.2 (the runner is
-dormant); automatic piston/power mining does not exist (`CONFIRMED_OURS` only, manual by default);
-live P5.2 local-server cycles and the paired Meteor comparison remain open for the tester build, so
-the trap is **not** tester-ready.
+nothing is dispatched from an observation callback. **Gaps:** automatic piston/power mining does not
+exist (`CONFIRMED_OURS` only, manual by default); live P5.2 local-server cycles and the paired Meteor
+comparison remain open, so the trap is beta (tester build 2) and not server-confirmed. *Updated
+2026-11-01:* the production hook now exists — `CrystalCombat.buildStack` constructs the controller and
+the `piston-trap` setting arms it in `PistonOnly` or `Hybrid` (Hybrid only while a trap is
+selected/committed), never in `DirectOnly`, so the earlier "not user-reachable" state no
+longer holds.
 
 ## Phase 6.2 footprint-scoped concurrency (experimental, off by default)
 

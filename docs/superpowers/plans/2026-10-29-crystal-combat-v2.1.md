@@ -385,59 +385,63 @@ Before any planner exists, record what 26.2 actually sends during crystal combat
 
 ### 0.1 API audit (desk work, no launch)
 
-- [ ] Record exact 26.2 Mojmap signatures and source paths for: entity add/remove packets, block update packets (single and section), block-change acknowledgement, explosion packet, health/food packet, entity data (health, absorption), effect add/remove, equipment, damage event, entity status (totem pop), player position/setback, respawn, dimension change and bundle delimiters.
-- [ ] Confirm which of these Meteor exposes as events, on which thread, and whether before or after vanilla applies the packet. Build 35's Receive fires before handling; find or add an after-application hook.
-- [ ] Read the 26.2 `LivingEntity` hurt path. Record the invulnerability timer, the immunity window `W`, that the previous raw hit is subtracted before mitigation, which damage types bypass the cooldown, and whether a stronger in-window hit broadcasts a damage event. Until 0.4 records the trace, `CombatMotionModel` must assume an in-window stronger hit may still cause knockback (conservative for target envelopes and self bounds).
-- [ ] Read `CombatRules` mitigation and confirm the nondecreasing damage-to-input ratio under fixed armour, toughness and protection (a grouping proof obligation).
-- [ ] Read `EndCrystal.hurtServer`: confirm a crystal damaged by an explosion-tagged source is removed without a second explosion.
-- [ ] Read the 26.2 explosion: entity search radius (expected 12 for power 6), three-dimensional knockback including vertical, and block destruction rules by blast resistance.
-- [ ] Read crystal placement validity: confirm only the first block above the base must be air while a two-block entity volume is checked.
-- [ ] Read the attack handler: confirm which invalid targets cause a disconnect (items, experience orbs, qualifying arrows).
-- [ ] Read `ServerEntity` and entity data: confirm player health and absorption are sent to tracking players, and how often.
-- [ ] Read piston push behaviour for end crystals: distance per tick, collisions, retraction.
-- [ ] Read Meteor build 35 `DamageUtils`: record that its default raycast ignores blocks below 600 blast resistance, and that a custom raycast factory is accepted.
-- [ ] Record Meteor 26.2 APIs the adapters will call: rotation manager callbacks, `InvUtils`, `PlayerUtils`, and every CrystalAura send path (tick, spawn callback, pre-attack swap, delayed rotation callback).
-- [ ] Record existing Comet helpers and their real contracts: `InventorySlotLoan` (recognises AutoTool/AutoWeapon; `prepare()` can restore a loan and send a swap, so it is not a pure query), `InventoryWeaponAttack`, `ScaffoldCoordinator`, `Speedmine.requestBreak` (no owner-scoped cancel), `PlacementTracker`, `ServerPacer`, `PacketBudget`. Note Offhand and rotation owners.
-- [ ] Record SHA-256 hashes of every inspected artifact. Where a publisher checksum exists, compare it; otherwise state that the artifact is unauthenticated.
-- [ ] Write `docs/superpowers/audit/2026-xx-combat-api-26.2.md` with every signature, path, hash and finding.
+- [x] Record exact 26.2 Mojmap signatures and source paths for: entity add/remove packets, block update packets (single and section), block-change acknowledgement, explosion packet, health/food packet, entity data (health, absorption), effect add/remove, equipment, damage event, entity status (totem pop), player position/setback, respawn, dimension change and bundle delimiters.
+- [x] Confirm which of these Meteor exposes as events, on which thread, and whether before or after vanilla applies the packet. Build 35's Receive fires before handling; find or add an after-application hook.
+- [x] Read the 26.2 `LivingEntity` hurt path. Record the invulnerability timer, the immunity window `W`, that the previous raw hit is subtracted before mitigation, which damage types bypass the cooldown, and whether a stronger in-window hit broadcasts a damage event. Until 0.4 records the trace, `CombatMotionModel` must assume an in-window stronger hit may still cause knockback (conservative for target envelopes and self bounds).
+- [x] Read `CombatRules` mitigation and confirm the nondecreasing damage-to-input ratio under fixed armour, toughness and protection (a grouping proof obligation).
+- [x] Read `EndCrystal.hurtServer`: confirm a crystal damaged by an explosion-tagged source is removed without a second explosion.
+- [x] Read the 26.2 explosion: entity search radius (expected 12 for power 6), three-dimensional knockback including vertical, and block destruction rules by blast resistance.
+- [x] Read crystal placement validity: confirm only the first block above the base must be air while a two-block entity volume is checked.
+- [x] Read the attack handler: confirm which invalid targets cause a disconnect (items, experience orbs, qualifying arrows).
+- [x] Read `ServerEntity` and entity data: confirm player health and absorption are sent to tracking players, and how often.
+- [x] Read piston push behaviour for end crystals: distance per tick, collisions, retraction.
+- [x] Read Meteor build 35 `DamageUtils`: record that its default raycast ignores blocks below 600 blast resistance, and that a custom raycast factory is accepted.
+- [x] Record Meteor 26.2 APIs the adapters will call: rotation manager callbacks, `InvUtils`, `PlayerUtils`, and every CrystalAura send path (tick, spawn callback, pre-attack swap, delayed rotation callback).
+- [x] Record existing Comet helpers and their real contracts: `InventorySlotLoan` (recognises AutoTool/AutoWeapon; `prepare()` can restore a loan and send a swap, so it is not a pure query), `InventoryWeaponAttack`, `ScaffoldCoordinator`, `Speedmine.requestBreak` (no owner-scoped cancel), `PlacementTracker`, `ServerPacer`, `PacketBudget`. Note Offhand and rotation owners.
+- [x] Record SHA-256 hashes of every inspected artifact. Where a publisher checksum exists, compare it; otherwise state that the artifact is unauthenticated.
+- [x] Write `docs/superpowers/audit/2026-10-29-combat-api-26.2.md` with every signature, path, hash and finding.
 
 ### 0.2 Provenance pins
 
-- [ ] Resolve each approved reference to a specific repository and commit. For BlackOut, record the fork as well as the commit.
-- [ ] Re-check THM's lineage. If it derives from a flagged ThunderHack rename, drop it as a reference.
-- [ ] Pin the LiquidBounce 26.2 revision and the Lambda CrystalAura PR revision.
-- [ ] For each, decide ported, reimplemented or independent, and record it.
+- [x] Resolve each approved reference to a specific repository and commit. For BlackOut, record the fork as well as the commit.
+- [x] Re-check THM's lineage. If it derives from a flagged ThunderHack rename, drop it as a reference.
+- [x] Pin the LiquidBounce 26.2 revision and the Lambda CrystalAura PR revision.
+- [x] For each, decide ported, reimplemented or independent, and record it.
 
 ### 0.3 CombatRecorder
 
-- [ ] Write `CombatRecorder`: a read-only listener that logs every audited observation kind with receipt nanoTime, client tick, entity ID, UUID, position and payload to JSON Lines. No sends.
-- [ ] Add a manual hotkey that marks a trace with a free-text label (for example "placed crystal", "attacked").
-- [ ] Unit test: serialisation round-trips and the recorder never calls any send method (verify with a fake runtime).
+- [x] Write `CombatRecorder`: a read-only listener that logs every audited observation kind with receipt nanoTime, client tick, entity ID, UUID, position and payload to JSON Lines. No sends.
+- [x] Add a manual hotkey that marks a trace with a free-text label (for example "placed crystal", "attacked").
+- [x] Unit test: serialisation round-trips and the recorder never calls any send method (verify with a fake runtime).
 
 ### 0.4 Record traces on a local test server
 
 Use a local server with a scripted fake target (a second account or a server-side dummy). Record each scenario at least five times:
 
-- [ ] Manual crystal place then hit, target in the open.
-- [ ] Same, target in a hole; record the target's vertical and horizontal motion after the explosion.
-- [ ] Self-damaging crystal at three distances, including one that does zero self damage.
-- [ ] Two crystals inside one immunity window, weaker second; then stronger second.
-- [ ] Two crystals across a window boundary.
-- [ ] Self with absorption: record whether absorption and health arrive in one bundle or separately.
-- [ ] A crystal destroyed by another crystal's explosion: confirm no second explosion.
-- [ ] A crystal placed where the server rejects it; a crystal attacked out of reach.
-- [ ] A sequenced interaction sent after an applied explosion: record acknowledgement timing relative to any health packet.
-- [ ] A server stall (pause the server process for 3 s) mid-sequence.
-- [ ] Piston push of a crystal in each of four directions, feet and eye height, torch and redstone block power. Record the server-logged crystal position for each layout and compare it with the computed position (2-tick extension, 0.51 + 0.01 blocks per tick); any disagreement makes that layout unsupported.
-- [ ] Totem pop on the target; friend health metadata while tracking a friend.
-- [ ] Death and respawn in the same world with crystals present; disconnect and reconnect; dimension change.
+- [x] Manual crystal place then hit, target in the open.
+- [x] Same, target in a hole; record the target's vertical and horizontal motion after the explosion.
+- [x] Self-damaging crystal at three distances, including one that does zero self damage.
+- [x] Two crystals inside one immunity window, weaker second; then stronger second.
+- [x] Two crystals across a window boundary.
+- [x] Self with absorption: record whether absorption and health arrive in one bundle or separately.
+- [x] A crystal destroyed by another crystal's explosion: confirm no second explosion.
+- [x] A crystal placed where the server rejects it; a crystal attacked out of reach.
+- [x] A sequenced interaction sent after an applied explosion: record acknowledgement timing relative to any health packet.
+- [x] A server stall (pause the server process for 3 s) mid-sequence.
+- [x] Piston push of a crystal in each of four directions, feet and eye height, torch and redstone block power. Record the server-logged crystal position for each layout and compare it with the computed position (2-tick extension, 0.51 + 0.01 blocks per tick); any disagreement makes that layout unsupported. **Measured (2026-11-01):** all sixteen layouts moved 1.02 blocks (0.51 per tick), so the literal `0.51 + 0.01` model above overstates the push by 0.02 blocks; `PistonGeometry` records the literal value as `LITERAL_PLAN_DISPLACEMENT` and uses the measured rule instead.
+- [x] Totem pop on the target; friend health metadata while tracking a friend.
+- [x] Death and respawn in the same world with crystals present; disconnect and reconnect; dimension change.
 
 Repeat at added one-way delay of 0, 40 and 100 ms each way (80 and 200 ms RTT) with `tc netem` on CachyOS, and at server TPS 20, 15 and 10. Always state whether a figure is RTT or one-way. Log server ticks and authoritative events server-side as well, so client traces can be checked against ground truth.
 
+> **REPLACED BY TESTER FEEDBACK (2026-11-01):** the 0/40/100 ms × 20/15/10 TPS matrix never ran. Only 0 ms / 20 TPS traces exist, so no delay or TPS figure here is a measured result. The live replacement is the checklist's low-TPS/high-ping item (47) plus tester feedback; no matrix result is claimed.
+
+> **Coverage (2026-11-01):** the five-run-per-scenario requirement above is **not** met. The stored fixtures are 60 runs: five each for `absorption_bundle`, `ack_barrier`, `c6_stronger_in_window`, `two_crystals_stronger` and `two_crystals_weaker`; three for `holed_target`; and one each for the other 32 scenarios, including each of the sixteen piston layouts (the trace report records one run per piston layout except `piston_east_feet_redstone`, which has two). The report's exit table marks "Five runs per scenario" Partial (`docs/superpowers/audit/2026-10-29-trace-report.md:13-15`, `:303`). The live replacement is tester feedback per the REPLACED note above.
+
 ### 0.5 Write the trace report
 
-- [ ] For each scenario, record the observed event order, inter-event delays and which observations never arrived.
-- [ ] Answer explicitly from traces:
+- [x] For each scenario, record the observed event order, inter-event delays and which observations never arrived.
+- [x] Answer explicitly from traces:
   1. Does the explosion packet arrive before or after the crystal removal?
   2. Is a health packet sent on a zero-damage hit, or on a weaker in-window hit?
   3. Do absorption and health from one damage event share a bundle?
@@ -445,16 +449,16 @@ Repeat at added one-way delay of 0, 40 and 100 ms each way (80 and 200 ms RTT) w
   5. How many ticks does a piston push of a crystal take, and where does it end?
   6. Is a holed target pushed vertically by a crystal explosion?
   7. For every piston layout, does the computed pushed position match the server-logged position within tolerance?
-- [ ] Store traces under `src/test/resources/combat/traces/` as fixtures, with the server-side log beside each.
+- [x] Store traces under `src/test/resources/combat/traces/` as fixtures, with the server-side log beside each.
 
 ### Exit gate
 
-- [ ] Audit file reviewed, with artifact hashes.
-- [ ] All seven questions in 0.5 answered from traces, not from memory.
-- [ ] `W`, raw-before-mitigation subtraction and crystal-explosion semantics confirmed for 26.2.
-- [ ] Processing-barrier question answered. If no barrier exists, Conservative keeps zero-damage risk as debt and the plan records that limitation.
-- [ ] Provenance pins recorded.
-- [ ] At least 50 traces stored as fixtures.
+- [x] Audit file reviewed, with artifact hashes.
+- [x] All seven questions in 0.5 answered from traces, not from memory.
+- [x] `W`, raw-before-mitigation subtraction and crystal-explosion semantics confirmed for 26.2.
+- [x] Processing-barrier question answered. If no barrier exists, Conservative keeps zero-damage risk as debt and the plan records that limitation.
+- [x] Provenance pins recorded.
+- [x] At least 50 traces stored as fixtures.
 
 ## Phase 1: Session, ledger and models
 
@@ -813,13 +817,15 @@ Build a parity table before the exit gate: for each Meteor CrystalAura setting t
 - [ ] On the local test server (authorised), 100 consecutive verified cycles with zero invariant violations. With zero failures in 100 independent trials, the one-sided 95% upper bound on the per-cycle failure rate is about 2.95%; state that, not "never fails".
 - [ ] Paired comparison against Meteor CrystalAura on the Phase 9.2 protocol (same terrain, target programme and seed, randomised AB/BA order). Record the treatment-minus-baseline effect and its interval. DirectOnly becomes the default mode only if it shows no meaningful regression.
 
+> **REPLACED BY TESTER FEEDBACK (2026-11-01):** neither live item ran — there is no local-server 100-cycle run and no paired Meteor CrystalAura comparison. The checklist covers Meteor CrystalAura suppression (items 23–26) but documents neither a cycle protocol nor a paired comparison, so the plan claims no failure rate and no treatment effect, and `DirectOnly` stays the default until that evidence exists.
+
 **Status (Phase 3.1-3.6):** planner, sequence, engine, harness, parity table and tests are complete; the two live items above remain open for the P3.2/tester build.
 
 ## Phase 4: Advanced direct tactics, event reaction and defence
 
 Add deterministic improvements one at a time, each behind its own setting, each with an ablation test planned for Phase 9. No speculation in this phase.
 
-**Files:** extend `DirectPlanner`, `CombatEngine`; new `DefensePlanner`, `CombatMetrics`, `CandidateCache`; tests `DirectTacticsTest`, `CombatInvalidationTest`, `DefensePlannerTest`, `CombatMetricsTest`.
+**Files:** extend `DirectPlanner`, `CombatEngine`; new `DefensePlanner`, `CombatMetrics`, `CandidateCache`; tests `DirectPlannerTest` (tactics), `SurroundGapTest`, `MotionPredictionPlannerTest`, `DefensePlannerTest`, `CombatMetricsTest` and `mc/CombatInvalidationTest`, all under `src/test/java/dev/tntcoating/core/combat/` (`mc/` is the subpackage).
 
 ### 4.1 Event-driven invalidation and caching
 
@@ -853,6 +859,8 @@ Add deterministic improvements one at a time, each behind its own setting, each 
 - [x] Propose crystal placements that exploit the gap, scored on expected damage.
 - [ ] Speedmine cooperation is blocked until Speedmine gains an owner-scoped request and cancel contract. Then: an explicit mining reservation on one surround block, cancelled if the block is not authoritatively cleared by its deadline. Never mine as a hidden side effect.
 
+> **BLOCKED (2026-11-01):** `Speedmine` exposes predicates plus a fire-and-forget `requestBreak(BlockPos)` (`src/main/java/dev/tntcoating/modules/Speedmine.java:1149`) with `isMining` (`:1156`) and `outOfRange` (`:1168`); no owner-scoped request or cancel contract exists, so no mining reservation can be created, held or cancelled. No mining packet is sent.
+
 **Deliberate preference (experimental):** when the tactic is on, a legal gap placement is chosen before
 comparing non-gap bases even if the non-gap expected estimate is higher. Every damage, exposure, reach,
 visibility, entity-volume and hazard guard is unchanged; this is a hole exploit, not a claim of greater
@@ -879,6 +887,9 @@ Two defensive opportunity types, both using the same identity, range, item and s
 - [x] Detect an enemy piston-crystal setup aimed at self: a piston within 2 blocks of self's head or feet cell, facing toward self, with an end crystal or empty crystal-ready cell in front of it. The front cell is explicitly the cell the piston head extends into (`piston + facing`); a piston whose front cell is self's own feet/head cell is not a legal blocker target and is skipped.
 - [x] Responses, in preference order: break the crystal if safe (normal defensive break/risk path); place an obsidian block in the push path between crystal and self (`PLACE_BLOCKER` in the front cell); if the front crystal's break is unsafe or the front cell is occupied, drop the opportunity rather than block into it.
 - [ ] Mine the power source: **blocked, not attempted.** Speedmine still has no owner-scoped request/cancel contract, so `MINE_POWER` is never planned and no mining packet is sent by this phase (see the gaps register).
+
+> **BLOCKED (2026-11-01):** same cause as the Phase 4.5 mining item — no owner-scoped Speedmine request/cancel contract. `Action.MINE_POWER` is declared, but no planner emits it and the trap's cleanup is decision-only (`PistonSequence.cleanupAction`, no caller under `mc/`), so nothing may mine.
+
 - [x] Defensive placements use `PLACE_BLOCKER` and share the packet budget. The blocker reuses `CombatRuntime.dispatch`, requires a sturdy face below the cell and a real obsidian hotbar item, reserves zero exposure with no bound crystal, and takes the same scheduler lease/packet accounting as a support placement.
 - [x] Tests from scripted geometry: four directions, feet and head height, with and without a crystal already placed (plus protected/own skips, unsafe breaks, reach/visibility/entity-free refusals and a no-mining assertion).
 
@@ -923,10 +934,14 @@ A removal is never counted as damage. An unrelated despawn stays in `unknown_out
 
 One confirmed trap at a time, against stationary surrounded or hole targets, using the shared ledger, damage, risk and scheduler services. No speculative IDs and no optimistic removal, ever, in piston paths.
 
-**Files:** `PistonPlanner`, `PistonSequence`, `PistonGeometry`, `PistonTrapController`, tests `PistonGeometryTest`, `PistonPlannerTest`, `PistonSequenceTest`, `PistonCleanupTest`, `PistonTrapControllerTest`.
+**Files:** `PistonPlanner`, `PistonSequence`, `PistonGeometry`, `PistonTrapController`, tests `PistonGeometryTest`, `PistonLayoutSelectionTest`, `PistonPlannerTest`, `PistonSequenceTest`, `PistonOpportunityTest`, `mc/PistonTrapControllerTest`.
 
-**Runtime integration (P5.1 gap closure, 2026-10-30).** The pure layer now has a runtime path, but the
-production module does not register it yet; the runner is dormant until P5.2 supplies the tester mode.
+**Runtime integration (P5.1 gap closure, 2026-10-30; updated 2026-11-01).** The pure layer has a runtime
+path and the production module registers it: `CrystalCombat.buildStack()` builds a read-only
+`PistonTrapWorld` and a `PistonTrapController` and passes the controller to `CrystalCombatController.Stack`
+(`CrystalCombat.java:575-581`). The runner stays dormant until the `piston-trap` setting is on, Mode is
+`PistonOnly` or `Hybrid` (Hybrid only while a trap is selected/committed), and at least one beta layout
+is enabled; it never arms in `DirectOnly`.
 
 - [x] `CombatRuntime`/`CombatPacketSink`/`CombatClient`/inventory dispatch `PLACE_PISTON` and `PLACE_POWER`
       through the existing single send path: hotbar-only required item, reach/visibility/face checks,
@@ -939,7 +954,7 @@ production module does not register it yet; the runner is dormant until P5.2 sup
 - [x] Observation seams (`onBlockUpdate`, `onPistonUpdate`, `onCrystalSpawn`, `onCrystalRemoved`,
       `onTargetChanged`) and fake world/inventory/sink/connection tests covering orders, aborts,
       disable/death/disconnect, timeouts, one-trap-until-reconciled and the full Phase 3/4 regression.
-- [ ] Menu/command hook that registers the runner for a tester build (P5.2; intentionally not built here).
+- [x] Menu/command hook that registers the runner for a tester build (P5.2). Built 2026-11-01: `CrystalCombat.buildStack()` constructs the controller and passes it into `CrystalCombatController.Stack`; the `piston-trap` setting gates it, and `.crystalcombat cleanup confirm` releases a manually cleaned trap (`CombatExportCommand`).
 
 ### 5.1 Contracts
 
@@ -957,16 +972,16 @@ enum PistonPhase { SEARCH, RESERVE, SUPPORTS, PISTON, CRYSTAL, POWER, WAIT_PUSH,
 
 ### 5.2 Geometry search
 
-- [ ] Target must be stationary (motion model speed below 0.05 blocks/tick for 10 ticks) and in a hole or full surround. Being in a hole does not mean it cannot move: explosions push in three dimensions.
-- [ ] Enumerate 4 horizontal directions × 2 heights (feet, eye) = 8 base layouts.
-- [ ] For each: source cell for the crystal (vanilla rule: one air block above the base, two-block entity volume free), piston cell behind it facing the target, extension cell, power cell adjacent to the piston but not powering it early.
-- [ ] Check vanilla legality of every placement face, piston facing from the player's rotation at placement time, and that the power cannot reach the piston before the crystal is bound.
-- [ ] Reject layouts where power would also activate any other piston, door or redstone component in range.
-- [ ] Support depth ≤ 2 below any placed block; ≤ 6 new structural blocks total.
-- [ ] Push offsets come from Phase 0 traces per direction and height, not fixed 0.75/0.5 constants.
-- [ ] Damage is evaluated over the whole swept path: every feasible crystal position from source to final, against every feasible target and self position. The endpoints alone do not bound intermediate positions, where cover can change.
-- [ ] Self and friend bounds use the most exposed point on the path, and placement reserves risk at `PLACE_CRYSTAL` because the crystal is exposed to other players' attacks from the moment it exists.
-- [ ] Candidate cap 64 per pass; resumable within the shared tick budget.
+- [x] Target must be stationary (motion model speed below 0.05 blocks/tick for 10 ticks) and in a hole or full surround. Being in a hole does not mean it cannot move: explosions push in three dimensions.
+- [x] Enumerate 4 horizontal directions × 2 heights (feet, eye) = 8 base layouts.
+- [x] For each: source cell for the crystal (vanilla rule: one air block above the base, two-block entity volume free), piston cell behind it facing the target, extension cell, power cell adjacent to the piston but not powering it early.
+- [x] Check vanilla legality of every placement face, piston facing from the player's rotation at placement time, and that the power cannot reach the piston before the crystal is bound.
+- [x] Reject layouts where power would also activate any other piston, door or redstone component in range.
+- [x] Support depth ≤ 2 below any placed block; ≤ 6 new structural blocks total.
+- [x] Push offsets come from Phase 0 traces per direction and height, not fixed 0.75/0.5 constants.
+- [x] Damage is evaluated over the whole swept path: every feasible crystal position from source to final, against every feasible target and self position. The endpoints alone do not bound intermediate positions, where cover can change.
+- [x] Self and friend bounds use the most exposed point on the path, and placement reserves risk at `PLACE_CRYSTAL` because the crystal is exposed to other players' attacks from the moment it exists.
+- [x] Candidate cap 64 per pass; resumable within the shared tick budget.
 
 ### 5.3 Sequence (ordered dependencies)
 
@@ -975,7 +990,7 @@ enum PistonPhase { SEARCH, RESERVE, SUPPORTS, PISTON, CRYSTAL, POWER, WAIT_PUSH,
 3. **PISTON.** Rotate to give the correct facing, place, and wait for the block observation. Verify the observed facing; wrong facing → abort and clean up.
 4. **CRYSTAL.** Place the crystal. Wait for a unique matching spawn; bind its ID and UUID.
 5. **POWER.** Place the torch or redstone block. Wait for the block observation.
-6. **WAIT\_PUSH.** Do not wait for a server move observation: the crystal entity type suppresses position sync (`updateInterval = Integer.MAX_VALUE`). Compute the final server-side position from the authoritative piston block events plus the audited push rules (2-tick extension, 0.51 + 0.01 blocks per tick); the client's own piston simulation is a cross-check, not evidence. Confirm the computed position within a small tolerance before ATTACK.
+6. **WAIT\_PUSH.** Do not wait for a server move observation: the crystal entity type suppresses position sync (`updateInterval = Integer.MAX_VALUE`). Compute the final server-side position from the authoritative piston block events plus the audited push rules (2-tick extension; measured 1.02 blocks total, 0.51 per tick, not the literal `0.51 + 0.01` model); the client's own piston simulation is a cross-check, not evidence. Confirm the computed position within a small tolerance before ATTACK.
 7. **ATTACK.** Re-run damage and risk at the computed pushed position (within tolerance). Attack the bound entity only.
 8. **WAIT\_REMOVE.** Wait for removal; hand risk resolution to the budget.
 9. **CLEANUP.** Remove owned power first; optionally mine the owned piston; leave harmless supports.
@@ -985,42 +1000,49 @@ Power-before-crystal is a known-bad ordering from HongShi/Alien; a test must rej
 
 ### 5.4 Failure handling
 
-- [ ] Each stage has a confirmation timeout of max(20 ticks, RTT p99 + 5 ticks).
-- [ ] Structural placements may retry up to 2 times. An unresolved crystal placement is never retried.
-- [ ] Ambiguous spawn (two plausible crystals) → quarantine, abort, no further piston trap until resolved.
-- [ ] Target leaves the geometry envelope → abort before POWER; after POWER, complete the push only if the attack still passes safety.
-- [ ] Damage estimate at the computed pushed position (tolerance-checked) fails policy → do not attack; keep the crystal protected; enter CLEANUP.
-- [ ] `WAIT_PUSH` never waits for a server move observation. The final position is computed from authoritative piston block events plus the audited push rules (2-tick extension, 0.51 + 0.01 blocks per tick); the client's own piston simulation is a cross-check, not evidence.
-- [ ] Damage, reach and the attack use the computed position with a small tolerance. Phase 0.4 must confirm computed vs server-logged positions for every layout; any layout that disagrees is unsupported and must be listed as such.
-- [ ] Trap deadline 100 ticks; cleanup deadline 40 ticks.
-- [ ] Deadlines and timeouts change retry and backoff only; they never retire risk. At a deadline: release broad locks, keep spatial and entity exclusions and all risk reservations, set MANUAL\_CLEANUP and show it in the info string. No new piston trap until reconciled. Direct combat elsewhere may continue.
+- [x] Each stage has a confirmation timeout of max(20 ticks, RTT p99 + 5 ticks).
+- [x] Structural placements may retry up to 2 times. An unresolved crystal placement is never retried.
+- [x] Ambiguous spawn (two plausible crystals) → quarantine, abort, no further piston trap until resolved.
+- [x] Target leaves the geometry envelope → abort before POWER; after POWER, complete the push only if the attack still passes safety.
+- [x] Damage estimate at the computed pushed position (tolerance-checked) fails policy → do not attack; keep the crystal protected; enter CLEANUP.
+- [x] `WAIT_PUSH` never waits for a server move observation. The final position is computed from authoritative piston block events plus the audited push rules (2-tick extension, measured 1.02 blocks: 0.51 per tick); the client's own piston simulation is a cross-check, not evidence.
+- [x] Damage, reach and the attack use the computed position with a small tolerance. Phase 0.4 confirmed all sixteen layouts against the server log; none disagrees under the measured rule (`docs/superpowers/audit/2026-10-29-trace-report.md`, Q7), so none is unsupported.
+- [x] Trap deadline 100 ticks; cleanup deadline 40 ticks.
+- [x] Deadlines and timeouts change retry and backoff only; they never retire risk. At a deadline: release broad locks, keep spatial and entity exclusions and all risk reservations, set MANUAL\_CLEANUP and show it in the info string. No new piston trap until reconciled. Direct combat elsewhere may continue.
 
 ### 5.5 Cleanup ownership
 
-- [ ] Cleanup uses the ledger's ownership states. Under the hard requirement, automatic cleanup mines only `CONFIRMED_OURS` cells, which vanilla cannot provide; in practice cleanup is manual unless the user enables `INFERRED_OURS` cleanup explicitly.
-- [ ] Any unexplained block update on a cell makes it `CONTESTED`; contested cells are never touched automatically.
-- [ ] Disable at any phase: stop sending immediately, keep hazards and risk; no cleanup packets.
-- [ ] Death mid-trap: end the action generation; keep the trap's hazards; rescan on respawn and show manual cleanup if needed.
+- [x] Cleanup uses the ledger's ownership states. Under the hard requirement, automatic cleanup mines only `CONFIRMED_OURS` cells, which vanilla cannot provide; in practice cleanup is manual unless the user enables `INFERRED_OURS` cleanup explicitly. **This build (2026-11-01):** the production controller uses `PistonSequence.Config.defaults()`, so `allowInferredCleanup` is false and cleanup is manual; the flag exists only on the pure sequence's config, with no module setting.
+- [x] Any unexplained block update on a cell makes it `CONTESTED`; contested cells are never touched automatically.
+- [x] Disable at any phase: stop sending immediately, keep hazards and risk; no cleanup packets.
+- [x] Death mid-trap: end the action generation; keep the trap's hazards; show manual cleanup if needed. Respawn clears the pending block and sets the sequence's manual-cleanup flags; no test covers debris reconciliation on respawn.
 
 ### Tests
 
-- [ ] All 8 layouts with and without existing bases.
-- [ ] Support depth 2 accepted, 3 rejected; 6 structural blocks accepted, 7 rejected.
-- [ ] Torch and redstone block legality; power that would activate another component is rejected.
-- [ ] Wrong observed piston facing → abort.
+- [x] All 8 layouts with and without existing bases.
+- [x] Support depth 2 accepted, 3 rejected; 6 structural blocks accepted, 7 rejected.
+- [x] Torch and redstone block legality; power that would activate another component is rejected.
+- [x] Wrong observed piston facing → abort.
 - [ ] Full happy path replayed from Phase 0 piston traces.
+  > **DEFERRED (2026-11-01):** the fixture-replay happy path is deferred to Stage 4 (its "happy path replayed from the recorded piston fixtures through `PistonSequence`/`PistonTrapController`"). What exists today is the synthetic ordered-dependency test `PistonSequenceTest.happyPathFollowsTheExactOrderedDependencies` (`src/test/java/dev/tntcoating/core/combat/PistonSequenceTest.java:25-55`), which reads no fixture; only `CrystalLedgerTraceReplayTest.java:34` and `mc/EngineHarnessTraceTest.java:38` read traces, and neither replays a piston trap.
 - [ ] Swept path passing a more exposed intermediate position than either endpoint → bound uses the intermediate.
+  > **DEFERRED (2026-11-01):** the intermediate-frame self-bound test is deferred to Stage 4. No such test exists: `PistonPlannerTest.guaranteedTargetDamageUsesTheWholeFeasibleTargetSet` (`src/test/java/dev/tntcoating/core/combat/PistonPlannerTest.java:146-155`) varies a feasible target point, not a crystal frame, and the fake at `:421-424` keys damage by victim position.
 - [ ] Target pushed vertically out of the hole by an outside explosion → trap aborts.
 - [ ] Late and ambiguous spawns; ID reuse across connections.
-- [ ] Target movement before and after POWER.
+- [x] Target movement before and after POWER.
 - [ ] Disable and death at each phase → no further sends, hazards and risk retained.
-- [ ] Cleanup with inferred-only ownership stays manual by default; contested blocks untouched.
+  > **DEFERRED (2026-11-01):** the every-phase disable/death loop is deferred to Stage 5 (its "disable at every direct, piston and cleanup phase sends nothing afterwards" item). Current coverage is only WAIT_PUSH (`PistonSequenceTest.java:207-229`) and early PISTON (`mc/PistonTrapControllerTest.java:321-338`, `:697-731`); no test loops CRYSTAL/POWER/ATTACK/WAIT_REMOVE/CLEANUP.
+- [x] Cleanup with inferred-only ownership stays manual by default; contested blocks untouched.
 
 ### Exit gate
 
-- [ ] All tests pass.
+- [x] All tests pass.
 - [ ] Local test server (authorised): for each of the 8 layouts × 2 power kinds, ≥ 19 of 20 complete cycles, zero wrong-entity attacks, zero policy violations, zero stale-world sends.
+
+> **REPLACED BY TESTER FEEDBACK (2026-11-01):** this 8 × 2 × 20-cycle server gate never ran. The sixteen layouts are covered offline by the geometry, planner, sequence and controller tests. Live evidence comes from the checklist's per-layout run sheet (items 59.1–59.16: one run per direction × height × power), not from a 20-cycle-per-layout gate.
+
 - [ ] Unsupported layouts are listed explicitly in the module docs.
+  > **DEFERRED (2026-11-01):** all sixteen traced layouts are supported by the offline geometry, planner, sequence and controller tests, so there is no explicit unsupported-layouts list yet; `docs/modules/crystal-combat.md` only records that all sixteen are beta and not validated across servers. Stage 4 adds the list.
 
 ## Phase 6: Hybrid with footprint-scoped concurrency
 
@@ -1076,6 +1098,8 @@ Knockback: the inspected explosion computes a three-dimensional push, including 
 - [x] A defensive break of a crystal the trap protects is allowed only if the engine first invalidates the trap. (No trap-invalidation API exists: the ledger excludes the trap crystal, so the break is impossible rather than gated.)
 - [ ] Cleanup intents share budgets and cannot be starved: after 20 ticks waiting, cleanup gets the next free slot.
 
+> **BLOCKED (2026-11-01):** there is no cleanup intent or packet path to schedule: no owner-scoped mining API exists (`Speedmine.requestBreak` has no cancel contract) and the trap's cleanup decision has no caller under `mc/`, so a cleanup intent can neither be created nor sent, let alone starved.
+>
 > Accepted gap for this build: there is no cleanup intent or packet path (no owner-scoped mining API), so
 > cleanup stays manual. The scheduling hook and metrics stay visible, and the documentation records the
 > gap instead of inventing a cleanup packet or claiming the box is closed.
@@ -1433,5 +1457,8 @@ State the sample size, method and sidedness alongside every rate.
 | 2026-10-29 | Answered placement bookkeeping is pruned on answer | Otherwise every answered placement permanently contested its cell and blocked a later placement there |
 | 2026-10-29 | Over-quarantine of a live bound crystal when a second spawn appears in its source is accepted for now | Conservative and review-approved; revisit if traces show unnecessary traps |
 | 2026-10-29 | Keep the extra placement-ownership, session lifecycle and diagnostics APIs | Needed by later phases and traces; documented in the 1.2/1.3 interfaces above |
+| 2026-11-01 | Phase 2b counts packets inside `CombatScheduler` (`packetCapacity`, `packetUsed(int)`, backed by `PacketLedger`) instead of reusing `PlacementTracker`/`ServerPacer`/`PacketBudget` | Those helpers are placement-pipeline bookkeeping: `PlacementTracker` follows one sent placement to its authoritative block update, `ServerPacer` is an adaptive rate control driven by accepted/failed placements, and `PacketBudget` is a one-second bucket with placement-specific costs (`placementCost`, a single `perSecond` limit). None counts combat dispatch packets or exposes a profile-sized rolling window, and reusing them would tie the single dispatch path to the placement pipeline. `PacketLedger` is the pure tick-based 20-tick window (conservative 60, anarchy 100) shared by direct, trap and defence |
+| 2026-11-01 | Phase 2c's "integration test" is a synthetic 200-tick gate loop, not an in-game run | `CrystalCombatGateTest.bothModulesEnabledSendsNothingOverTwoHundredTicks` (`src/test/java/dev/tntcoating/core/combat/CrystalCombatGateTest.java:151-166`) drives the gate with synthetic ticks: the unit-test JVM has no client or Meteor tick loop. The mixin wiring itself is real (`CrystalAuraMixin`, descriptor-checked by `MeteorUpgradeCheck`), so in-game two-module suppression stays a tester item |
+| 2026-11-01 | Phase 6.5's defensive break of a trap-protected crystal is impossible rather than gated | No trap-invalidation API exists in 26.2 or in this build, so a defensive break cannot be "allowed once the trap is invalidated". The ledger excludes the trap crystal, so own and ledger-blocked cells are skipped outright and the break is unreachable; offence remains the only path that may attack our own unresolved trap crystal |
 
 Numeric defaults, profile names and delivery order are recommendations awaiting your approval.

@@ -59,7 +59,7 @@ Weakness/eating, moving or holed target, anything else that was going on. -->
 
 ## PistonOnly (beta) details
 
-- Mode (`DirectOnly` / `PistonOnly`): <!-- PistonOnly is beta; Hybrid is not in this build -->
+- Mode (`DirectOnly` / `PistonOnly` / `Hybrid`): <!-- PistonOnly is beta; Hybrid is shipped in its serialised stage -->
 - Was `piston-trap` on? (yes/no):
 - Chosen layout from the debug log (direction/height/power):
 - Which of the sixteen layout toggles were enabled?

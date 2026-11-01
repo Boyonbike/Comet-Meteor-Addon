@@ -1,8 +1,8 @@
 # CrystalCombat tester build 2
 
 This is the second **tester build** of CrystalCombat (P5.2). It is not a release build. It exists so
-testers can exercise the audited DirectOnly baseline and the new **beta PistonOnly** single-push trap
-on real servers and send back evidence.
+testers can exercise the audited DirectOnly baseline, the new **beta PistonOnly** single-push trap and
+the serialised Hybrid stage on real servers and send back evidence.
 
 > **Beta warning:** test only on servers where losing gear is acceptable. CrystalCombat can misplace,
 > break or attack a crystal, spend pots, or leave you standing in an explosion. The piston trap is
@@ -16,12 +16,18 @@ on real servers and send back evidence.
 - **PistonOnly (beta tester mode).** Select `PistonOnly` in **Mode** to run the single-push piston
   trap instead of the direct engine. It builds the measured 16-combination layouts block by block,
   confirms every placed block, waits for the piston to extend, and attacks only at the computed final
-  crystal position. **Hybrid is still not in this build** and refuses to enable.
+  crystal position.
+- **Hybrid (shipped, serialised).** Select `Hybrid` to rank direct plans and the piston trap against
+  each other. At most one owns the field: a committed trap blocks every direct plan until the trap
+  finishes or aborts, and defence evaluation continues during a trap. Hybrid changes which plan is
+  chosen, never how a packet is sent. The experimental `footprint-concurrency` path is off by default
+  and is not promoted.
 - **The direct engine does not run in PistonOnly, and the trap does not run in DirectOnly.** Each
   mode uses the existing single tick and send path; switching modes mid-session aborts unsent work,
   keeps hazards and already-sent risk, and sends no stale packet from the mode being left.
 - **Beta top-level switch.** **piston-trap** is on by default but only arms while **Mode** is
-  `PistonOnly`. It never creates an independent hidden mode.
+  `PistonOnly` or `Hybrid` (Hybrid only while a trap is selected/committed), and never in
+  `DirectOnly`. It never creates an independent hidden mode.
 - **Sixteen beta layout toggles.** Each direction (east/west/north/south) × height (feet/eye) × power
   (torch/redstone) has its own on/off setting, all enabled by default. A disabled layout is never
   planned. **Disabling all sixteen leaves PistonOnly inert** (no trap, no direct fallback); the info
@@ -29,8 +35,9 @@ on real servers and send back evidence.
 - **Conservative profile only.** Min target damage 4, max self damage 6, remaining-health margin 2 and
   friend damage 2 are the production floor. Weaker values refuse to enable.
 - **Anti-suicide is locked on.** Turning it off disables the module immediately.
-- **No defence logic, no full combat UI, no automatic cleanup.** The module's normal Meteor settings
-  screen shows its settings; there is no separate piston screen and no cleanup/mining packet path.
+- **No full combat UI and no automatic cleanup; defence tactics are present but default off.** The
+  module's normal Meteor settings screen shows its settings; there is no separate piston screen and no
+  cleanup/mining packet path.
 - Diagnostics are opt-in: the **Debug log** is off by default and keeps evidence in memory only.
 
 ## Computed position, not a server-confirmed position
@@ -153,8 +160,9 @@ Review the preview before `confirm`, and do not attach an export publicly if you
 
 ## Known limitations
 
-- DirectOnly and beta PistonOnly with Conservative and locked anti-suicide are the only accepted
-  configurations; Hybrid and other profiles are refused, not silently approximated.
+- DirectOnly, beta PistonOnly and serialised Hybrid with Conservative and locked anti-suicide are the
+  accepted configurations; other profiles are refused, not silently approximated. Hybrid changes which
+  plan is chosen, not how a packet is sent.
 - The computed final crystal position is not server-confirmed. C21 suppresses crystal position sync;
   the only evidence is the piston block events plus the audited numeric push rules.
 - **Manual cleanup is the default.** The trap does not mine, break or otherwise clean up its supports,
