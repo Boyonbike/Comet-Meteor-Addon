@@ -136,6 +136,7 @@ val sourceDistribution = tasks.register<Zip>("sourceDistribution") {
         into("docs")
         exclude("superpowers/**")
     }
+    from("relay") { into("relay") }
     from("gradlew", "gradlew.bat", "build.gradle.kts", "settings.gradle.kts", "gradle.properties",
         "LICENSE", "LICENSE-CC0", "LICENSE-NoTextureRotations", "LICENSE-Inter", "LICENSE-Lucide", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md", "CONTRIBUTING.md")
 }

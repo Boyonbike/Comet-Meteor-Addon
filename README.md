@@ -5,7 +5,7 @@
 [![Minecraft](https://img.shields.io/badge/Minecraft-26.1.2-3c8527.svg)](https://www.minecraft.net/)
 [![Meteor Client](https://img.shields.io/badge/Meteor%20Client-build%2042-8e44ad.svg)](https://meteorclient.com/)
 
-Comet **0.26.27** is a Meteor Client addon for **Minecraft 26.1.2** with
+Comet **0.27.0** is a Meteor Client addon for **Minecraft 26.1.2** with
 elytra flight, building tools, storage rendering, chat automation and inventory upgrades.
 
 ## Built for 6b6t
@@ -58,9 +58,9 @@ in its own module. Auto TPY defaults off; configure its whitelist before enablin
 
 | Minecraft branch | Java | Tested Meteor build | Release JAR |
 | --- | --- | --- | --- |
-| [26.1.2](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.1.2) | 25 | 42 | `comet-0.26.27-mc26.1.2.jar` |
-| [26.2](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.2) | 25 | 35 | `comet-0.26.27-mc26.2.jar` |
-| [1.21.11](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/1.21.11) | 21 | 82 (vendored) | `comet-0.26.27-mc1.21.11.jar` |
+| [26.1.2](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.1.2) | 25 | 42 | `comet-0.27.0-mc26.1.2.jar` |
+| [26.2](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/26.2) | 25 | 35 | `comet-0.27.0-mc26.2.jar` |
+| [1.21.11](https://github.com/Boyonbike/Comet-Meteor-Addon/tree/1.21.11) | 21 | 82 (vendored) | `comet-0.27.0-mc1.21.11.jar` |
 
 Each branch builds independently with pinned dependencies and the same release number.
 See [Meteor compatibility](docs/guides/module-settings.md) for how changed hooks are handled.

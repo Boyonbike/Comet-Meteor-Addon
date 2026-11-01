@@ -13,6 +13,7 @@ import dev.tntcoating.core.AdaptiveFlightEngine;
 import dev.tntcoating.core.AltitudeHold;
 import dev.tntcoating.core.BaritoneFlight;
 import dev.tntcoating.core.ElytraReplacement;
+import dev.tntcoating.core.ElytraSwapRecovery;
 import dev.tntcoating.core.ElytraTakeoff;
 import dev.tntcoating.core.FlightCorridor;
 import dev.tntcoating.core.HighwayCenter;
@@ -492,6 +493,9 @@ public final class HighwayFly extends Module {
     private int lastRubberbandTick;
     private int walkFailures;
     private int failedSwaps;
+    private final ElytraSwapRecovery elytraSwapRecovery = new ElytraSwapRecovery();
+    private boolean warnedSwapWait;
+    private boolean holdElytraOnGround;
     private boolean deathNotified;
     private final AtomicBoolean deathPending = new AtomicBoolean();
     private final HighwayTravelSafety travelSafety = new HighwayTravelSafety();
@@ -1440,12 +1444,9 @@ public final class HighwayFly extends Module {
                 toggle();
                 return;
             }
-            if (elytraRemaining(mc.player.getItemBySlot(EquipmentSlot.CHEST)) <= Math.max(2, minDurability.get())) {
-                error("A usable spare was found, but it could not be equipped. Check the chest slot and inventory.");
-                toggle();
-                return;
-            }
-            info("Put on an elytra with %d durability left.", swapped);
+            elytraSwapRecovery.requested();
+            failedSwaps++;
+            info("Requested an elytra with %d durability left; checking inventory stability.", swapped);
         }
         recenterCourseAt(mc.player.position());
         walkingLine = HighwayRouteLine.from(mc.player.position(), destinationPoint);
@@ -1518,6 +1519,7 @@ public final class HighwayFly extends Module {
     }
 
     private void tickFlight(TickEvent.Pre event) {
+        holdElytraOnGround = false;
         if (state == State.DONE) return;
         if (mc.player == null || mc.level == null) {
             toggle();
@@ -1539,25 +1541,48 @@ public final class HighwayFly extends Module {
         }
         if (state == State.WALKING) equipRecoveryChestplate();
         ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
-        HighwayFlightSafety.Action protection = HighwayFlightSafety.action(
+        ElytraSwapRecovery.Action protection = elytraSwapRecovery.tick(
             elytraRemaining(chest), minDurability.get(), swapElytra.get(), canUseInventory(),
-            HighwayFlightSafety.requiresWings(state == State.WALKING, walkStarted, mc.player.onGround()));
-        if (protection == HighwayFlightSafety.Action.LOGOUT) {
-            logOut("Low or missing elytra durability and a replacement cannot be equipped safely.");
+            HighwayFlightSafety.requiresWings(state == State.WALKING, walkStarted, mc.player.onGround()),
+            mc.player.onGround());
+        if (protection == ElytraSwapRecovery.Action.LOGOUT) {
+            logOut("Elytra recovery could not complete safely: " + elytraSwapDiagnostics());
             return;
         }
-        if (protection == HighwayFlightSafety.Action.REPLACE) {
+        if (protection == ElytraSwapRecovery.Action.REPLACE) {
             int spare = swapInElytra(Math.max(2, minDurability.get()));
             if (spare < 0) {
-                logOut("No usable spare elytra is available; logging out before the wings fail.");
+                logOut("No reachable usable spare elytra: " + elytraSwapDiagnostics());
                 return;
             }
-            if (elytraRemaining(mc.player.getItemBySlot(EquipmentSlot.CHEST)) <= Math.max(2, minDurability.get())) {
-                if (++failedSwaps >= 3) logOut("The elytra replacement was rejected; logging out safely.");
+            elytraSwapRecovery.requested();
+            failedSwaps++;
+            info("Requested spare elytra with %d durability left (attempt %d); checking inventory stability.", spare, failedSwaps);
+            // The clicks predict a result locally. Observe it on later ticks before declaring success.
+            if (mc.player.onGround()) {
+                holdElytraOnGround = true;
                 return;
             }
+            if (!usableElytra(mc.player.getItemBySlot(EquipmentSlot.CHEST))) {
+                logOut("Elytra swap left no usable wings in flight: " + elytraSwapDiagnostics());
+                return;
+            }
+        } else if (protection == ElytraSwapRecovery.Action.CONFIRMED) {
             failedSwaps = 0;
-            info("Equipped spare elytra with %d durability left.", spare);
+            warnedSwapWait = false;
+            info("Elytra replacement remained stable with %d durability left.", elytraRemaining(chest));
+        } else if (protection == ElytraSwapRecovery.Action.WAIT) {
+            if (!canUseInventory() && !warnedSwapWait) {
+                warning("Briefly waiting for elytra inventory access: %s", elytraSwapDiagnostics());
+                warnedSwapWait = true;
+            }
+            // Continue steering usable wings while waiting, but never initiate takeoff mid-transaction.
+            if (mc.player.onGround()) {
+                holdElytraOnGround = true;
+                return;
+            }
+        } else {
+            warnedSwapWait = false;
         }
         if (altitudeBlocked && mc.player.getY() >= preferredY - CLIMB_TOLERANCE) {
             altitudeBlocked = false;
@@ -1707,6 +1732,11 @@ public final class HighwayFly extends Module {
         if (mc.player.isInLava()) {
             ((IVec3) event.movement).meteor$set(0, 0, 0);
             logOut("The player entered lava; logging out immediately.");
+            return;
+        }
+        if (holdElytraOnGround) {
+            // Hold position during inventory recovery, even if momentum would carry us off a ledge.
+            ((IVec3) event.movement).meteor$set(0, Math.min(0, event.movement.y), 0);
             return;
         }
         if (portalCrossing != null || tryPortalCrossing(event.movement)) {
@@ -2506,6 +2536,19 @@ public final class HighwayFly extends Module {
             && mc.player.inventoryMenu.getCarried().isEmpty();
     }
 
+    private String elytraSwapDiagnostics() {
+        if (mc.player == null) return "player unavailable";
+        ItemStack cursor = mc.player.inventoryMenu.getCarried();
+        return "remaining=" + elytraRemaining(mc.player.getItemBySlot(EquipmentSlot.CHEST))
+            + ", threshold=" + minDurability.get() + ", swap=" + swapElytra.get()
+            + ", gameMode=" + (mc.gameMode != null)
+            + ", playerInventory=" + (mc.player.containerMenu == mc.player.inventoryMenu)
+            + ", containerId=" + mc.player.containerMenu.containerId
+            + ", cursor=" + (cursor.isEmpty() ? "empty" : cursor.getItem() + " x" + cursor.getCount())
+            + ", chestRemovable=" + mc.player.inventoryMenu.getSlot(6).mayPickup(mc.player)
+            + ", grounded=" + mc.player.onGround() + ", phase=" + state;
+    }
+
     /** Remaining durability of the vanilla elytra, otherwise -1. */
     private static int elytraRemaining(ItemStack stack) {
         if (!stack.is(Items.ELYTRA)) return -1;
@@ -2557,7 +2600,7 @@ public final class HighwayFly extends Module {
 
     /** Wear armour only after landing; the walking controller may then jump without demanding wings again. */
     void equipRecoveryChestplate() {
-        if (!swapElytra.get() || !swapBack.get() || mc.player == null || !mc.player.onGround()
+        if (elytraSwapRecovery.pending() || !swapElytra.get() || !swapBack.get() || mc.player == null || !mc.player.onGround()
             || mc.player.isFallFlying() || !canUseInventory()
             || dev.tntcoating.core.InventorySlotLoan.INSTANCE.isBorrowing()
             || dev.tntcoating.core.InventoryWeaponAttack.INSTANCE.isPending()) return;
@@ -2662,6 +2705,9 @@ public final class HighwayFly extends Module {
     }
 
     private void reset() {
+        holdElytraOnGround = false;
+        elytraSwapRecovery.reset();
+        warnedSwapWait = false;
         portalCrossing = null;
         portalCrossingTicks = 0;
         portalWalkPaused = false;

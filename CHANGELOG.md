@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.27.0 — 2026-10-28
 
 - **Discord IGN sync relay:** players no longer paste a Discord bot token, server ID or channel ID. The module reads through one public **relay URL** (new **relay-url** setting), a Cloudflare Worker that alone holds the bot token and forwards only the four read-only sync requests; its code ships in `relay/worker.js`. Chat Tools' Discord connection is now a single **Clan relay URL** field. Saved **bot-token**, **guild-id** and **ign-channel-id** values are no longer used, and saved role data is hidden until the first relay sync rewrites it.
+- **Chat in Chat Tools:** a new **Chat** page in the sidebar shows the server's chat as in-game chat shows it (last 300 lines, in colour, with times and tinted DMs), newest at the bottom, scrolling back without being pulled down by new lines. Overview gains a **Chat** card above the message bar with the newest lines; it scrolls on its own and opens the Chat page when clicked. The message bar sends public chat and commands from both.
+- **Ignore from player actions:** Chat Tools' **⋯** player menu has an **Ignore player** row that sends `/ignore <player>` in one click. It hides on servers whose command tree has no `/ignore`, and replaces an auto-detected `/ignore` entry so it is never listed twice.
 - **Discord IGN sync schedule:** syncs once on the first server join after starting the game, then every **6 hours** (new **auto-sync-hours**, 0–24) instead of every 5 minutes; reconnecting or switching servers no longer triggers a sync unless the last read failed. **Sync now** still reads immediately. The old **auto-sync-minutes** value is not carried over.
 
 ## 0.26.27 — 2026-10-28

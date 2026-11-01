@@ -31,6 +31,9 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -58,10 +61,12 @@ import static dev.tntcoating.gui.ChatToolsStyle.*;
  * Anything that needs typed input opens a dialog, so the composer is only ever for chat.
  */
 public final class ChatToolsScreen extends Screen {
-    private enum Page { Home, Players, Clan, Homes, Hotspot, AutoTpy, Settings, Conversation }
+    private enum Page { Home, Chat, Players, Clan, Homes, Hotspot, AutoTpy, Settings, Conversation }
     private enum Tone { Primary, Secondary, Ghost, Danger }
     /** A pending bubble is a whisper still queued or not yet echoed by the server. */
     private record Bubble(boolean incoming, boolean pending, List<FormattedCharSequence> lines, int width, int height) {}
+    /** A chat line wrapped to the current width, with its time. */
+    private record ChatRow(String time, boolean dm, List<FormattedCharSequence> lines, int height) {}
     private record Hit(int x, int y, int w, int h, Runnable action) {
         boolean contains(double mx, double my) { return mx >= x && mx < x + w && my >= y && my < y + h; }
     }
@@ -72,9 +77,10 @@ public final class ChatToolsScreen extends Screen {
     private record Dialog(String title, String description, String label, boolean input, boolean secret,
                           Function<String, String> check, Function<String, String> preview, String confirm, boolean danger,
                           Consumer<String> done) {}
-    private static final Page[] TABS = {Page.Home, Page.Players, Page.Clan, Page.Homes, Page.Hotspot, Page.AutoTpy, Page.Settings};
-    private static final String[] TAB_LABELS = {"Overview", "Players", "Clan", "Homes", "Hotspot", "Auto TPY", "Settings"};
-    private static final Icon[] NAV_ICONS = {Icon.GRID, Icon.USERS, Icon.SHIELD, Icon.PIN, Icon.FLAME, Icon.ZAP, Icon.SETTINGS};
+    private static final Page[] TABS = {Page.Home, Page.Chat, Page.Players, Page.Clan, Page.Homes, Page.Hotspot, Page.AutoTpy, Page.Settings};
+    private static final String[] TAB_LABELS = {"Overview", "Chat", "Players", "Clan", "Homes", "Hotspot", "Auto TPY", "Settings"};
+    private static final Icon[] NAV_ICONS = {Icon.GRID, Icon.GLOBE, Icon.USERS, Icon.SHIELD, Icon.PIN, Icon.FLAME, Icon.ZAP, Icon.SETTINGS};
+    private static final DateTimeFormatter CHAT_TIME = DateTimeFormatter.ofPattern("HH:mm");
     private static final String[] SETTINGS_SECTIONS = {"Chat Tools", "Auto TPY", "Discord sync", "Teleport cooldowns", "Server settings"};
     private static final long NOTICE_MILLIS = 4_000;
     private static final int TRAY_ROWS = 3;
@@ -117,6 +123,13 @@ public final class ChatToolsScreen extends Screen {
     private long autoImportRevision;
     private String cachedRecipient;
     private int cachedWidth, conversationScroll;
+    /** Distance scrolled up from the newest chat line, on the Chat page and in Overview's chat card. */
+    private int chatScroll, dockScroll;
+    private ChatToolsLayout.Rect dock;
+    private final Map<Long, ChatRow> chatRows = new HashMap<>();
+    private int chatRowsWidth;
+    private float chatRowsScale;
+    private long chatSeen;
     private float cachedScale;
     /** Module data reused across frames; it refreshes ten times a second and straight after any click or key press. */
     private final Map<String, Object> memo = new HashMap<>();
@@ -190,6 +203,14 @@ public final class ChatToolsScreen extends Screen {
         layout = ChatToolsLayout.frame(x, y, w, h, trayHeight());
         cx = layout.content().x(); cw = layout.content().width();
         bodyTop = layout.content().y(); bodyBottom = layout.content().bottom();
+        // Overview keeps recent chat in a card just above the message bar; the page scrolls in the space left above it.
+        int height = layout.content().height();
+        dock = null;
+        if (page == Page.Home && height >= 220) {
+            int dockHeight = Math.clamp(height * 3 / 10, 84, 132);
+            bodyBottom -= dockHeight;
+            dock = new ChatToolsLayout.Rect(cx, bodyBottom + 4, cw, dockHeight - 10);
+        }
         if (input != null) {
             var box = layout.composer();
             int chip = targetChipWidth();
@@ -369,6 +390,7 @@ public final class ChatToolsScreen extends Screen {
         g.enableScissor(cx - 4, bodyTop, cx + cw + 4, bodyBottom);
         switch (page) {
             case Home -> overview(delta);
+            case Chat -> chatPage();
             case Players -> players(delta);
             case Clan -> clan(delta);
             case AutoTpy -> autoTpy(delta);
@@ -379,9 +401,9 @@ public final class ChatToolsScreen extends Screen {
         }
         g.disableScissor();
         content = false;
-        if (page != Page.Conversation) {
+        if (page != Page.Conversation && page != Page.Chat) {
             int contentHeight = cursor + scroll - bodyTop;
-            int viewport = layout.content().height();
+            int viewport = bodyBottom - bodyTop;
             maxScroll = Math.max(0, contentHeight - viewport);
             scroll = Math.clamp(scroll, 0, maxScroll);
             if (maxScroll > 0) {
@@ -390,6 +412,7 @@ public final class ChatToolsScreen extends Screen {
                 round(g, x + w - 6, bodyTop + 4 + (track - thumb) * scroll / maxScroll, 3, thumb, 2, BORDER);
             }
         }
+        chatDock();
         footer(delta);
         toast();
         if (dialog != null) dialog(delta);
@@ -402,13 +425,14 @@ public final class ChatToolsScreen extends Screen {
 
     private String pageTitle() {
         return switch (page) {
-            case Home -> "Overview"; case Players -> "Players"; case Clan -> "Clan"; case Homes -> "Homes";
+            case Home -> "Overview"; case Chat -> "Chat"; case Players -> "Players"; case Clan -> "Clan"; case Homes -> "Homes";
             case Hotspot -> "Hotspot"; case AutoTpy -> "Auto TPY"; case Settings -> "Settings"; case Conversation -> recipient;
         };
     }
     private String pageSubtitle() {
         return switch (page) {
             case Home -> "What needs you, your homes and recent players";
+            case Chat -> "Chat on this server" + DOT + "newest at the bottom";
             case Players -> "Recent contacts, Meteor friends and who is online";
             case Clan -> "Members and roles from your Discord";
             case Homes -> "Teleport to, rename and organise your homes";
@@ -580,7 +604,7 @@ public final class ChatToolsScreen extends Screen {
         float scale = smallScale();
         int tw = Math.min(cw, width(notice, scale) + 24);
         int th = capHeight(scale) + 12;
-        int tx = cx + (cw - tw) / 2, ty = layout.footer().y() - th - 8;
+        int tx = cx + (cw - tw) / 2, ty = bodyBottom - th - 8;
         round(graphics, tx, ty + 1, tw, th, th / 2, 0x40000000);
         panel(graphics, tx, ty, tw, th, th / 2, mix(BORDER, TEXT, 0.12), RAISED);
         small(graphics, notice, tx + 12, ty + 6, tw - 24, TEXT);
@@ -760,10 +784,15 @@ public final class ChatToolsScreen extends Screen {
         }
         if (selectedPlayer != null && selectedPlayer.toLowerCase(Locale.ROOT).equals(query)) {
             caption("Actions for " + selectedPlayer, null, null, null, null);
-            var options = tools.options(selectedPlayer);
             String player = selectedPlayer;
+            String ignore = "/ignore " + player;
+            boolean canIgnore = tools.commandAvailable("ignore");
+            // The fixed Ignore row replaces an auto-detected /ignore so the menu never lists it twice.
+            var options = tools.options(player).stream().filter(option -> !option.command().strip().equalsIgnoreCase(ignore)).toList();
             menuRow(friend(player) ? "Remove Meteor friend" : "Add Meteor friend", "Meteor friends", "Update Meteor's shared Friends list",
-                true, options.isEmpty(), false, () -> tools.toggleFriend(player));
+                true, !canIgnore && options.isEmpty(), false, () -> tools.toggleFriend(player));
+            if (canIgnore) menuRow("Ignore player", ignore, "Hide their chat and messages with the server's /ignore. Settings → Server settings lists ignored players.",
+                false, options.isEmpty(), false, () -> command(ignore));
             for (int i = 0; i < options.size(); i++) {
                 var option = options.get(i);
                 menuRow(option.label(), option.command().strip(), option.command(), false, i == options.size() - 1, false, () -> {
@@ -1414,6 +1443,98 @@ public final class ChatToolsScreen extends Screen {
         if (reading(recipient)) tools.messages().read(recipient);
     }
 
+    // Chat: the server's chat as in-game chat shows it, newest line on the bottom edge.
+
+    private void chatPage() {
+        int top = bodyTop + 6, bottom = bodyBottom - 8;
+        var lines = memo("chatLines", tools::chatLines);
+        if (lines.isEmpty()) {
+            float scale = bodyScale();
+            int my = top + (bottom - top) / 2 - 10;
+            String heading = "No chat yet";
+            bold(graphics, heading, cx + (cw - boldWidth(heading, scale)) / 2, my, cw, SECONDARY, scale);
+            String hint = "Chat on this server appears here as it arrives. Type below to send.";
+            small(graphics, hint, cx + (cw - width(hint, smallScale())) / 2, my + 15, cw, MUTED);
+            return;
+        }
+        int total = chatHeight(lines, cw);
+        // While reading older lines, new ones arriving below must not move what is on screen.
+        long newest = lines.getLast().id();
+        if (chatScroll > 0 && newest > chatSeen)
+            for (var line : lines) if (line.id() > chatSeen) chatScroll += chatRows.get(line.id()).height();
+        chatSeen = newest;
+        chatScroll = Math.clamp(chatScroll, 0, Math.max(0, total - (bottom - top)));
+        graphics.enableScissor(cx, top, cx + cw, bodyBottom);
+        transcript(lines, cx, top, bottom, total, chatScroll);
+        graphics.disableScissor();
+        if (chatScroll > 0) {
+            String label = "Newest";
+            int bw = width(label, smallScale()) + 36, bh = 22, bx = cx + cw - bw - 6, by = bottom - bh - 4;
+            boolean hover = over(bx, by, bw, bh);
+            round(graphics, bx, by, bw, bh, bh / 2, hover ? mix(accent(), TEXT, 0.15) : accent());
+            icon(graphics, Icon.DOWN, bx + 6, by, 16, bh, onAccent(), 8);
+            small(graphics, label, bx + 24, by + (bh - capHeight(smallScale())) / 2, bw - 28, onAccent());
+            register(bx, by, bw, bh, "Jump to the newest line", true, () -> chatScroll = 0);
+        }
+    }
+
+    /** Overview's chat card: the newest lines, scrolled on their own; a click opens the Chat page. */
+    private void chatDock() {
+        if (dock == null || page != Page.Home) return;
+        var lines = memo("chatLines", tools::chatLines);
+        boolean hover = over(dock.x(), dock.y(), dock.width(), dock.height());
+        panel(graphics, dock.x(), dock.y(), dock.width(), dock.height(), RADIUS + 2, hover ? mix(BORDER, TEXT, 0.14) : BORDER, SURFACE);
+        icon(graphics, Icon.GLOBE, dock.x() + 8, dock.y() + 4, 14, 16, MUTED, 8);
+        bold(graphics, "Chat", dock.x() + 26, dock.y() + 8, dock.width() / 2, SECONDARY, smallScale());
+        String link = "Open chat";
+        int lw = width(link, smallScale());
+        small(graphics, link, dock.right() - lw - 12, dock.y() + 8, lw + 1, hover ? TEXT : accentText());
+        int top = dock.y() + 22, bottom = dock.bottom() - 6, left = dock.x() + 10, inner = dock.width() - 20;
+        if (lines.isEmpty()) {
+            small(graphics, "Chat on this server appears here as it arrives.", left, top + 4, inner, MUTED);
+        } else {
+            int total = chatHeight(lines, inner);
+            dockScroll = Math.clamp(dockScroll, 0, Math.max(0, total - (bottom - top)));
+            graphics.enableScissor(left, top, left + inner, bottom);
+            transcript(lines, left, top, bottom, total, dockScroll);
+            graphics.disableScissor();
+        }
+        register(dock.x(), dock.y(), dock.width(), dock.height(), "Open the Chat page", true, () -> { chatScroll = 0; navigate(Page.Chat); });
+    }
+
+    /** Total height of the lines at this width, wrapping (and caching) any line not seen at this width yet. */
+    private int chatHeight(List<ChatTools.ChatLine> lines, int width) {
+        float scale = bodyScale();
+        if (width != chatRowsWidth || scale != chatRowsScale) { chatRows.clear(); chatRowsWidth = width; chatRowsScale = scale; }
+        if (chatRows.size() > ChatTools.CHAT_LINES * 2) chatRows.keySet().removeIf(id -> id < lines.getFirst().id());
+        int timeColumn = width("00:00", smallScale()) + 8, total = 0;
+        for (var line : lines) {
+            ChatRow row = chatRows.computeIfAbsent(line.id(), id -> {
+                var wrapped = font().split(tools.highlightNames(line.message()), Math.max(1, (int) ((width - timeColumn) / scale)));
+                String time = CHAT_TIME.format(Instant.ofEpochMilli(line.time()).atZone(ZoneId.systemDefault()));
+                return new ChatRow(time, line.dm(), wrapped, Math.max(1, wrapped.size()) * lineHeight(scale) + 3);
+            });
+            total += row.height();
+        }
+        return total;
+    }
+
+    private void transcript(List<ChatTools.ChatLine> lines, int left, int top, int bottom, int total, int fromBottom) {
+        float scale = bodyScale();
+        int timeColumn = width("00:00", smallScale()) + 8;
+        int ly = bottom - total + fromBottom;
+        for (var line : lines) {
+            ChatRow row = chatRows.get(line.id());
+            if (ly + row.height() > top && ly < bottom) {
+                if (row.dm()) round(graphics, left - 4, ly - 1, chatRowsWidth + 8, row.height(), 4, mix(SURFACE, accent(), 0.12));
+                small(graphics, row.time(), left, ly + 1, timeColumn, MUTED);
+                int ty = ly;
+                for (var text : row.lines()) { line(text, left + timeColumn, ty, TEXT, scale); ty += lineHeight(scale); }
+            }
+            ly += row.height();
+        }
+    }
+
     private Bubble bubble(String text, boolean incoming, boolean pending, float scale) {
         var lines = wrap(text, Math.max(60, cw * 3 / 4) - 22, scale);
         int textWidth = (int) Math.ceil(lines.stream().mapToInt(font()::width).max().orElse(10) * scale);
@@ -1884,8 +2005,13 @@ public final class ChatToolsScreen extends Screen {
             navigationScroll = Math.clamp(navigationScroll - (int) Math.signum(amount) * 32, 0, ChatToolsLayout.navigationScrollMax(layout, TABS.length));
             hits.clear(); return true;
         }
+        if (dock != null && dock.contains(mx, my)) {
+            dockScroll = Math.max(0, dockScroll + (int) Math.signum(amount) * 22);
+            hits.clear(); return true;
+        }
         if (mx < cx - 4 || mx >= cx + cw + 4 || my < bodyTop || my >= bodyBottom) return true;
-        if (page == Page.Conversation) conversationScroll = Math.max(0, conversationScroll + (int) Math.signum(amount) * 30);
+        if (page == Page.Chat) chatScroll = Math.max(0, chatScroll + (int) Math.signum(amount) * 30);
+        else if (page == Page.Conversation) conversationScroll = Math.max(0, conversationScroll + (int) Math.signum(amount) * 30);
         else scroll = Math.clamp(scroll - (int) Math.signum(amount) * 30, 0, maxScroll);
         hits.clear();
         return true;
