@@ -240,6 +240,13 @@ originated in Meteor is covered by the DEVILS section above. Any Meteor code
 copied or adapted elsewhere remains under GPL-3.0-only and the combined work is
 distributed under the same licence.
 
+Reimplemented idea: Comet's `CombatDamageAdapter` reimplements Meteor Client build
+`1.21.11-82`, `DamageUtils` exposure sampling (GPL-3.0-only). The exposure
+sampling grid and the 600 blast-resistance floor were reimplemented over Comet's
+pure `ExposureView`, and lower- and upper-bound exposure policies were added. No
+Meteor source was copied. File:
+`src/main/java/dev/tntcoating/core/combat/mc/CombatDamageAdapter.java`.
+
 ## Baritone
 
 Comet optionally integrates with Baritone, the Meteor build:

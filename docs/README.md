@@ -45,10 +45,17 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 
 ## Combat and inventory
 
+- [CrystalCombat](modules/crystal-combat.md)
+- [Combat Recorder](modules/combat-recorder.md)
 - [Auto Tool](modules/auto-tool.md)
 - [Auto Weapon](modules/auto-weapon.md)
 - [Inventory Tweaks](modules/inventory-tweaks.md)
 - [Auto Replenish](modules/auto-replenish.md)
+
+## Combat audit and traces
+
+- [Combat API audit for Minecraft 1.21.11](superpowers/audit/2026-11-01-combat-api-1.21.11.md)
+- [CrystalCombat implementation plan (copied from the 26.2 source)](superpowers/plans/2026-10-29-crystal-combat-v2.1.md)
 
 ## Chat Tools features
 
@@ -66,6 +73,8 @@ Open Meteor’s **Comet** category, right-click a module, and expand its setting
 - [Performance](guides/performance.md)
 - [Upgrading from 0.6.1](guides/upgrading.md)
 - [Build and tests](guides/building.md)
+- [CrystalCombat Phase 2b real-client checklist](testers/checklist.md)
+- [CrystalCombat tester build 3 handout](testers/tester-3-handout.md)
 - [Licence and credits](guides/credits.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Changelog](../CHANGELOG.md)
