@@ -8,6 +8,7 @@ package dev.tntcoating.core.combat;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 /**
  * Phase 6.5 cleanup starvation hook.
@@ -18,11 +19,13 @@ import java.util.Optional;
  * never retires or spends risk — the trap's hazards and risk reservations stay exactly where Phase 5 left
  * them.</p>
  *
- * <p><strong>Open gap:</strong> this build has no cleanup intent origin. {@link Action#MINE_POWER} and
- * {@link Action#MINE_PISTON} exist in the contract, but the runtime has no mining/packet path for them and
- * Phase 5.5 makes cleanup manual (vanilla cannot confirm that a cell is ours). So the hook can mark a
- * cleanup due, keep the next free slot for it and expose that state to the status string, but it cannot yet
- * reserve or dispatch a cleanup action. Nothing here pretends otherwise.</p>
+ * <p>The cleanup-intent origin is the piston trap's beta auto-cleanup stage (Stage 4 part B): while the
+ * trap still has owned debris it asks here for its turn, and once this state is due the engine yields the
+ * next free slot so the trap can dispatch a vanilla block break for {@link Action#MINE_POWER},
+ * {@link Action#MINE_PISTON} or {@link Action#MINE_SUPPORT}. The trap reserves that packet through a
+ * packet-only scheduler lease; this class only decides when cleanup may compete. A due wait is not
+ * prioritised while the installed feasibility probe says the reservation would be refused, so the engine
+ * never yields a tick that cleanup cannot use.</p>
  */
 public final class CleanupPriority {
     /** Waiting ticks after which cleanup owns the next free slot. */
@@ -60,6 +63,18 @@ public final class CleanupPriority {
     private int firstWaitTick = -1;
     private EntityKey target;
     private Deadline deadline;
+    private BooleanSupplier feasibility;
+
+    /**
+     * Installs the reservation probe used by {@link #prioritise()}, or {@code null} to restore the default
+     * (always feasible). The probe runs on the client thread under this object's lock, must be a pure
+     * query, and must never send, retire risk or mutate scheduler state. It returns false when the
+     * cleanup packet could not actually be reserved right now (budget, slot or target invalid), which
+     * withholds the engine yield without ending the wait.
+     */
+    public synchronized void feasibility(BooleanSupplier probe) {
+        this.feasibility = probe;
+    }
 
     /** Starts (or keeps) the wait. Repeating the call for the same deadline does not reset the clock. */
     public synchronized void request(int serverTick, Deadline owner, EntityKey victim) {
@@ -83,11 +98,14 @@ public final class CleanupPriority {
     }
 
     /**
-     * Claims the next free slot for cleanup. Returns true only while a wait is due; the engine records the
-     * claim and, because no cleanup intent exists in this build, keeps naming the gap in its status.
+     * Claims the next free slot for cleanup. Returns true only while a wait is due and the installed
+     * feasibility probe allows the claim; the engine then yields and the trap dispatches its packet-only
+     * cleanup break. The claim is a pure query: it is not consumed here and never reserves anything.
      */
     public synchronized boolean prioritise() {
-        return waiting && due;
+        if (!waiting || !due) return false;
+        BooleanSupplier probe = feasibility;
+        return probe == null || probe.getAsBoolean();
     }
 
     /** Throws one completed/generation-ended cleanup wait away. Never touches risk or hazards. */

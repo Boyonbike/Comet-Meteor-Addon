@@ -187,8 +187,8 @@ final class HybridEngineTest {
 
     /**
      * Phase 6.5: the wait is measured in server ticks, not wall clock, and a starved cleanup is visible in
-     * metrics. The hook claims the next free slot but this build has no cleanup intent origin, so the claim
-     * changes no packet and no reservation.
+     * metrics. The hook only claims the next free slot while the trap can actually reserve its cleanup
+     * packet; the trap's own intent origin is covered by {@link PistonTrapControllerTest}.
      */
     @Test
     void cleanupWaitReachesTheStarvationDeadlineInServerTicks() {
@@ -215,7 +215,33 @@ final class HybridEngineTest {
         assertEquals(20.0, metrics.cleanupMaxWaitTicks(), 1.0e-9);
         assertTrue(metrics.cleanupStarvedTicks() >= 1, "the overdue tick is recorded as starved");
         assertTrue(harness.engine.cleanupPriority().prioritise(),
-            "a due cleanup claims the next free slot; it has no intent to dispatch in this build");
+            "a due cleanup with a feasible reservation claims the next free slot");
+    }
+
+    /**
+     * Phase 6.5: the engine must only yield the next free slot when the trap can actually reserve. The
+     * trap installs a probe that checks the rolling packet budget and the hotbar slot; when it refuses,
+     * prioritise() is false and direct offence runs instead of both actions starving.
+     */
+    @Test
+    void aDueCleanupThatCannotReserveGivesTheTickBackToDirect() {
+        EngineHarness harness = EngineHarness.create(BASE_SETTINGS, SELF);
+        harness.setBase(BASE);
+        harness.addTarget(TARGET);
+        harness.engine.setMode(Mode.HYBRID);
+        harness.engine.cleanupPriority().request(6,
+            new CleanupPriority.Deadline(harness.session.connection(),
+                harness.session.actionGeneration()), null);
+        harness.engine.cleanupPriority().feasibility(() -> false);
+        harness.serverTick = 25;
+
+        harness.tick();
+
+        assertTrue(harness.engine.cleanupPriority().state().due());
+        assertFalse(harness.engine.cleanupPriority().prioritise(),
+            "the trap cannot reserve a cleanup packet");
+        assertTrue(harness.placeCount() >= 1,
+            "direct offence gets the tick when cleanup yields back");
     }
 
     private static boolean rejected(Choice choice, long id, Choice.Reason reason) {

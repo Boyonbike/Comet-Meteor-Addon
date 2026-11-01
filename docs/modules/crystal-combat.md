@@ -41,7 +41,7 @@ maximum friend damage 2. Stricter values are accepted; looser values are refused
 
 - **General** — mode, DirectOnly experimental tactics (motion prediction, hurt-aware timing, support,
   surround-gap, dangerous-crystal break, anti-piston), the experimental `footprint-concurrency`, debug
-  log, incident marker, piston-trap and the sixteen beta layouts.
+  log, incident marker, piston-trap, `auto-cleanup` and the sixteen beta layouts.
 - **Safety** — the thresholds above; locked anti-suicide.
 - **Ranges** — target, placement, attack and walls ranges.
 - **Pauses** — eating/drinking, mining, screens, Baritone, self-health floor and lag.
@@ -54,8 +54,8 @@ toggleable; all sixteen off leaves PistonOnly visibly inert with no fallback to 
 
 ## Piston cleanup
 
-The trap does not mine or break its own blocks. After a trap ends, aborts, times out or is disabled,
-remove the crystal, piston, power and supports yourself only when safe, then run:
+By default the trap does not mine or break its own blocks. After a trap ends, aborts, times out or is
+disabled, remove the crystal, piston, power and supports yourself only when safe, then run:
 
 ```
 .crystalcombat cleanup confirm
@@ -76,8 +76,39 @@ manual cleanup required (target-pushed-vertically): remove power (-3, -60, 0), p
 ```
 
 The debug log records the same list and reason on the phase change as
-`manual-cleanup-blocks reason=... blocks=...`. Manual cleanup remains the only path in this build: no
-cleanup packet, mining request or block-break action is added by the list.
+`manual-cleanup-blocks reason=... blocks=...`. With auto-cleanup off, manual cleanup remains the only
+path: no cleanup packet, mining request or block-break action is added by the list.
+
+### Beta auto-cleanup
+
+The `auto-cleanup` setting (General group, off by default in every profile) lets the trap remove what it
+placed after the crystal is resolved. Its description is exactly:
+
+> Beta: removes only the power, piston and supports this module placed and saw confirmed. Contested blocks are always left for you.
+
+The automatic path is deliberately narrow:
+
+- Only cells whose placement packet was sent and then answered by a matching block update, i.e.
+  `CrystalLedger.ownership(ticket.conn(), cell) == INFERRED_OURS` for this trap's connection, and still
+  present in the current trap's `sentStructural`. `CONTESTED` and `NOT_OURS` cells are never touched,
+  and a pre-existing obsidian, bedrock or other block the trap did not place cannot enter the set.
+- Ownership and the exact block id are re-checked immediately before every action; a cell whose block
+  or ownership changed is skipped.
+- Order: power, then the piston, then the supports this trap added.
+- Removal is a vanilla hotbar block break through `CombatRuntime.dispatch` only: no Speedmine, no other
+  module and no offhand tool. The inventory adapter picks the best hotbar pickaxe for the piston and
+  obsidian, and the selected hotbar item for the torch. If the tool a cell needs is missing the trap
+  sends nothing for that cell and lets the deadline/manual path handle it; a torch cell needs no tool
+  and is still removed with the selected hotbar item.
+- Cleanup never starts while the trap crystal is unresolved and never detonates anything.
+- It consumes packet budget only (no risk entry, lease debt or hazard) and shares the cleanup
+  starvation rule: `CleanupPriority` gives cleanup the next free packet slot after 20 server ticks
+  waiting, and the engine yields that slot only when the trap's feasibility probe confirms it can
+  reserve (packet budget and hotbar slot), still evaluating non-imminent defence. The cleanup deadline
+  is 40 ticks from entering `CLEANUP`; if the debris is not gone (obsidian supports usually take longer
+  than that window) the sequence enters `MANUAL_CLEANUP` and lists what remains.
+- Disable, death, respawn or a connection change stops cleanup immediately and cancels the vanilla
+  destruction it started; no cleanup packet is sent afterwards. Hazard and risk retention are unchanged.
 
 ## Vertical-push abort
 
@@ -191,16 +222,18 @@ sends a packet.
 | Serialised Hybrid | shipped | Default in every preset | 1,000-seed interleaving and the Phase 6.1/6.2 choice tests pass; this is the baseline. |
 | Footprint-scoped concurrency | `footprint-concurrency` (off) | Experimental, not promoted | Per-row `FootprintConflictTest`, `CombatRiskGateTest`, engine `HybridConcurrencyTest` and the on-path 1,000-seed `ConcurrentInterleavingTest` pass offline. The paired serialised-vs-footprint-scoped comparison in the tester checklist is still outstanding, so the stage stays off. |
 
-### Cleanup gap
+### Cleanup scheduling and starvation
 
-The trap exposes a manual-cleanup obligation, and Hybrid keeps a scheduling hook for it: the wait is
-counted in server ticks, is bound to the action generation and connection, and after
-`CleanupPriority.STARVATION_TICKS` (20) server ticks the hook reports that cleanup is due for the next
-free slot. There is no cleanup intent origin in this build — the same reason Phase 5 mines nothing:
-no owner-scoped mining/packet API exists, and Phase 5.5 keeps cleanup manual. The hook therefore sends
-nothing. The info string shows `cleanup due: no cleanup intent in this build`, so the starvation is
-visible instead of silently ignored; the metrics count the waited ticks, the maximum wait and the
-starved ticks.
+Cleanup has a real intent origin now: the trap emits `MINE_POWER`, `MINE_PISTON` and `MINE_SUPPORT`
+intents for `INFERRED_OURS` cells and reserves each one through the shared `CombatScheduler` and packet
+budget. The wait is counted in server ticks, is bound to the action generation and connection, and after
+`CleanupPriority.STARVATION_TICKS` (20) server ticks the priority reports cleanup due for the next free
+slot; `CombatEngine.hybridTick` yields its direct send to that slot after recording the choice while
+still evaluating non-imminent defence. If no cell can be acted on (contested, changed or missing tool)
+the trap clears the priority instead of blocking the engine, and the 40-tick cleanup deadline falls back
+to `MANUAL_CLEANUP` with the remaining blocks. The info string shows
+`cleanup due: waiting for the trap's cleanup slot` while cleanup is waiting. The metrics count the
+waited ticks, the maximum wait and the starved ticks.
 
 ### Metrics and debug log
 
@@ -250,8 +283,9 @@ search and the no-second-explosion crystal rule are unchanged.
 The path is **not promoted**. Its per-row unit tests, engine tests and 1,000-seed interleaving test are
 code-level evidence only; the paired serialised-vs-footprint-scoped comparison in the tester checklist
 must be run on a real client before this setting can be considered for a default or a preset. P6.2 stays
-off until that evidence exists. The cleanup-starvation item remains the documented manual-cleanup gap
-above; no cleanup packet path exists.
+off until that evidence exists. The cleanup-starvation item now has a real intent origin: the trap's
+beta `auto-cleanup` sends vanilla hotbar breaks through the dispatch path and shares the same packet
+budget and `CleanupPriority` starvation rule (see above); the concurrency path itself stays unpromoted.
 
 ## Diagnostics
 
@@ -280,8 +314,10 @@ manual-removal instructions.
   sync. The trap uses the measured two-tick 1.02 push and the client simulation only as a cross-check.
 - The piston trap is code-level and offline-tested only; a real server may behave differently. The
   sixteen layouts are beta, not validated across servers.
-- Automatic piston cleanup and power-source mining are absent because no owner-scoped Speedmine
-  request/cancel API exists. Cleanup is the explicit command above.
+- Automatic piston cleanup is a beta, off-by-default setting. It removes only inferred-ours cells
+  through vanilla hotbar breaking on the dispatch path, leaves contested and pre-existing blocks in
+  place, and never uses Speedmine, the offhand or a detonation. Missing the needed hotbar tool sends
+  nothing; obsidian supports usually exceed the 40-tick cleanup deadline and end in manual cleanup.
 - The production raw-hit feed for hurt-aware timing is absent; the setting cannot act on a real client.
 - Move prediction, support, surround-gap and defence are experimental and off by default. They never
   relax a self or friend bound.

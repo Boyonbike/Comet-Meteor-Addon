@@ -10,16 +10,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.tntcoating.core.combat.Capability;
 import dev.tntcoating.core.combat.Cell;
+import dev.tntcoating.core.combat.CleanupPriority;
 import dev.tntcoating.core.combat.CombatRiskBudget;
 import dev.tntcoating.core.combat.ConnectionKey;
 import dev.tntcoating.core.combat.EffectiveHealth;
 import dev.tntcoating.core.combat.EntityKey;
 import dev.tntcoating.core.combat.Mode;
+import dev.tntcoating.core.combat.Observation;
+import dev.tntcoating.core.combat.ObservationKind;
+import dev.tntcoating.core.combat.ObservationPayload;
+import dev.tntcoating.core.combat.Ownership;
 import dev.tntcoating.core.combat.PistonFacing;
 import dev.tntcoating.core.combat.PistonPlanner;
 import dev.tntcoating.core.combat.PistonGeometry;
@@ -50,6 +56,8 @@ final class PistonTrapControllerTest {
     private static final UUID TARGET_UUID = UUID.nameUUIDFromBytes("piston-target".getBytes());
     private static final UUID SPAWN_UUID = UUID.nameUUIDFromBytes("piston-spawn".getBytes());
     private static final UUID OTHER_UUID = UUID.nameUUIDFromBytes("piston-other".getBytes());
+    private static final FakeSink.Kind BREAK = FakeSink.Kind.BREAK;
+    private static final FakeSink.Kind STOP = FakeSink.Kind.STOP;
 
     // ------------------------------------------------------------------ tests
 
@@ -1596,6 +1604,610 @@ final class PistonTrapControllerTest {
         }
     }
 
+    // --------------------------------------------------------------- beta auto-cleanup
+
+    @Test
+    void autoCleanupRemovesOwnedPowerThenPistonThenSupports() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToWaitPushWithSupport();
+            harness.world.powered.add(PISTON);
+            harness.world.extended.add(PISTON);
+            harness.tick(7);
+            harness.tick(8);
+            harness.tick(9);
+            harness.controller.onCrystalRemoved(harness.sequence().bound().orElseThrow().entity());
+            assertEquals(PistonSequence.PistonPhase.CLEANUP, harness.controller.phase());
+
+            for (int tick = 10; tick < 30; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(0, harness.fixture.sink.count(BREAK), "cleanup waits its 20-tick slot turn");
+            harness.tick(30);
+            assertEquals(1, harness.fixture.sink.count(BREAK),
+                "debug=" + harness.debug + " lastFailure=" + harness.controller.lastFailure()
+                    + " phase=" + harness.controller.phase());
+            assertEquals(POWER, broke(harness.fixture.sink.last(BREAK)));
+
+            harness.world.blocks.remove(POWER);
+            harness.observeBlock(POWER, "minecraft:redstone_torch", "minecraft:air");
+            harness.tick(31);
+            assertEquals(2, harness.fixture.sink.count(BREAK));
+            assertEquals(PISTON, broke(harness.fixture.sink.last(BREAK)));
+            assertTrue(harness.fixture.sink.sends.stream().anyMatch(
+                send -> send.kind() == FakeSink.Kind.SLOT && send.number() == 4),
+                "the adapter chose the hotbar pickaxe for the piston");
+
+            Cell support = new Cell(-1, -61, 0);
+            harness.world.blocks.remove(PISTON);
+            harness.observeBlock(PISTON, "minecraft:piston", "minecraft:air");
+            harness.tick(32);
+            assertEquals(3, harness.fixture.sink.count(BREAK));
+            assertEquals(support, broke(harness.fixture.sink.last(BREAK)));
+
+            harness.world.blocks.remove(support);
+            harness.observeBlock(support, "minecraft:obsidian", "minecraft:air");
+            harness.tick(33);
+            assertEquals(PistonSequence.PistonPhase.COOLDOWN, harness.controller.phase());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void autoCleanupNeverBreaksAContestedBlock() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            // A second attribution for the power cell: the ledger can no longer name us.
+            harness.observeBlock(POWER, "minecraft:air", "minecraft:redstone_torch");
+            assertEquals(Ownership.CONTESTED, harness.fixture.crystals.ownership(POWER));
+
+            for (int tick = 10; tick < 30; tick++) {
+                harness.tick(tick);
+            }
+            harness.tick(30);
+            assertEquals(1, harness.fixture.sink.count(BREAK));
+            assertEquals(PISTON, broke(harness.fixture.sink.last(BREAK)), "power is contested and skipped");
+
+            harness.world.blocks.remove(PISTON);
+            harness.observeBlock(PISTON, "minecraft:piston", "minecraft:air");
+            for (int tick = 31; tick <= 50; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(1, harness.fixture.sink.count(BREAK), "the contested power is never broken");
+            assertEquals(PistonSequence.PistonPhase.MANUAL_CLEANUP, harness.controller.phase());
+            assertTrue(harness.controller.manualCleanupText().contains("power ("),
+                harness.controller.manualCleanupText());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void autoCleanupSkipsACellWhoseBlockChangedBeforeTheSend() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            harness.world.put(POWER, "minecraft:stone");
+            harness.observeBlock(POWER, "minecraft:redstone_torch", "minecraft:stone");
+
+            for (int tick = 10; tick < 30; tick++) {
+                harness.tick(tick);
+            }
+            harness.tick(30);
+            assertEquals(1, harness.fixture.sink.count(BREAK));
+            assertEquals(PISTON, broke(harness.fixture.sink.last(BREAK)),
+                "the power cell no longer holds the block this trap placed");
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void autoCleanupOffNeverSendsACleanupPacket() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToCleanup();
+            for (int tick = 10; tick <= 55; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(0, harness.fixture.sink.count(BREAK));
+            assertEquals(PistonSequence.PistonPhase.MANUAL_CLEANUP, harness.controller.phase());
+            assertTrue(harness.controller.manualCleanupRequired());
+            assertTrue(harness.controller.manualCleanupText().contains("power ("),
+                harness.controller.manualCleanupText());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void autoCleanupTogglesLiveThroughTheConfigPath() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToCleanup();
+            for (int tick = 10; tick < 15; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(0, harness.fixture.sink.count(BREAK));
+
+            harness.controller.setAutoCleanup(true);
+            for (int tick = 15; tick < 35; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(0, harness.fixture.sink.count(BREAK), "the wait starts when cleanup is enabled");
+            harness.tick(35);
+            assertEquals(1, harness.fixture.sink.count(BREAK));
+            assertEquals(POWER, broke(harness.fixture.sink.last(BREAK)));
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void cleanupDeadlineFallsBackToManualWithTheRemainingBlocks() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            for (int tick = 10; tick <= 49; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(PistonSequence.PistonPhase.CLEANUP, harness.controller.phase());
+            harness.tick(50);
+            assertEquals(PistonSequence.PistonPhase.MANUAL_CLEANUP, harness.controller.phase());
+            assertTrue(harness.controller.manualCleanupRequired());
+            assertTrue(harness.controller.riskRetained());
+            String text = harness.controller.manualCleanupText();
+            assertTrue(text.contains("power ("), text);
+            assertTrue(text.contains("piston ("), text);
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void disableMidCleanupStopsImmediately() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            for (int tick = 10; tick < 30; tick++) {
+                harness.tick(tick);
+            }
+            harness.tick(30);
+            assertEquals(1, harness.fixture.sink.count(BREAK));
+            harness.controller.disable();
+            for (int tick = 31; tick <= 60; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(1, harness.fixture.sink.count(BREAK));
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void deathAndConnectionCloseStopCleanup() {
+        Harness death = new Harness();
+        try {
+            death.controller.setAutoCleanup(true);
+            death.advanceToCleanup();
+            for (int tick = 10; tick < 30; tick++) {
+                death.tick(tick);
+            }
+            death.tick(30);
+            int afterDeathSend = death.fixture.sink.count(BREAK);
+            death.controller.death();
+            for (int tick = 31; tick <= 60; tick++) {
+                death.tick(tick);
+            }
+            assertEquals(afterDeathSend, death.fixture.sink.count(BREAK));
+        } finally {
+            death.controller.disable();
+        }
+
+        Harness closed = new Harness();
+        try {
+            closed.controller.setAutoCleanup(true);
+            closed.advanceToCleanup();
+            for (int tick = 10; tick < 30; tick++) {
+                closed.tick(tick);
+            }
+            closed.tick(30);
+            int afterCloseSend = closed.fixture.sink.count(BREAK);
+            closed.controller.connectionClosed();
+            for (int tick = 31; tick <= 60; tick++) {
+                closed.tick(tick);
+            }
+            assertEquals(afterCloseSend, closed.fixture.sink.count(BREAK));
+        } finally {
+            closed.controller.disable();
+        }
+    }
+
+    @Test
+    void autoCleanupRequiresLedgerOwnership() {
+        Harness harness = new Harness();
+        try {
+            harness.feedLedger = false;
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            assertEquals(Ownership.NOT_OURS, harness.fixture.crystals.ownership(POWER));
+            for (int tick = 10; tick <= 50; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(0, harness.fixture.sink.count(BREAK),
+                "without a confirmed placement the ledger never names the cell ours");
+            assertEquals(PistonSequence.PistonPhase.MANUAL_CLEANUP, harness.controller.phase());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void autoCleanupWithoutAHotbarPickaxeBreaksTheTorchOnlyAndGoesManual() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            harness.fixture.client.hotbar[4] = "";
+            harness.fixture.client.offhand = "minecraft:diamond_pickaxe";
+            for (int tick = 10; tick <= 30; tick++) {
+                harness.tick(tick);
+            }
+            // A torch needs no tool, so the power cell still goes first. The piston and obsidian supports
+            // need a hotbar pickaxe and must be skipped, never taken from the offhand.
+            assertEquals(1, harness.fixture.sink.count(BREAK),
+                "without a hotbar pickaxe only the torch is removable");
+            assertEquals(POWER, broke(harness.fixture.sink.last(BREAK)),
+                "the selected hotbar slot removes the torch; the offhand is never used");
+            harness.world.blocks.remove(POWER);
+            harness.observeBlock(POWER, "minecraft:redstone_torch", "minecraft:air");
+            for (int tick = 31; tick <= 50; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(1, harness.fixture.sink.count(BREAK), "no pickaxe means no further break");
+            assertEquals(PistonSequence.PistonPhase.MANUAL_CLEANUP, harness.controller.phase());
+            assertTrue(harness.controller.manualCleanupText().contains("piston ("),
+                "the piston is listed for manual removal");
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void autoCleanupWaitForAnUnresolvedTrapCrystal() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanupWithoutAttack();
+            for (int tick = 10; tick <= 49; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(0, harness.fixture.sink.count(BREAK),
+                "cleanup never starts while the trap crystal is unresolved");
+            harness.tick(50);
+            assertEquals(PistonSequence.PistonPhase.MANUAL_CLEANUP, harness.controller.phase());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void autoCleanupStartsOnceTheTrapCrystalIsGone() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanupWithoutAttack();
+            harness.controller.onCrystalRemoved(harness.sequence().bound().orElseThrow().entity());
+            for (int tick = 10; tick < 30; tick++) {
+                harness.tick(tick);
+            }
+            harness.tick(30);
+            assertEquals(1, harness.fixture.sink.count(BREAK));
+            assertEquals(POWER, broke(harness.fixture.sink.last(BREAK)));
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void disableMidCleanupCancelsTheVanillaDestructionItStarted() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToFirstCleanupBreak();
+            harness.controller.disable();
+
+            assertEquals(1, harness.fixture.sink.stops(), "disable stops the destruction it started");
+            assertNull(harness.fixture.sink.breaking(), "no destruction is left running");
+            assertEquals(STOP, harness.fixture.sink.last().kind(), "the stop is the last packet");
+
+            for (int tick = 31; tick <= 60; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(1, harness.fixture.sink.count(BREAK), "no cleanup break follows the halt");
+            assertEquals(1, harness.fixture.sink.stops());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void midBreakBlockChangeCancelsDestructionAndSendsNoFurtherBreak() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            Cell support = new Cell(-1, -61, 0);
+            harness.advanceToWaitPushWithSupport();
+            harness.world.powered.add(PISTON);
+            harness.world.extended.add(PISTON);
+            harness.tick(7);
+            harness.tick(8);
+            harness.tick(9);
+            harness.controller.onCrystalRemoved(harness.sequence().bound().orElseThrow().entity());
+            for (int tick = 10; tick < 30; tick++) {
+                harness.tick(tick);
+            }
+            harness.tick(30);
+            assertEquals(POWER, harness.fixture.sink.breaking());
+            harness.world.blocks.remove(POWER);
+            harness.observeBlock(POWER, "minecraft:redstone_torch", "minecraft:air");
+            harness.tick(31);
+            assertEquals(PISTON, harness.fixture.sink.breaking());
+            harness.world.blocks.remove(PISTON);
+            harness.observeBlock(PISTON, "minecraft:piston", "minecraft:air");
+            harness.tick(32);
+            assertEquals(support, harness.fixture.sink.breaking());
+            int breaks = harness.fixture.sink.count(BREAK);
+            int stops = harness.fixture.sink.stops();
+
+            // The cell we are breaking stops being ours mid-break.
+            harness.world.put(support, "minecraft:stone");
+            harness.observeBlock(support, "minecraft:obsidian", "minecraft:stone");
+
+            assertEquals(stops + 1, harness.fixture.sink.stops(),
+                "the in-progress destruction is cancelled");
+            assertNull(harness.fixture.sink.breaking());
+            harness.tick(33);
+            assertEquals(breaks, harness.fixture.sink.count(BREAK), "no further break is sent");
+            assertEquals(PistonSequence.PistonPhase.COOLDOWN, harness.controller.phase());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void cleanupDeadlineCancelsDestructionBeforeManualFallback() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToFirstCleanupBreak();
+            for (int tick = 31; tick < 50; tick++) {
+                harness.tick(tick);
+            }
+            int breaks = harness.fixture.sink.count(BREAK);
+
+            harness.tick(50);
+
+            assertEquals(1, harness.fixture.sink.stops(), "the deadline cancels the destruction");
+            assertNull(harness.fixture.sink.breaking());
+            assertEquals(breaks, harness.fixture.sink.count(BREAK));
+            assertEquals(STOP, harness.fixture.sink.last().kind());
+            assertEquals(PistonSequence.PistonPhase.MANUAL_CLEANUP, harness.controller.phase());
+            assertTrue(harness.controller.manualCleanupRequired());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void deathAndRespawnCancelTheDestructionInProgress() {
+        Harness death = new Harness();
+        try {
+            death.advanceToFirstCleanupBreak();
+            death.controller.death();
+            assertEquals(1, death.fixture.sink.stops());
+            assertNull(death.fixture.sink.breaking());
+            for (int tick = 31; tick <= 60; tick++) {
+                death.tick(tick);
+            }
+            assertEquals(1, death.fixture.sink.count(BREAK), "death stops cleanup immediately");
+        } finally {
+            death.controller.disable();
+        }
+
+        Harness respawn = new Harness();
+        try {
+            respawn.advanceToFirstCleanupBreak();
+            respawn.controller.respawn();
+            assertEquals(1, respawn.fixture.sink.stops());
+            assertNull(respawn.fixture.sink.breaking());
+            for (int tick = 31; tick <= 60; tick++) {
+                respawn.tick(tick);
+            }
+            assertEquals(1, respawn.fixture.sink.count(BREAK), "respawn stops cleanup immediately");
+        } finally {
+            respawn.controller.disable();
+        }
+    }
+
+    @Test
+    void connectionCloseClearsDestructionWithoutSendingAnything() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToFirstCleanupBreak();
+            int sends = harness.fixture.sink.sends.size();
+
+            harness.controller.connectionClosed();
+
+            assertEquals(0, harness.fixture.sink.stops(), "a closed connection has nowhere to send a stop");
+            assertEquals(sends, harness.fixture.sink.sends.size(), "connection close sends nothing");
+            assertFalse(harness.fixture.runtime.stopDestruction(),
+                "the runtime no longer tracks a destruction after the close");
+            for (int tick = 31; tick <= 60; tick++) {
+                harness.tick(tick);
+            }
+            assertEquals(1, harness.fixture.sink.count(BREAK), "no cleanup break follows the close");
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void switchingCleanupCellsCancelsThePreviousDestruction() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToFirstCleanupBreak();
+            // The world view moves on before the observation arrives, as it can when the server update
+            // is still in flight; cleanup now selects the piston while the power break is in progress.
+            harness.world.blocks.put(POWER, "minecraft:air");
+
+            harness.tick(31);
+
+            assertEquals(1, harness.fixture.sink.stops(), "the power destruction is cancelled");
+            assertEquals(PISTON, harness.fixture.sink.breaking(), "the piston break is now running");
+            assertEquals(2, harness.fixture.sink.count(BREAK));
+            List<FakeSink.Send> breaks = harness.fixture.sink.sends.stream()
+                .filter(send -> send.kind() == BREAK)
+                .toList();
+            int powerBreak = harness.fixture.sink.sends.indexOf(breaks.get(0));
+            int stop = harness.fixture.sink.sends.indexOf(harness.fixture.sink.last(STOP));
+            int pistonBreak = harness.fixture.sink.sends.indexOf(breaks.get(1));
+            assertTrue(powerBreak < stop, "the power break precedes the stop");
+            assertTrue(stop < pistonBreak, "the stop precedes the piston break");
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void cleanupUsesTicketScopedOwnershipNotAnotherConnectionsState() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            ConnectionKey other = new ConnectionKey(9_999L);
+            var placement = harness.fixture.crystals.reservePlacement(other, POWER,
+                "minecraft:redstone_torch");
+            harness.fixture.crystals.markPlacementSent(placement, 0);
+            harness.fixture.crystals.observe(new Observation(other, 9_000,
+                harness.fixture.intake.appliedRevision(), System.nanoTime(), 500,
+                ObservationKind.BLOCK_UPDATE, null, POWER, null, null,
+                new ObservationPayload.BlockUpdate("minecraft:air", "minecraft:stone", false)));
+            assertEquals(Ownership.CONTESTED, harness.fixture.crystals.ownership(POWER));
+            assertEquals(Ownership.INFERRED_OURS,
+                harness.fixture.crystals.ownership(harness.fixture.ticket.conn(), POWER));
+
+            for (int tick = 10; tick < 30; tick++) {
+                harness.tick(tick);
+            }
+            harness.tick(30);
+
+            assertEquals(1, harness.fixture.sink.count(BREAK));
+            assertEquals(POWER, broke(harness.fixture.sink.last(BREAK)),
+                "another connection's contested state does not hide our own block");
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void cleanupCreatesNoRiskEntriesAndReleasesItsPacketReservation() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            int outstanding = harness.fixture.budget.outstanding();
+            int leases = harness.fixture.scheduler.leaseCount();
+            for (int tick = 10; tick < 30; tick++) {
+                harness.tick(tick);
+            }
+            harness.tick(30);
+            assertEquals(outstanding, harness.fixture.budget.outstanding(),
+                "cleanup consumes packet budget, never risk");
+            harness.world.blocks.remove(POWER);
+            harness.observeBlock(POWER, "minecraft:redstone_torch", "minecraft:air");
+            harness.tick(31);
+            harness.world.blocks.remove(PISTON);
+            harness.observeBlock(PISTON, "minecraft:piston", "minecraft:air");
+            harness.tick(32);
+            Cell support = new Cell(-1, -61, 0);
+            if (harness.world.blocks.containsKey(support)) {
+                harness.world.blocks.remove(support);
+                harness.observeBlock(support, "minecraft:obsidian", "minecraft:air");
+            }
+            harness.tick(33);
+
+            assertEquals(PistonSequence.PistonPhase.COOLDOWN, harness.controller.phase());
+            assertEquals(outstanding, harness.fixture.budget.outstanding(),
+                "no cleanup risk survives completion");
+            assertTrue(harness.fixture.scheduler.leaseCount() <= leases,
+                "cleanup leases are released when the packet is sent");
+            harness.controller.disable();
+            assertEquals(outstanding, harness.fixture.budget.outstanding(),
+                "disable leaves no cleanup risk behind");
+            assertTrue(harness.fixture.scheduler.leaseCount() <= leases,
+                "disable leaves no cleanup lease behind");
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void autoCleanupNeverBreaksBlocksThatExistedBeforeTheTrap() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            Cell existingObsidian = new Cell(-2, -61, 0);
+            Cell existingBedrock = new Cell(-3, -61, 0);
+            harness.world.put(existingObsidian, "minecraft:obsidian");
+            harness.world.put(existingBedrock, "minecraft:bedrock");
+            harness.advanceToWaitPushWithSupport();
+            Cell support = new Cell(-1, -61, 0);
+            harness.world.powered.add(PISTON);
+            harness.world.extended.add(PISTON);
+            harness.tick(7);
+            harness.tick(8);
+            harness.tick(9);
+            harness.controller.onCrystalRemoved(harness.sequence().bound().orElseThrow().entity());
+            assertEquals(Ownership.NOT_OURS,
+                harness.fixture.crystals.ownership(harness.fixture.ticket.conn(), existingObsidian));
+
+            for (int tick = 10; tick < 50; tick++) {
+                harness.tick(tick);
+            }
+            List<Cell> broken = harness.fixture.sink.sends.stream()
+                .filter(send -> send.kind() == BREAK)
+                .map(PistonTrapControllerTest::broke)
+                .toList();
+            assertTrue(broken.stream().noneMatch(existingObsidian::equals), broken.toString());
+            assertTrue(broken.stream().noneMatch(existingBedrock::equals), broken.toString());
+            assertTrue(broken.stream().noneMatch(support::equals), broken.toString());
+            assertEquals("minecraft:obsidian", harness.world.blockId(existingObsidian),
+                "the pre-existing support is still there");
+            assertEquals("minecraft:bedrock", harness.world.blockId(existingBedrock));
+            assertTrue(harness.fixture.sink.count(BREAK) >= 1);
+
+            harness.tick(50);
+            assertEquals(PistonSequence.PistonPhase.MANUAL_CLEANUP, harness.controller.phase());
+            String manual = harness.controller.manualCleanupText();
+            assertTrue(manual.contains("power ("), manual);
+            assertTrue(manual.contains("piston ("), manual);
+            assertTrue(manual.contains("supports ["), manual);
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    private static Cell broke(FakeSink.Send send) {
+        var pos = send.hit().getBlockPos();
+        return new Cell(pos.getX(), pos.getY(), pos.getZ());
+    }
+
     // ------------------------------------------------------------------ harness
 
 
@@ -1604,8 +2216,12 @@ final class PistonTrapControllerTest {
         final EntityKey target;
         final PistonWorld world;
         final PistonTrapController controller;
+        final CleanupPriority cleanupPriority = new CleanupPriority();
         final List<String> debug = new ArrayList<>();
         final List<String> incidents = new ArrayList<>();
+        boolean feedLedger = true;
+        private long observationSequence;
+        private int observationTick = 1_000;
 
         Harness() {
             target = new EntityKey(fixture.ticket.conn(), 50, TARGET_UUID);
@@ -1614,12 +2230,14 @@ final class PistonTrapControllerTest {
             fixture.client.hotbar[1] = "minecraft:piston";
             fixture.client.hotbar[2] = "minecraft:redstone_torch";
             fixture.client.hotbar[3] = "minecraft:end_crystal";
+            fixture.client.hotbar[4] = "minecraft:diamond_pickaxe";
             fixture.client.offhand = "minecraft:totem_of_undying";
             fixture.client.selectedSlot = 0;
             world = new PistonWorld(fixture.ticket.conn(), fixture.self(), target, TARGET_UUID);
             controller = new PistonTrapController(fixture.runtime, fixture.session, fixture.scheduler,
                 fixture.budget, fixture.crystals, PistonTrapController.inventory(fixture.adapter),
                 fixture.client, world);
+            controller.setCleanupPriority(cleanupPriority);
             controller.setDiagnostics(new PistonTrapController.Diagnostics() {
                 @Override
                 public void debug(String line) {
@@ -1644,6 +2262,28 @@ final class PistonTrapControllerTest {
         void tick(int serverTick) {
             fixture.runtime.tick(serverTick);
             controller.tick(serverTick, TickBudget.unlimited());
+        }
+
+        /**
+         * Applies a block change the way production does: the ledger sees the old/new block ids and the
+         * trap sees the block-update callback.
+         */
+        void observeBlock(Cell cell, String oldBlock, String newBlock) {
+            if (feedLedger) {
+                fixture.crystals.observe(new Observation(fixture.ticket.conn(), observationSequence++,
+                    fixture.intake.appliedRevision(), System.nanoTime(), observationTick++,
+                    ObservationKind.BLOCK_UPDATE, null, cell, null, null,
+                    new ObservationPayload.BlockUpdate(oldBlock, newBlock, false)));
+            }
+            // The production client and the trap world are the same Minecraft level; the fakes are two
+            // objects, so keep the runtime's block view in step with every applied update.
+            if (newBlock == null || newBlock.isEmpty() || "minecraft:air".equals(newBlock)
+                || "minecraft:cave_air".equals(newBlock)) {
+                fixture.client.blocks.remove(cell);
+            } else {
+                fixture.client.blocks.put(cell, newBlock);
+            }
+            controller.onBlockUpdate(cell);
         }
 
         /**
@@ -1704,6 +2344,49 @@ final class PistonTrapControllerTest {
             assertEquals(PistonSequence.PistonPhase.WAIT_PUSH, controller.phase());
         }
 
+        /** Pushes the crystal, attacks it, then observes the removal: ends in CLEANUP. */
+        void advanceToCleanup() {
+            advanceToWaitPush();
+            world.powered.add(PISTON);
+            world.extended.add(PISTON);
+            tick(7);
+            tick(8);
+            tick(9);
+            assertEquals(PistonSequence.PistonPhase.WAIT_REMOVE, controller.phase());
+            controller.onCrystalRemoved(sequence().bound().orElseThrow().entity());
+            assertEquals(PistonSequence.PistonPhase.CLEANUP, controller.phase());
+        }
+
+        /** Runs the 20-tick starvation wait and sends the first cleanup break, leaving it in progress. */
+        void advanceToFirstCleanupBreak() {
+            controller.setAutoCleanup(true);
+            advanceToCleanup();
+            for (int tick = 10; tick < 30; tick++) {
+                tick(tick);
+            }
+            tick(30);
+            assertEquals(1, fixture.sink.count(BREAK));
+            assertEquals(POWER, fixture.sink.breaking());
+        }
+
+        /**
+         * Ends in CLEANUP without an attack: the priced damage is below the configured floor, so the
+         * crystal is still present and its removal must gate cleanup.
+         */
+        void advanceToCleanupWithoutAttack() {
+            advanceToWaitPush();
+            world.put(PISTON, "minecraft:piston");
+            world.facings.put(PISTON, PistonGeometry.EAST);
+            world.extended.add(PISTON);
+            world.powered.add(PISTON);
+            world.minimumDamage = 11.0;
+            tick(7);
+            tick(8);
+            tick(9);
+            assertEquals(PistonSequence.PistonPhase.CLEANUP, controller.phase());
+            assertFalse(sequence().flags().attackSafe());
+        }
+
         /**
          * Same as {@link #advanceToWaitPush}, but the planner needs one support under the crystal; the
          * support is placed and confirmed through the same block-observation callback as production.
@@ -1715,7 +2398,7 @@ final class PistonTrapControllerTest {
             tick(2); // support packet sent, awaiting block observation
             assertEquals(Optional.of(support), controller.pendingCell());
             world.put(support, "minecraft:obsidian");
-            controller.onBlockUpdate(support);
+            observeBlock(support, "minecraft:air", "minecraft:obsidian");
             tick(3); // piston packet sent, awaiting block observation
             confirmPiston();
             tick(4); // crystal packet
@@ -1740,14 +2423,14 @@ final class PistonTrapControllerTest {
         void confirmPiston() {
             world.put(PISTON, "minecraft:piston");
             world.facings.put(PISTON, PistonGeometry.EAST);
-            controller.onBlockUpdate(PISTON);
+            observeBlock(PISTON, "minecraft:air", "minecraft:piston");
         }
 
         /** Applies the exact power block for the planned kind and its observation event. */
         void confirmPower() {
             String item = plan().push().powerKind().itemId();
             world.put(POWER, item);
-            controller.onBlockUpdate(POWER);
+            observeBlock(POWER, "minecraft:air", item);
         }
 
         CrystalCombatController.Stack stack() {

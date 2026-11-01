@@ -70,6 +70,34 @@ public final class ClientPacketSink implements CombatPacketSink {
         }
     }
 
+    /**
+     * Vanilla block breaking, exactly as holding the attack key would drive it: the interaction manager
+     * owns progress, prediction and the start/continue packets. Called only from {@code dispatch} on the
+     * client thread; it never touches Speedmine or any other module.
+     */
+    @Override
+    public SendResult breakBlock(BlockHitResult hit) {
+        if (!open() || mc.player == null || mc.gameMode == null || hit == null) {
+            return SendResult.refused();
+        }
+        try {
+            mc.gameMode.continueDestroyBlock(hit.getBlockPos(), hit.getDirection());
+            return SendResult.accepted(true, -1);
+        } catch (RuntimeException refused) {
+            return SendResult.refused();
+        }
+    }
+
+    @Override
+    public void stopBreak() {
+        if (!open() || mc.player == null || mc.gameMode == null) return;
+        try {
+            mc.gameMode.stopDestroyBlock();
+        } catch (RuntimeException ignored) {
+            // A closing connection can tear the game mode down mid-call; the local state is already clear.
+        }
+    }
+
     @Override
     public SendResult swing() {
         if (!open()) return SendResult.refused();

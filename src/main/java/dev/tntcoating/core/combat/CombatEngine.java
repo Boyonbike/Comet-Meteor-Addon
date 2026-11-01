@@ -687,6 +687,19 @@ public final class CombatEngine {
         lastChoice = choice;
         recordChoice(choice, decision);
 
+        if (cleanupPriority.prioritise()) {
+            // Cleanup has waited its starvation window and its installed feasibility probe confirms the
+            // trap can actually reserve the cleanup packet this tick, so cleanup owns the next free slot.
+            // The engine still dispatches a non-imminent defence (cleanup is never a defence substitute),
+            // then yields so the trap's own serialised cleanup dispatch can claim this tick. When the
+            // probe refuses (budget or slot), prioritise() is false and direct offence runs below instead.
+            if (defence.isPresent() && !imminent) {
+                if (committedPlan != null) recordDefenceDuringTrap();
+                dispatchDefence(defence.get().plan(), serverTick, world, snapshot, gateway);
+            }
+            return;
+        }
+
         Opportunity winner = decision.plan().orElse(null);
         if (winner != null && winner.strategy() == Strategy.PISTON) {
             // The trap owns its own sends, hazards and risk reservations: this engine only hands the tick

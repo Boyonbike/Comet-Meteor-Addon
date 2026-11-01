@@ -119,6 +119,38 @@ public final class CombatScheduler {
     }
 
     /**
+     * Reserves only packet capacity and, when needed, the hotbar slot for a cleanup action. Cleanup is
+     * budgeted like every other combat action but it carries no risk: nothing here creates a risk entry,
+     * debt or hazard, and the lease is dropped as soon as the causative packet is reported sent (or when
+     * the dispatch fails and the caller releases it). The packet spend itself stays in the rolling window.
+     *
+     * @return true when the lease now owns the packet capacity (and slot, if requested)
+     */
+    public boolean reservePackets(Intent intent, Ticket ticket, int tick, int packetCost,
+                                  boolean needsSlot) {
+        if (intent == null || ticket == null) return false;
+        if (intent.strategy() != Strategy.CLEANUP) return false;
+        if (!session.isOpen() || !session.valid(ticket)) return false;
+        if (ticket.plan() != intent.plan()) return false;
+        if (tick < 0 || packetCost < 0) return false;
+        clock = Math.max(clock, tick);
+        if (clock >= intent.expiresTick()) return false;
+        if (risk.suspended()) return false;
+
+        LeaseKey key = new LeaseKey(intent.plan(), intent.id());
+        if (leases.containsKey(key)) return false;
+        if (needsSlot && slotOwner != null) return false;
+
+        int at = clock;
+        if (!packets.tryAcquire(at, packetCost)) return false;
+
+        Held held = new Held(intent, ticket, null, at, packetCost, needsSlot, false, false, null);
+        leases.put(key, held);
+        if (needsSlot) slotOwner = key;
+        return true;
+    }
+
+    /**
      * Attaches one action to an existing sent risk instead of reserving a new one. Used when a break shares
      * the crystal risk its placement already reserved: the packet, locks and capacity are still acquired
      * atomically, but the risk state and its components are untouched. The risk must exist and have been
@@ -200,10 +232,12 @@ public final class CombatScheduler {
         if (clock >= held.intent.expiresTick()) return false;
         if (!session.isOpen() || !session.valid(held.ticket)) return false;
         if (!held.ticket.conn().equals(snapshot.conn())) return false;
-        CombatRiskBudget.State riskState = risk.state(held.riskId);
-        if (riskState != CombatRiskBudget.State.RESERVED
-            && riskState != CombatRiskBudget.State.SENT) {
-            return false;
+        if (held.riskId != null) {
+            CombatRiskBudget.State riskState = risk.state(held.riskId);
+            if (riskState != CombatRiskBudget.State.RESERVED
+                && riskState != CombatRiskBudget.State.SENT) {
+                return false;
+            }
         }
         if (risk.suspended()) return false;
         for (Intent dependency : held.intent.dependsOn()) {
@@ -233,12 +267,20 @@ public final class CombatScheduler {
         Held held = leases.get(key);
         if (held == null) throw new IllegalStateException("no lease for sent intent " + key);
         clock = Math.max(clock, tick);
-        risk.mayHaveLeft(held.riskId, appliedRevision);
+        if (held.riskId != null) {
+            risk.mayHaveLeft(held.riskId, appliedRevision);
+            sentRisks.put(key, held.riskId);
+        }
         sentIntents.add(key);
-        sentRisks.put(key, held.riskId);
         if (!held.sent) {
             held.sent = true;
             releaseTransientResources(key);
+        }
+        if (held.riskId == null) {
+            // Packet-only cleanup lease: the packet stays spent, the lease itself is done.
+            releaseAllResources(key);
+            leases.remove(key);
+            sentIntents.remove(key);
         }
     }
 
@@ -276,6 +318,7 @@ public final class CombatScheduler {
     public boolean dispatchStarted(long plan, long intentId) {
         Held held = leases.get(new LeaseKey(plan, intentId));
         if (held == null || held.sent) return false;
+        if (held.riskId == null) return true;
         CombatRiskBudget.State state = risk.state(held.riskId);
         if (state == CombatRiskBudget.State.RESERVED) risk.dispatching(held.riskId);
         CombatRiskBudget.State current = risk.state(held.riskId);
@@ -287,7 +330,9 @@ public final class CombatScheduler {
     public Optional<RiskId> riskId(long plan, long intentId) {
         LeaseKey key = new LeaseKey(plan, intentId);
         Held held = leases.get(key);
-        if (held != null) return Optional.of(held.riskId);
+        if (held != null) {
+            return held.riskId == null ? Optional.empty() : Optional.of(held.riskId);
+        }
         return Optional.ofNullable(sentRisks.get(key));
     }
 
@@ -344,7 +389,7 @@ public final class CombatScheduler {
             if (key.plan() != plan) continue;
             Held held = entry.getValue();
             if (!held.sent) {
-                risk.notTransmitted(held.riskId);
+                if (held.riskId != null) risk.notTransmitted(held.riskId);
                 packets.release(held.reserveTick, held.packetCost);
             }
             releaseAllResources(key);
@@ -409,6 +454,20 @@ public final class CombatScheduler {
         return packets.used(tick);
     }
 
+    /** The scheduler's current server tick, i.e. the tick a newly reserved action would be charged to. */
+    public int clock() {
+        return clock;
+    }
+
+    /**
+     * Non-reserving feasibility probe for a yield decision: true when {@code packetCost} could be acquired
+     * in the rolling window at {@code tick} right now. Never mutates the ledger or creates a lease.
+     */
+    public boolean packetBudgetAvailable(int tick, int packetCost) {
+        if (tick < 0 || packetCost < 0) return false;
+        return packets.canAcquire(Math.max(clock, tick), packetCost);
+    }
+
     /**
      * Notification hook the runtime arms on its dead-man switch: when the server tick advances, the risk
      * may be marked may-have-left. Kept package-private so only the runtime can arm it.
@@ -419,12 +478,12 @@ public final class CombatScheduler {
 
     private void onRiskMayHaveLeft(long plan, long intentId, int tick, long appliedRevision) {
         Held held = leases.get(new LeaseKey(plan, intentId));
-        if (held == null || held.sent) return;
+        if (held == null || held.sent || held.riskId == null) return;
         sent(held.intent, tick, appliedRevision);
     }
 
     private void removeUnsent(LeaseKey key, Held held) {
-        risk.notTransmitted(held.riskId);
+        if (held.riskId != null) risk.notTransmitted(held.riskId);
         packets.release(held.reserveTick, held.packetCost);
         releaseAllResources(key);
         leases.remove(key);
@@ -457,6 +516,7 @@ public final class CombatScheduler {
     private static final class Held {
         final Intent intent;
         final Ticket ticket;
+        /** Null for a packet-only cleanup lease: no risk entry exists for it. */
         final RiskId riskId;
         final int packetCost;
         final boolean needsSlot;

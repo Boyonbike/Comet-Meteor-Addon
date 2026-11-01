@@ -11,6 +11,7 @@ import dev.tntcoating.core.combat.Action;
 import dev.tntcoating.core.combat.Box;
 import dev.tntcoating.core.combat.Capability;
 import dev.tntcoating.core.combat.Cell;
+import dev.tntcoating.core.combat.CleanupPriority;
 import dev.tntcoating.core.combat.CombatDamagePolicy;
 import dev.tntcoating.core.combat.CombatRiskBudget;
 import dev.tntcoating.core.combat.CombatScheduler;
@@ -26,6 +27,7 @@ import dev.tntcoating.core.combat.Intent;
 import dev.tntcoating.core.combat.MitigatedDamage;
 import dev.tntcoating.core.combat.MitigationEnvelope;
 import dev.tntcoating.core.combat.Opportunity;
+import dev.tntcoating.core.combat.Ownership;
 import dev.tntcoating.core.combat.PistonOpportunity;
 import dev.tntcoating.core.combat.PistonFacing;
 import dev.tntcoating.core.combat.PistonGeometry;
@@ -45,6 +47,7 @@ import dev.tntcoating.core.combat.Ticket;
 import dev.tntcoating.core.combat.Vec;
 import dev.tntcoating.core.combat.mc.CombatRuntime.PlanContext;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -120,6 +123,9 @@ public final class PistonTrapController {
         String hotbarItem(int slot);
 
         String offhandItem();
+
+        /** Hotbar slot (0-8) holding a suitable tool for breaking {@code blockId}, or -1. */
+        int toolSlot(String blockId);
     }
 
     /**
@@ -273,6 +279,18 @@ public final class PistonTrapController {
     /** Last phase the debug tap saw; only the diagnostic tap compares it. */
     private PistonSequence.PistonPhase observedPhase;
     private boolean positionChecked;
+    /**
+     * Beta auto-cleanup setting. Off by default: the trap then stays in the legacy manual-cleanup mode and
+     * never emits a break packet. Toggling it is live through {@link #setAutoCleanup(boolean)}.
+     */
+    private boolean autoCleanup;
+    /**
+     * Shared cleanup-starvation signal owned by the combat engine. Cleanup asks for its next free packet
+     * slot here instead of building a second scheduler; {@code null} in stacks that do not wire it.
+     */
+    private CleanupPriority cleanupPriority;
+    /** Per-trap cleanup intent id source; distinct from the structural and attack ids. */
+    private long cleanupIntentSequence;
 
     public PistonTrapController(CombatRuntime runtime, CombatSession session, CombatScheduler scheduler,
                                 CombatRiskBudget risk, CrystalLedger ledger, Inventory inventory,
@@ -316,6 +334,11 @@ public final class PistonTrapController {
             @Override
             public String offhandItem() {
                 return adapter.offhandItem();
+            }
+
+            @Override
+            public int toolSlot(String blockId) {
+                return adapter.toolSlot(blockId);
             }
         };
     }
@@ -578,6 +601,39 @@ public final class PistonTrapController {
         return sequence == null || sequence.flags().riskRetained();
     }
 
+    /** Beta auto-cleanup is on only while the live setting says so. */
+    public boolean autoCleanup() {
+        return autoCleanup;
+    }
+
+    /**
+     * Live setting change from the module config path. Turning it on lets the current trap use inferred
+     * ownership; turning it off immediately stops cleanup admission and clears the starvation request.
+     * Existing risk and hazard state is untouched either way.
+     */
+    public void setAutoCleanup(boolean value) {
+        autoCleanup = value;
+        if (sequence != null) sequence.allowInferredCleanup(value);
+        if (!value) {
+            // No cleanup packet may leave after the switch is turned off, including the vanilla
+            // destruction a previous cleanup tick already started.
+            stopCleanupDestruction();
+            clearCleanupPriority();
+        }
+    }
+
+    /** Wires the engine-owned cleanup starvation signal into this trap. */
+    public void setCleanupPriority(CleanupPriority priority) {
+        if (cleanupPriority != null) cleanupPriority.feasibility(null);
+        cleanupPriority = priority;
+        if (priority == null) return;
+        // The trap requests afresh on its next cleanup tick; nothing from a previous trap may linger.
+        priority.clear();
+        // The engine may only yield a tick cleanup can actually use. The probe is a pure query: it never
+        // reserves, sends or touches risk.
+        priority.feasibility(this::cleanupCanReserve);
+    }
+
     /** True while a sent structural placement is waiting for its block observation. */
     public boolean awaitingBlockConfirmation() {
         return pending != null;
@@ -590,9 +646,9 @@ public final class PistonTrapController {
     /**
      * Compact manual-cleanup instructions for the live trap: the power, the piston, the supports this trap
      * actually placed and, while it still exists, the crystal at its last known cell, with exact
-     * coordinates. The trap never breaks its own blocks, so MANUAL_CLEANUP is the default terminal action:
-     * the player removes these by hand and then runs {@code .crystalcombat cleanup confirm}. Empty when
-     * nothing of this trap was sent.
+     * coordinates. Manual cleanup is the default; the beta auto-cleanup setting removes only blocks the
+     * ledger marks as inferred-ours, and contested blocks always stay listed here for the player. The trap
+     * never detonates anything, and this string is the fallback whenever cleanup cannot proceed.
      */
     public String manualCleanupText() {
         if (sequence == null) return "";
@@ -631,8 +687,13 @@ public final class PistonTrapController {
 
     /** Disable stops all further ticks/sends without releasing hazards, risk or the trap slot. */
     public void disable() {
+        // Stop the vanilla destruction we started BEFORE the trap is marked disabled: the stop packet is
+        // part of the halt, never a send after it. No cleanup packet follows this line.
+        stopCleanupDestruction();
         enabled = false;
         pending = null;
+        clearCleanupPriority();
+        cleanupIntentSequence = 0;
         resetDisturbance();
         if (sequence != null) sequence.disable();
         tracePhase();
@@ -644,29 +705,40 @@ public final class PistonTrapController {
     }
 
     public void death() {
+        stopCleanupDestruction();
         enabled = false;
         pending = null;
+        clearCleanupPriority();
+        cleanupIntentSequence = 0;
         resetDisturbance();
         if (sequence != null) sequence.death();
         tracePhase();
     }
 
     public void respawn() {
+        stopCleanupDestruction();
         pending = null;
+        clearCleanupPriority();
+        cleanupIntentSequence = 0;
         resetDisturbance();
         if (sequence != null) sequence.respawn();
     }
 
     /** Connection close behaves like disable for hazards/risk: nothing is cleaned up or released. */
     public void connectionClosed() {
+        // The connection is already gone: never attempt a stop packet, just forget the local destruction.
+        runtime.forgetDestruction();
         enabled = false;
         pending = null;
+        clearCleanupPriority();
+        cleanupIntentSequence = 0;
         resetDisturbance();
         if (sequence != null) sequence.disable();
     }
 
     /** Explicit reconciliation releases the single-trap slot; hazards and risk stay with the ledger. */
     public void reconcile() {
+        stopCleanupDestruction();
         if (sequence != null) {
             // Release the plan's physical locks/leases. The scheduler keeps any SENT risk as debt; only
             // unsent (never transmitted) work is retired. Hazards remain with the ledger.
@@ -678,6 +750,8 @@ public final class PistonTrapController {
         ticket = null;
         supportIndex = 0;
         lastServerTick = -1;
+        clearCleanupPriority();
+        cleanupIntentSequence = 0;
         crystalDispatched = false;
         powerDispatched = false;
         attackChecked = false;
@@ -735,7 +809,31 @@ public final class PistonTrapController {
         blockObservationSerial++;
         observePistonState(cell);
         confirmBlock(cell);
+        // A block update can turn a cell we are currently breaking contested (someone else replaced or
+        // removed it). Cancel the vanilla destruction before the server can finish our contested block.
+        if (sequence != null && ticket != null && sentStructural.contains(cell)
+            && ledger.ownership(ticket.conn(), cell) != Ownership.INFERRED_OURS) {
+            runtime.stopDestruction(cell);
+        }
+        pruneSentStructural(cell);
         recordDisturbance(cell);
+    }
+
+    /**
+     * Drops a sent structural cell once the block that earned it is gone or different. The remaining
+     * cells stay listed for the manual fallback; the cleanup path only ever breaks a cell whose exact
+     * placed block is still present.
+     */
+    private void pruneSentStructural(Cell cell) {
+        if (sequence == null || !sentStructural.contains(cell)) return;
+        String expected = expectedCleanupBlock(cell);
+        if (expected != null && !expected.equals(world.blockId(cell))) {
+            // The exact block we were removing is gone or changed: stop any break we started here.
+            runtime.stopDestruction(cell);
+            sentStructural.remove(cell);
+            debug("cleanup-forget cell=" + cell + " expected=" + expected
+                + " observed=" + world.blockId(cell));
+        }
     }
 
     /**
@@ -823,15 +921,19 @@ public final class PistonTrapController {
                 // A timeout/retry invalidates any in-flight confirmation: a late event for the old
                 // attempt must never advance the retried stage.
                 pending = null;
+                if (terminal()) stopCleanupDestruction();
                 return;
             }
         }
         if (sequence == null) {
+            clearCleanupPriority();
             scan(serverTick, budget);
             return;
         }
         if (terminal()) {
             pending = null;
+            clearCleanupPriority();
+            stopCleanupDestruction();
             return;
         }
         observeTarget(serverTick);
@@ -845,9 +947,11 @@ public final class PistonTrapController {
             case POWER -> dispatchPower(serverTick);
             case WAIT_PUSH -> waitPush(serverTick);
             case ATTACK -> attack(serverTick);
-            case WAIT_REMOVE, CLEANUP, COOLDOWN -> {
-                // Automatic cleanup/mining is out of scope; removal and manual cleanup only mark state.
+            case WAIT_REMOVE, COOLDOWN -> {
+                // Removal observation and the cooldown only mark state; cleanup starts at CLEANUP.
+                clearCleanupPriority();
             }
+            case CLEANUP -> tickCleanup(serverTick);
             default -> {
             }
         }
@@ -879,7 +983,9 @@ public final class PistonTrapController {
         if (!missingMaterials().isEmpty()) return false;
         // Module-wide materials present is not enough: this exact plan needs its own power item.
         if (!planMaterialsPresent(plan)) return false;
-        PistonSequence candidate = new PistonSequence(plan, PistonSequence.Config.defaults());
+        PistonSequence.Config config = new PistonSequence.Config(0,
+            PistonSequence.TRAP_DEADLINE_TICKS, PistonSequence.CLEANUP_DEADLINE_TICKS, autoCleanup);
+        PistonSequence candidate = new PistonSequence(plan, config);
         if (!slot.begin(candidate, serverTick)) return false;
         sequence = candidate;
         observedPhase = candidate.phase();
@@ -894,6 +1000,8 @@ public final class PistonTrapController {
         supportIndex = 0;
         spawns.clear();
         sentStructural.clear();
+        clearCleanupPriority();
+        cleanupIntentSequence = 0;
         crystalBaselineUuids = Set.of();
         crystalBaselineEntities = Set.of();
         lastTargetPosition = world.position(plan.target());
@@ -946,16 +1054,23 @@ public final class PistonTrapController {
             false, facing, true);
         RiskRequest request = new RiskRequest(zeroBound(), arrival(serverTick), state, null, null,
             PACKET_COST, serverTick, needsSlot, true, false, sequence.plan().footprint());
+        // Ledger placement intent: only a block update matching this exact expected block after the send
+        // can turn the cell into INFERRED_OURS for the beta cleanup ownership gate.
+        PlacementId reservedPlacement =
+            ledger.reservePlacement(ticket.conn(), intent.cell(), itemId);
         if (!scheduler.reserve(intent, ticket, request)) {
             // No packet was sent; a transient lease loss retries next tick. The deadline handles a stall.
+            ledger.cancelUnsentPlacement(reservedPlacement);
             return false;
         }
         runtime.plan(intent, context);
         CombatRuntime.DispatchResult result = runtime.dispatch(intent, ticket);
         if (result.status() == CombatRuntime.Status.SENT) {
+            ledger.markPlacementSent(reservedPlacement, serverTick);
             sentStructural.add(intent.cell());
             return true;
         }
+        ledger.cancelUnsentPlacement(reservedPlacement);
         if (result.status() == CombatRuntime.Status.FAILED) {
             fail(sequence.phase(), result.reason().name().toLowerCase(java.util.Locale.ROOT), serverTick);
         }
@@ -966,6 +1081,184 @@ public final class PistonTrapController {
     private void awaitBlock(PistonSequence.PistonPhase stage, Cell cell, String blockId,
                             PistonFacing facing) {
         pending = new Pending(stage, cell, blockId, facing, blockObservationSerial);
+    }
+
+    // ------------------------------------------------------------------ beta auto-cleanup
+
+    /**
+     * One cleanup tick. Sends only through {@link CombatRuntime#dispatch}, only after the shared
+     * starvation signal gives cleanup the next free packet slot, and only for cells that are still
+     * INFERRED_OURS with their exact placed block present and a hotbar tool available. Contested cells,
+     * changed cells, missing tools and an unresolved trap crystal all fall through to the deadline and the
+     * manual text; none of them clears risk or a hazard.
+     */
+    private void tickCleanup(int serverTick) {
+        PistonSequence active = sequence;
+        if (active == null || ticket == null) {
+            clearCleanupPriority();
+            return;
+        }
+        if (!autoCleanup) {
+            // Legacy mode: no cleanup packet may ever leave, even if a previous tick queued a wait.
+            clearCleanupPriority();
+            return;
+        }
+        if (crystalDispatched && !crystalRemovedObserved) {
+            // Never clean up around a live trap crystal: the player removes it (or the attack does), and
+            // the existing stage deadline escalates to manual cleanup if that never happens.
+            clearCleanupPriority();
+            return;
+        }
+        pruneSentStructural();
+        if (sentStructural.isEmpty()) {
+            stopCleanupDestruction();
+            clearCleanupPriority();
+            active.cleanupCompleted(serverTick);
+            debug("cleanup-complete tick=" + serverTick);
+            return;
+        }
+        Cell target = nextCleanupCell();
+        if (target == null) {
+            // Nothing can be sent this tick (contested, changed, or no hotbar tool). Do not hold the
+            // engine's packet slots hostage; the cleanup deadline still ends in the manual fallback.
+            clearCleanupPriority();
+            return;
+        }
+        CleanupPriority priority = cleanupPriority;
+        if (priority != null) {
+            priority.request(serverTick, new CleanupPriority.Deadline(ticket.conn(), ticket.gen()),
+                active.plan().target());
+            priority.sample(serverTick);
+            if (!priority.prioritise()) return;
+        }
+        dispatchCleanup(target, serverTick);
+    }
+
+    private Cell nextCleanupCell() {
+        if (ticket == null) return null;
+        for (Cell cell : cleanupOrder()) {
+            if (!sentStructural.contains(cell)) continue;
+            String expected = expectedCleanupBlock(cell);
+            if (expected == null || !expected.equals(world.blockId(cell))) continue;
+            if (ledger.ownership(ticket.conn(), cell) != Ownership.INFERRED_OURS) continue;
+            if (inventory.toolSlot(expected) < 0) continue;
+            return cell;
+        }
+        return null;
+    }
+
+    private boolean dispatchCleanup(Cell cell, int serverTick) {
+        String expected = expectedCleanupBlock(cell);
+        if (expected == null) return false;
+        int toolSlot = inventory.toolSlot(expected);
+        if (toolSlot < 0) return false;
+        int selected = inventory.selectedSlot();
+        boolean needsSlot = toolSlot != selected;
+        String requiredItem = inventory.hotbarItem(toolSlot);
+        if (requiredItem == null) requiredItem = "";
+        SafetyState state = safetyState();
+        PlanContext context = new PlanContext(state, zeroBound(), targetEstimate(), targetHealth(),
+            false, toolSlot, requiredItem, selected, inventory.offhandItem(), false, false, false, null,
+            false, expected);
+        long intentId = sequence.plan().planId() * 1_000_000L + 500_000L + (cleanupIntentSequence++);
+        Intent intent = new Intent(intentId, sequence.plan().planId(), Strategy.CLEANUP,
+            mineAction(cell), cell, null, Set.of(), Set.of(), Set.of(),
+            serverTick + PistonPlanner.INTENT_LIFETIME_TICKS);
+        // Cleanup carries no risk and no explosion bound: breaking the trap's own debris cannot hurt the
+        // target. It still consumes one packet slot through the same rolling budget as every other send;
+        // the packet-only lease dies as soon as this send is reported (or when the dispatch fails).
+        if (!scheduler.reservePackets(intent, ticket, serverTick, PACKET_COST, needsSlot)) {
+            debug("cleanup-reserve-refused cell=" + cell + " tick=" + serverTick);
+            return false;
+        }
+        runtime.plan(intent, context);
+        CombatRuntime.DispatchResult result = runtime.dispatch(intent, ticket);
+        if (result.status() == CombatRuntime.Status.SENT) {
+            debug("cleanup-mine cell=" + cell + " block=" + expected + " slot=" + toolSlot
+                + " tick=" + serverTick);
+            return true;
+        }
+        // A refused dispatch may have left the packet-only lease behind; release it and cancel any break
+        // this cell was still driving (the pre-send re-check saw the block change).
+        scheduler.releaseIntent(intent.plan(), intent.id());
+        if (result.reason() == CombatRuntime.Reason.BLOCK_CHANGED) runtime.stopDestruction(cell);
+        debug("cleanup-mine-skipped cell=" + cell + " status=" + result.status()
+            + " reason=" + result.reason());
+        return false;
+    }
+
+    /** Power first, then the piston, then every support this trap placed, in placement order. */
+    private List<Cell> cleanupOrder() {
+        PistonGeometry.PistonPush push = sequence.plan().push();
+        Set<Cell> order = new LinkedHashSet<>();
+        if (push.power() != null) order.add(push.power());
+        if (push.piston() != null) order.add(push.piston());
+        for (Intent intent : sequence.plan().intents()) {
+            if (intent.action() == Action.PLACE_SUPPORT && intent.cell() != null) {
+                order.add(intent.cell());
+            }
+        }
+        return new ArrayList<>(order);
+    }
+
+    private String expectedCleanupBlock(Cell cell) {
+        if (sequence == null || cell == null) return null;
+        PistonGeometry.PistonPush push = sequence.plan().push();
+        if (push.power() != null && push.power().equals(cell)) return push.powerKind().itemId();
+        if (push.piston() != null && push.piston().equals(cell)) return PISTON_ITEM;
+        return SUPPORT_ITEM;
+    }
+
+    private Action mineAction(Cell cell) {
+        PistonGeometry.PistonPush push = sequence.plan().push();
+        if (push.power() != null && push.power().equals(cell)) return Action.MINE_POWER;
+        if (push.piston() != null && push.piston().equals(cell)) return Action.MINE_PISTON;
+        return Action.MINE_SUPPORT;
+    }
+
+    /** Drops sent cells whose placed block is gone or replaced; the manual list keeps the rest. */
+    private void pruneSentStructural() {
+        if (sequence == null) return;
+        Iterator<Cell> iterator = sentStructural.iterator();
+        while (iterator.hasNext()) {
+            Cell cell = iterator.next();
+            String expected = expectedCleanupBlock(cell);
+            if (expected != null && !expected.equals(world.blockId(cell))) {
+                runtime.stopDestruction(cell);
+                iterator.remove();
+                debug("cleanup-forget cell=" + cell + " expected=" + expected
+                    + " observed=" + world.blockId(cell));
+            }
+        }
+    }
+
+    private void clearCleanupPriority() {
+        if (cleanupPriority != null) cleanupPriority.clear();
+    }
+
+    /** Cancels the vanilla destruction this trap's cleanup started, if any; no-op otherwise. */
+    private void stopCleanupDestruction() {
+        runtime.stopDestruction();
+    }
+
+    /**
+     * Pure feasibility probe installed on {@link CleanupPriority}: true only when the cleanup break the
+     * trap would dispatch next could actually reserve its packet (and, when a switch is needed, the
+     * hotbar slot) right now. The engine yields only on true, so direct offence is never starved by a
+     * cleanup that cannot send. This method never sends, reserves or touches risk.
+     */
+    private boolean cleanupCanReserve() {
+        if (!enabled || !autoCleanup || sequence == null || ticket == null) return false;
+        if (sequence.phase() != PistonSequence.PistonPhase.CLEANUP) return false;
+        if (crystalDispatched && !crystalRemovedObserved) return false;
+        Cell target = nextCleanupCell();
+        if (target == null) return false;
+        String expected = expectedCleanupBlock(target);
+        if (expected == null) return false;
+        int toolSlot = inventory.toolSlot(expected);
+        if (toolSlot < 0) return false;
+        if (toolSlot != inventory.selectedSlot() && scheduler.hotbarSlotHeld()) return false;
+        return scheduler.packetBudgetAvailable(scheduler.clock(), PACKET_COST);
     }
 
     private boolean terminal() {
@@ -1355,6 +1648,9 @@ public final class PistonTrapController {
         crystalBaselineUuids = Set.of();
         crystalBaselineEntities = Set.of();
         boolean wasTerminal = terminal();
+        if (sequence.phase() == PistonSequence.PistonPhase.CLEANUP) {
+            stopCleanupDestruction();
+        }
         if (retryStructural) sequence.stageFailed(stage, reason, serverTick);
         else sequence.abortTrap(reason, serverTick);
         debug("abort stage=" + stage + " reason=" + reason + " phase=" + sequence.phase());

@@ -87,6 +87,40 @@ public final class CombatInventoryAdapter {
         return client.offhandItem();
     }
 
+    /** Pickaxes in descending tier order; only these can mine the trap's piston and obsidian. */
+    private static final String[] PICKAXE_TIERS = {
+        "minecraft:netherite_pickaxe",
+        "minecraft:diamond_pickaxe",
+        "minecraft:iron_pickaxe",
+        "minecraft:stone_pickaxe",
+        "minecraft:golden_pickaxe",
+        "minecraft:wooden_pickaxe"
+    };
+
+    /**
+     * The hotbar slot the module would use to break {@code blockId}, or {@code -1} when no safe tool is
+     * available. Only slots 0-8 are considered; the offhand is never a tool source. Blocks that do not
+     * require a pickaxe (for example the trap's redstone torch) use the current slot, which may hold an
+     * empty hand.
+     */
+    public int toolSlot(String blockId) {
+        if (blockId == null || blockId.isEmpty()) return -1;
+        if (!requiresPickaxe(blockId)) {
+            int selected = client.selectedSlot();
+            return selected >= 0 && selected <= 8 ? selected : -1;
+        }
+        for (String tier : PICKAXE_TIERS) {
+            for (int slot = 0; slot <= 8; slot++) {
+                if (tier.equals(client.hotbarItem(slot))) return slot;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean requiresPickaxe(String blockId) {
+        return "minecraft:obsidian".equals(blockId) || blockId.endsWith("piston");
+    }
+
     /**
      * Moves the client selection to {@code slot} and sends the matching hotbar packet. The client-side
      * selection is rolled back locally when the packet is refused; no retry is attempted.

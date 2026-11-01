@@ -51,6 +51,20 @@ public interface CombatPacketSink {
     /** Sends the attack interaction. This is the causative packet for an attack action. */
     SendResult attack(int entityId);
 
+    /**
+     * Vanilla block breaking through the client interaction manager. This is the causative call for a
+     * cleanup action; it never routes through Speedmine or any other module.
+     */
+    SendResult breakBlock(BlockHitResult hit);
+
+    /**
+     * Cancels the vanilla destruction this sink started. This is the one cancellation exception to
+     * {@code dispatch}: it is not a combat send, never retires risk, and never touches the packet budget.
+     * It is only called for a block this module started breaking, from the client thread, while the
+     * session is still open.
+     */
+    void stopBreak();
+
     /** Sends a swing. Supporting only: a required swing failure must not roll back an attack. */
     SendResult swing();
 

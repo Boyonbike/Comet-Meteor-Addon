@@ -85,6 +85,23 @@ final class CleanupPriorityTest {
     }
 
     @Test
+    void aWaitIsNotPrioritisedWhileTheCleanupCannotActuallyReserve() {
+        CleanupPriority priority = new CleanupPriority();
+        priority.request(100, new CleanupPriority.Deadline(CONN, GEN), VICTIM);
+        priority.sample(120);
+
+        priority.feasibility(() -> false);
+        assertFalse(priority.prioritise(), "no yield when the cleanup packet cannot be reserved");
+        assertTrue(priority.state().due(), "the wait itself is still due");
+
+        priority.feasibility(() -> true);
+        assertTrue(priority.prioritise());
+
+        priority.feasibility(null);
+        assertTrue(priority.prioritise(), "the default probe never blocks a due wait");
+    }
+
+    @Test
     void clearThrowsTheWaitAwayWithoutTouchingAnythingElse() {
         CleanupPriority priority = new CleanupPriority();
         priority.request(100, new CleanupPriority.Deadline(CONN, GEN), VICTIM);

@@ -28,6 +28,7 @@ import dev.tntcoating.core.combat.RiskId;
 import dev.tntcoating.core.combat.Safety;
 import dev.tntcoating.core.combat.SafetyState;
 import dev.tntcoating.core.combat.Snapshot;
+import dev.tntcoating.core.combat.Strategy;
 import dev.tntcoating.core.combat.TargetEstimate;
 import dev.tntcoating.core.combat.TickBudget;
 import dev.tntcoating.core.combat.Ticket;
@@ -101,7 +102,8 @@ public final class CombatRuntime implements AutoCloseable {
         SUPPORTING_PACKET_FAILED,
         NO_SUPPORT,
         OCCUPIED,
-        WRONG_FACING
+        WRONG_FACING,
+        BLOCK_CHANGED
     }
 
     /** The caller-supplied facts dispatch revalidates against. Set when the planner reserves. */
@@ -109,7 +111,18 @@ public final class CombatRuntime implements AutoCloseable {
                               EffectiveHealth targetHealth, boolean rotationsOn, int expectedHotbarSlot,
                               String requiredItemId, int selectionAtReserve, String offhandItemBefore,
                               boolean targetOverride, boolean faceplace, boolean defensive,
-                              PistonFacing pistonFacing, boolean structural) {
+                              PistonFacing pistonFacing, boolean structural, String expectedBlockId) {
+        /** Placement/attack contexts: no block-id claim is revalidated. */
+        public PlanContext(SafetyState safetyState, ExposureBound exposure, TargetEstimate estimate,
+                           EffectiveHealth targetHealth, boolean rotationsOn, int expectedHotbarSlot,
+                           String requiredItemId, int selectionAtReserve, String offhandItemBefore,
+                           boolean targetOverride, boolean faceplace, boolean defensive,
+                           PistonFacing pistonFacing, boolean structural) {
+            this(safetyState, exposure, estimate, targetHealth, rotationsOn, expectedHotbarSlot,
+                requiredItemId, selectionAtReserve, offhandItemBefore, targetOverride, faceplace,
+                defensive, pistonFacing, structural, null);
+        }
+
         /** Pre-faceplace contexts: the policy revalidation uses the normal minimum target damage. */
         public PlanContext(SafetyState safetyState, ExposureBound exposure, TargetEstimate estimate,
                            EffectiveHealth targetHealth, boolean rotationsOn, int expectedHotbarSlot,
@@ -276,6 +289,12 @@ public final class CombatRuntime implements AutoCloseable {
     private int tickCount;
     private boolean closed;
     /**
+     * The one cell whose vanilla destruction this runtime started through {@link CombatPacketSink#breakBlock}
+     * and has not cancelled yet. Tracked here so cleanup can always stop it, even after the trap stops
+     * ticking; it is never a combat action and carries no risk or packet-budget meaning.
+     */
+    private Cell destructionCell;
+    /**
      * Respawn reconciliation, installed by the owning controller. It runs only after the budget observed
      * RESPAWN and the action generation transitioned, from both the observation path and the direct call.
      */
@@ -421,9 +440,12 @@ public final class CombatRuntime implements AutoCloseable {
         boolean blocker = intent.action() == Action.PLACE_BLOCKER;
         boolean piston = intent.action() == Action.PLACE_PISTON;
         boolean power = intent.action() == Action.PLACE_POWER;
+        boolean mine = intent.action() == Action.MINE_POWER
+            || intent.action() == Action.MINE_PISTON
+            || intent.action() == Action.MINE_SUPPORT;
         boolean structural = support || blocker || piston || power;
         boolean place = intent.action() == Action.PLACE_CRYSTAL || structural;
-        if (!attack && !place) {
+        if (!attack && !mine && !place) {
             release(intent);
             return new DispatchResult(Status.FAILED, Reason.UNSUPPORTED_ACTION, trace);
         }
@@ -448,32 +470,43 @@ public final class CombatRuntime implements AutoCloseable {
                 release(intent);
                 return new DispatchResult(Status.FAILED, Reason.UNSUPPORTED_ACTION, trace);
             }
-            if (blocker && !client.supportBelow(cell.below())) {
-                // Fail closed: a blocker with no sturdy top face below is never sent, and the unsent lease
-                // is released so the engine can fall through to its normal offence path this tick.
-                release(intent);
-                return new DispatchResult(Status.FAILED, Reason.NO_SUPPORT, trace);
-            }
-            // Piston-plan structural placements revalidate the geometry at dispatch: the cell must still be
-            // empty/replaceable, free of entities, sitting on a sturdy face, and no piston may already be
-            // there (a pre-existing piston means the facing cannot be guaranteed). Direct-engine support
-            // and blocker leases keep their Phase 3/4 behaviour; only contexts marked structural opt in.
-            if (context.structural() && structural) {
-                if (!client.replaceable(cell) || !client.entityFree(cell)) {
+            if (mine) {
+                // Cleanup revalidates the exact block identity at dispatch: the cell must still hold the
+                // block this trap placed. A changed cell is skipped, never mined speculatively.
+                String expected = context.expectedBlockId();
+                if (expected == null || expected.isEmpty() || !expected.equals(client.blockId(cell))) {
                     release(intent);
-                    return new DispatchResult(Status.FAILED, Reason.OCCUPIED, trace);
+                    return new DispatchResult(Status.FAILED, Reason.BLOCK_CHANGED, trace);
                 }
-                if (!client.supportBelow(cell.below())) {
+            } else {
+                if (blocker && !client.supportBelow(cell.below())) {
+                    // Fail closed: a blocker with no sturdy top face below is never sent, and the unsent
+                    // lease is released so the engine can fall through to its normal offence path this tick.
                     release(intent);
                     return new DispatchResult(Status.FAILED, Reason.NO_SUPPORT, trace);
                 }
-                if (piston && client.pistonFacing(cell) != null) {
-                    release(intent);
-                    return new DispatchResult(Status.FAILED, Reason.WRONG_FACING, trace);
-                }
-                if (piston && context.pistonFacing() == null) {
-                    release(intent);
-                    return new DispatchResult(Status.FAILED, Reason.WRONG_FACING, trace);
+                // Piston-plan structural placements revalidate the geometry at dispatch: the cell must
+                // still be empty/replaceable, free of entities, sitting on a sturdy face, and no piston
+                // may already be there (a pre-existing piston means the facing cannot be guaranteed).
+                // Direct-engine support and blocker leases keep their Phase 3/4 behaviour; only contexts
+                // marked structural opt in.
+                if (context.structural() && structural) {
+                    if (!client.replaceable(cell) || !client.entityFree(cell)) {
+                        release(intent);
+                        return new DispatchResult(Status.FAILED, Reason.OCCUPIED, trace);
+                    }
+                    if (!client.supportBelow(cell.below())) {
+                        release(intent);
+                        return new DispatchResult(Status.FAILED, Reason.NO_SUPPORT, trace);
+                    }
+                    if (piston && client.pistonFacing(cell) != null) {
+                        release(intent);
+                        return new DispatchResult(Status.FAILED, Reason.WRONG_FACING, trace);
+                    }
+                    if (piston && context.pistonFacing() == null) {
+                        release(intent);
+                        return new DispatchResult(Status.FAILED, Reason.WRONG_FACING, trace);
+                    }
                 }
             }
             targetPosition = cell.center();
@@ -483,7 +516,8 @@ public final class CombatRuntime implements AutoCloseable {
             release(intent);
             return new DispatchResult(Status.BLOCKED, Reason.UNKNOWN_ENTITY, trace);
         }
-        if (scheduler.riskId(intent.plan(), intent.id()).isEmpty()) {
+        boolean packetOnlyCleanup = intent.strategy() == Strategy.CLEANUP;
+        if (scheduler.riskId(intent.plan(), intent.id()).isEmpty() && !packetOnlyCleanup) {
             release(intent);
             return new DispatchResult(Status.FAILED, Reason.NO_LEASE, trace);
         }
@@ -496,11 +530,10 @@ public final class CombatRuntime implements AutoCloseable {
             ? context.targetHealth()
             : new EffectiveHealth(0.0, 0.0, Capability.UNKNOWN, 0L);
         CombatDamagePolicy policy = new CombatDamagePolicy(state.selfHealth(), targetHealth);
-        // Phase 4.6: a defensive break has no target-damage claim; it still revalidates the self/friend
-        // ceilings and remaining margin here, at dispatch, against the current SafetyState.
-        // Structural placement makes no target-damage claim: it still revalidates the planner's worst-case
-        // self/friend exposure (zero for supports/piston/power) and the remaining health margin.
-        boolean allowed = context.structural()
+        // Structural placement and cleanup mining make no target-damage claim: they still revalidate the
+        // planner's worst-case self/friend exposure (zero for supports/piston/power and cleanup) and the
+        // remaining health margin.
+        boolean allowed = context.structural() || mine
             ? policy.allowsDefensive(context.exposure(), state.safety())
             : context.defensive()
                 ? policy.allowsDefensive(context.exposure(), state.safety())
@@ -545,7 +578,7 @@ public final class CombatRuntime implements AutoCloseable {
             release(intent);
             return new DispatchResult(Status.BLOCKED, Reason.ITEM_MISSING, trace);
         }
-        if (context.rotationsOn()) {
+        if (context.rotationsOn() && !mine) {
             double[] aim = piston ? aimForPiston(eye, targetPosition, context.pistonFacing())
                 : aim(eye, targetPosition);
             if (!client.rotationSatisfied(aim[0], aim[1])) {
@@ -573,8 +606,15 @@ public final class CombatRuntime implements AutoCloseable {
             if (switched.attempted()) ownedSlot = context.expectedHotbarSlot();
         }
 
+        // Switching cleanup targets cancels the previous block's vanilla destruction first, so the server
+        // cannot finish it after this module moved on.
+        if (mine && destructionCell != null && !destructionCell.equals(intent.cell())) {
+            stopDestruction();
+        }
+
         CombatPacketSink.SendResult causative = attack
             ? sink.attack(targetEntity.id())
+            : mine ? sink.breakBlock(breakHit(intent.cell()))
             : piston ? sink.placePiston(placementHit(intent.cell()))
             : power ? sink.placePower(placementHit(intent.cell()))
             : support || blocker ? sink.placeSupport(placementHit(intent.cell()))
@@ -592,6 +632,7 @@ public final class CombatRuntime implements AutoCloseable {
             trimTraces();
             return new DispatchResult(Status.FAILED, Reason.CAUSATIVE_NOT_ACCEPTED, trace);
         }
+        if (mine) destructionCell = intent.cell();
 
         // Irreversible from here: the causative packet may have reached the server.
         scheduler.sent(intent, lastServerTick, snapshot.appliedRevision());
@@ -621,6 +662,13 @@ public final class CombatRuntime implements AutoCloseable {
         return new BlockHitResult(
             new Vec3(cell.x() + 0.5, cell.y(), cell.z() + 0.5),
             Direction.UP, new BlockPos(cell.x(), cell.y() - 1, cell.z()), false);
+    }
+
+    private BlockHitResult breakHit(Cell cell) {
+        // Vanilla block breaking targets the cell itself; the face is only the interaction normal.
+        return new BlockHitResult(
+            new Vec3(cell.x() + 0.5, cell.y() + 0.5, cell.z() + 0.5),
+            Direction.UP, new BlockPos(cell.x(), cell.y(), cell.z()), false);
     }
 
     /**
@@ -849,6 +897,7 @@ public final class CombatRuntime implements AutoCloseable {
 
     /** Connection close: that connection's leases, risk, pending pairs and receipts all clear. */
     public void onConnectionClosed() {
+        forgetDestruction();
         ActionGenerationHolder holder = beginGenerationTransition();
         session.close();
         scheduler.invalidateGeneration(holder.generation());
@@ -857,6 +906,42 @@ public final class CombatRuntime implements AutoCloseable {
         intake.connectionClosed();
         releasePlanBookkeeping();
         contexts.clear();
+    }
+
+    /**
+     * Cancels the vanilla block destruction this runtime started, and nothing else. This is the single
+     * cancellation exception to the dispatch-only send rule: it hands the sink exactly one vanilla
+     * STOP_DESTROY_BLOCK for a block this module began breaking, on the client thread, and only while the
+     * session and sink are still open. It never retires risk, releases a lease, consumes packet budget or
+     * sends from a network/render callback, and a closed connection is handled by
+     * {@link #forgetDestruction()} instead so nothing is sent after close.
+     *
+     * @return true when the stop packet was handed to the sink
+     */
+    public boolean stopDestruction() {
+        if (!client.onClientThread()) return false;
+        Cell cell = destructionCell;
+        if (cell == null) return false;
+        if (!session.isOpen() || !sink.open() || !client.connectionOpen()) return false;
+        destructionCell = null;
+        sink.stopBreak();
+        return true;
+    }
+
+    /**
+     * Cancels the tracked destruction only when it is {@code cell}. Used by the trap when a block update,
+     * ownership change or failed pre-send re-check invalidates the cleanup target it is breaking.
+     *
+     * @return true when this call sent the stop packet
+     */
+    public boolean stopDestruction(Cell cell) {
+        if (cell == null || !cell.equals(destructionCell)) return false;
+        return stopDestruction();
+    }
+
+    /** Clears the tracked destruction without sending: connection-close and disable-after-close paths. */
+    public void forgetDestruction() {
+        destructionCell = null;
     }
 
     /** Manual disable: stop sending immediately; risk and ledger stay observing. */

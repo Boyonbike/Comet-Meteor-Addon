@@ -29,6 +29,7 @@ import dev.tntcoating.core.combat.Ticket;
 import dev.tntcoating.core.combat.Vec;
 import java.util.Map;
 import java.util.Set;
+import net.minecraft.world.phys.BlockHitResult;
 import org.junit.jupiter.api.Test;
 
 /** The plan's Phase 2b dispatch steps and typed failure/retention behaviour. */
@@ -37,6 +38,20 @@ final class CombatRuntimeDispatchTest {
     private static final CombatTestFakes.FakeSink.Kind ATTACK = CombatTestFakes.FakeSink.Kind.ATTACK;
     private static final CombatTestFakes.FakeSink.Kind SWING = CombatTestFakes.FakeSink.Kind.SWING;
     private static final CombatTestFakes.FakeSink.Kind SLOT = CombatTestFakes.FakeSink.Kind.SLOT;
+    private static final CombatTestFakes.FakeSink.Kind BREAK = CombatTestFakes.FakeSink.Kind.BREAK;
+    private static final String PICKAXE = "minecraft:diamond_pickaxe";
+
+    private static Intent mine(CombatRuntimeFixture fixture, Action action) {
+        return new Intent(fixture.freshId(), CombatRuntimeFixture.PLAN, Strategy.CLEANUP, action,
+            CombatRuntimeFixture.CELL, null, Set.of(CombatRuntimeFixture.CELL), Set.of(), Set.of(), 60);
+    }
+
+    private static PlanContext mineContext(CombatRuntimeFixture fixture, String expectedBlock,
+                                           boolean rotationsOn) {
+        return new PlanContext(fixture.state(), fixture.exposure(), fixture.estimate(),
+            fixture.healthySelf(), rotationsOn, 4, PICKAXE, fixture.client.selectedSlot,
+            fixture.client.offhand, false, false, false, null, false, expectedBlock);
+    }
 
     @Test
     void placeDispatchSendsOneCausativeAndRecordsProgress() {
@@ -288,11 +303,82 @@ final class CombatRuntimeDispatchTest {
     void unsupportedActionIsRejected() {
         CombatRuntimeFixture fixture = new CombatRuntimeFixture();
         Intent intent = new Intent(fixture.freshId(), CombatRuntimeFixture.PLAN, Strategy.DIRECT,
-            Action.MINE_POWER, CombatRuntimeFixture.CELL, null, Set.of(), Set.of(), Set.of(), 20);
+            Action.PLACE_BASE, CombatRuntimeFixture.CELL, null, Set.of(), Set.of(), Set.of(), 20);
         fixture.reserve(intent);
         CombatRuntime.DispatchResult result = fixture.runtime.dispatch(intent, fixture.ticket);
         assertEquals(Reason.UNSUPPORTED_ACTION, result.reason());
         assertEquals(0, fixture.sink.attempts);
+    }
+
+    @Test
+    void mineDispatchUsesTheVanillaBreakSinkAndNoAttack() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        fixture.client.hotbar[4] = PICKAXE;
+        fixture.client.blocks.put(CombatRuntimeFixture.CELL, "minecraft:obsidian");
+        Intent intent = mine(fixture, Action.MINE_POWER);
+        RiskId riskId = fixture.reserve(intent, mineContext(fixture, "minecraft:obsidian", false));
+        CombatRuntime.DispatchResult result = fixture.runtime.dispatch(intent, fixture.ticket);
+
+        assertEquals(Status.SENT, result.status());
+        assertEquals(1, fixture.sink.count(BREAK));
+        assertEquals(0, fixture.sink.count(ATTACK), "cleanup never attacks an entity");
+        assertEquals(1, fixture.sink.count(SWING));
+        assertTrue(fixture.sink.sends.stream().anyMatch(send -> send.kind() == SLOT && send.number() == 4),
+            "the hotbar pickaxe was selected");
+        assertEquals(fixture.client.selectedSlot, 0, "the module restores the player's selection");
+        BlockHitResult hit = fixture.sink.last(BREAK).hit();
+        assertEquals(CombatRuntimeFixture.CELL.x(), hit.getBlockPos().getX());
+        assertEquals(CombatRuntimeFixture.CELL.y(), hit.getBlockPos().getY());
+        assertEquals(CombatRuntimeFixture.CELL.z(), hit.getBlockPos().getZ());
+        assertEquals(CombatRiskBudget.State.SENT, fixture.budget.state(riskId));
+    }
+
+    @Test
+    void mineDispatchRequiresTheExactBlockTheTrapPlaced() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        fixture.client.hotbar[4] = PICKAXE;
+        fixture.client.blocks.put(CombatRuntimeFixture.CELL, "minecraft:stone");
+        Intent intent = mine(fixture, Action.MINE_POWER);
+        fixture.reserve(intent, mineContext(fixture, "minecraft:obsidian", false));
+
+        CombatRuntime.DispatchResult result = fixture.runtime.dispatch(intent, fixture.ticket);
+
+        assertEquals(Status.FAILED, result.status());
+        assertEquals(Reason.BLOCK_CHANGED, result.reason());
+        assertEquals(0, fixture.sink.count(BREAK));
+        assertEquals(0, fixture.sink.count(ATTACK));
+    }
+
+    @Test
+    void mineDispatchWithoutTheRequiredToolIsBlockedBeforeSending() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        fixture.client.hotbar[4] = "";
+        fixture.client.blocks.put(CombatRuntimeFixture.CELL, "minecraft:obsidian");
+        Intent intent = mine(fixture, Action.MINE_POWER);
+        fixture.reserve(intent, mineContext(fixture, "minecraft:obsidian", false));
+
+        CombatRuntime.DispatchResult result = fixture.runtime.dispatch(intent, fixture.ticket);
+
+        assertEquals(Status.BLOCKED, result.status());
+        assertEquals(Reason.ITEM_MISSING, result.reason());
+        assertEquals(0, fixture.sink.count(BREAK));
+    }
+
+    @Test
+    void mineDispatchDoesNotRequestRotations() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        fixture.client.hotbar[4] = PICKAXE;
+        fixture.client.blocks.put(CombatRuntimeFixture.CELL, "minecraft:obsidian");
+        fixture.client.rotationSatisfied = false;
+        Intent intent = mine(fixture, Action.MINE_POWER);
+        fixture.reserve(intent, mineContext(fixture, "minecraft:obsidian", true));
+
+        CombatRuntime.DispatchResult result = fixture.runtime.dispatch(intent, fixture.ticket);
+
+        assertEquals(Status.SENT, result.status());
+        assertTrue(fixture.client.rotationRequests.isEmpty(),
+            "breaking a block does not require a Meteor rotation");
+        assertEquals(1, fixture.sink.count(BREAK));
     }
 
     @Test
@@ -519,6 +605,65 @@ final class CombatRuntimeDispatchTest {
         assertEquals(0.5, hit.getLocation().x);
         assertEquals(64.0, hit.getLocation().y);
         assertEquals(0.5, hit.getLocation().z);
+    }
+
+    @Test
+    void stopDestructionSendsTheVanillaStopOnlyForTheBlockWeStartedBreaking() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        fixture.client.hotbar[4] = PICKAXE;
+        fixture.client.blocks.put(CombatRuntimeFixture.CELL, "minecraft:obsidian");
+        Intent intent = mine(fixture, Action.MINE_POWER);
+        fixture.reserve(intent, mineContext(fixture, "minecraft:obsidian", false));
+        assertEquals(Status.SENT, fixture.runtime.dispatch(intent, fixture.ticket).status());
+        assertEquals(1, fixture.sink.count(BREAK));
+        assertEquals(CombatRuntimeFixture.CELL, fixture.sink.breaking());
+
+        assertTrue(fixture.runtime.stopDestruction());
+
+        assertEquals(1, fixture.sink.stops());
+        assertEquals(null, fixture.sink.breaking(), "the fake no longer has a break in progress");
+        assertFalse(fixture.runtime.stopDestruction(), "there is nothing left to cancel");
+        assertEquals(1, fixture.sink.stops());
+    }
+
+    @Test
+    void stopDestructionRefusesAClosedConnectionAndLeavesTheDestructionStateAlone() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        fixture.client.hotbar[4] = PICKAXE;
+        fixture.client.blocks.put(CombatRuntimeFixture.CELL, "minecraft:obsidian");
+        Intent intent = mine(fixture, Action.MINE_POWER);
+        fixture.reserve(intent, mineContext(fixture, "minecraft:obsidian", false));
+        assertEquals(Status.SENT, fixture.runtime.dispatch(intent, fixture.ticket).status());
+
+        fixture.client.connectionOpen = false;
+        assertFalse(fixture.runtime.stopDestruction());
+        assertEquals(0, fixture.sink.stops());
+
+        fixture.client.connectionOpen = true;
+        fixture.runtime.forgetDestruction();
+        assertFalse(fixture.runtime.stopDestruction(), "the local tracking was dropped with the close");
+        assertEquals(0, fixture.sink.stops());
+    }
+
+    @Test
+    void stopDestructionIgnoresAnotherCellAndOffClientThreadCalls() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        fixture.client.hotbar[4] = PICKAXE;
+        fixture.client.blocks.put(CombatRuntimeFixture.CELL, "minecraft:obsidian");
+        Intent intent = mine(fixture, Action.MINE_POWER);
+        fixture.reserve(intent, mineContext(fixture, "minecraft:obsidian", false));
+        assertEquals(Status.SENT, fixture.runtime.dispatch(intent, fixture.ticket).status());
+
+        assertFalse(fixture.runtime.stopDestruction(new Cell(1, 64, 0)));
+        assertEquals(0, fixture.sink.stops(), "another cell's break is untouched");
+
+        fixture.client.onClientThread = false;
+        assertFalse(fixture.runtime.stopDestruction(CombatRuntimeFixture.CELL));
+        assertEquals(0, fixture.sink.stops(), "no packet is sent off the client thread");
+
+        fixture.client.onClientThread = true;
+        assertTrue(fixture.runtime.stopDestruction(CombatRuntimeFixture.CELL));
+        assertEquals(1, fixture.sink.stops());
     }
 
     @Test

@@ -50,6 +50,14 @@ public final class CrystalCombatObservationHost {
         default void blockUpdated(Cell cell) {
         }
 
+        /**
+         * One applied block update with both block ids, for the ownership ledger. The default keeps older
+         * observers working without letting a cell-only callback claim block ownership.
+         */
+        default void blockUpdated(Cell cell, String oldBlock, String newBlock) {
+            blockUpdated(cell);
+        }
+
         /** One client tick; the module may publish the status when enabled and must not when disabled. */
         void tick();
     }
@@ -85,7 +93,14 @@ public final class CrystalCombatObservationHost {
     private void onBlockUpdate(BlockUpdateEvent event) {
         if (event == null || event.pos == null) return;
         if (observer.connection() == null) return;
-        observer.blockUpdated(new Cell(event.pos.getX(), event.pos.getY(), event.pos.getZ()));
+        observer.blockUpdated(new Cell(event.pos.getX(), event.pos.getY(), event.pos.getZ()),
+            blockId(event.oldState), blockId(event.newState));
+    }
+
+    private static String blockId(net.minecraft.world.level.block.state.BlockState state) {
+        if (state == null) return "";
+        Identifier id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        return id == null ? "" : id.toString();
     }
 
     @EventHandler

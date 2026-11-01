@@ -16,5 +16,6 @@ public enum Action {
     ATTACK_CRYSTAL,
     MINE_POWER,
     MINE_PISTON,
+    MINE_SUPPORT,
     PLACE_BLOCKER
 }

@@ -541,11 +541,16 @@ public final class CrystalLedger {
 
         boolean matched = placements.size() == 1;
         Placement placement = matched ? placements.getFirst() : null;
+        boolean pendingStateOnly = false;
         if (matched) {
-            matched = placement.sentTick != null
+            boolean answered = placement.sentTick != null
                 && observation.clientTick() >= placement.sentTick
-                && placement.expectedBlock.equals(newBlock)
-                && !Objects.equals(oldBlock, newBlock);
+                && placement.expectedBlock.equals(newBlock);
+            // A state-only update cannot confirm or deny the pending placement: the block id is the
+            // same before and after, so nothing was placed or replaced. Keep the placement pending
+            // instead of contesting a cell that may simply have flipped a block-state property.
+            pendingStateOnly = answered && oldBlock != null && oldBlock.equals(newBlock);
+            matched = answered && !Objects.equals(oldBlock, newBlock);
         }
 
         if (matched) {
@@ -553,8 +558,17 @@ public final class CrystalLedger {
             // later placement at the same cell is not permanently blocked by this one.
             state.placements.remove(placement.id);
             state.ownership.put(cell, Ownership.INFERRED_OURS);
-        } else if (!placements.isEmpty() || previous != null) {
+        } else if (pendingStateOnly) {
+            // Leave the placement and the previous ownership exactly as they were.
+        } else if (!placements.isEmpty()) {
             state.ownership.put(cell, Ownership.CONTESTED);
+        } else if (previous != null) {
+            // A state-only update cannot transfer block ownership: the block id is unchanged, so the
+            // block this connection placed is still the same block (a piston flipping its extended
+            // property is the common case). Any update that changes the block id stays pessimistic.
+            boolean stateOnly = previous == Ownership.INFERRED_OURS
+                && oldBlock != null && oldBlock.equals(newBlock);
+            if (!stateOnly) state.ownership.put(cell, Ownership.CONTESTED);
         }
     }
 

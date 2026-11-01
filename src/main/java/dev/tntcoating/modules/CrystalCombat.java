@@ -119,10 +119,17 @@ public final class CrystalCombat extends Module {
     private final Setting<Boolean> pistonTrap = sgGeneral.add(new BoolSetting.Builder()
         .name("piston-trap")
         .description("Beta: single-push piston trap with block-by-block confirmation. It runs in "
-            + "PistonOnly and in Hybrid while a trap is committed; one trap at a time and cleanup is "
-            + "manual. After removing the debris, run .crystalcombat cleanup confirm to release the trap "
-            + "slot. Not yet server-confirmed.")
+            + "PistonOnly and in Hybrid while a trap is committed; one trap at a time. Cleanup is manual "
+            + "unless auto-cleanup is on. After removing the debris, run .crystalcombat cleanup confirm to "
+            + "release the trap slot. Not yet server-confirmed.")
         .defaultValue(true)
+        .onChanged(value -> configChanged())
+        .build());
+
+    private final Setting<Boolean> autoCleanup = sgGeneral.add(new BoolSetting.Builder()
+        .name("auto-cleanup")
+        .description("Beta: removes only the power, piston and supports this module placed and saw confirmed. Contested blocks are always left for you.")
+        .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
@@ -385,6 +392,11 @@ public final class CrystalCombat extends Module {
             }
 
             @Override
+            public void blockUpdated(Cell cell, String oldBlock, String newBlock) {
+                controller.observeBlockUpdate(cell, oldBlock, newBlock);
+            }
+
+            @Override
             public void tick() {
                 // Active ticks are driven by the module's own handler; while disabled this is the only
                 // always-subscribed tick source, so passive receipt application never stops.
@@ -577,6 +589,9 @@ public final class CrystalCombat extends Module {
         PistonTrapWorld trapWorld = new PistonTrapWorld(reader, damageAdapter, direct, safety());
         PistonTrapController trap = new PistonTrapController(runtime, session, scheduler, risk, ledger,
             PistonTrapController.inventory(inventory), client, trapWorld);
+        // The trap's cleanup stage asks this shared priority for its starvation window; the engine owns
+        // the instance so Hybrid can yield the next free slot to it.
+        trap.setCleanupPriority(engine.cleanupPriority());
         return new CrystalCombatController.Stack(runtime, session, ledger, scheduler, risk, client,
             intake, engineHost, hurtModel, trap);
     }
@@ -684,6 +699,7 @@ public final class CrystalCombat extends Module {
         controller.setPistonLayouts(selection());
         controller.setMode(mode.get());
         controller.onConfigChanged();
+        controller.setAutoCleanup(autoCleanup.get());
         if (controller.hasStack()) controller.reconfigure(directSettings());
         controller.setTrapEnabled(pistonTrap.get());
     }

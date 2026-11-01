@@ -175,6 +175,14 @@ final class CombatTestFakes {
             return true;
         }
 
+        /** Block ids observed by the fake world; absent cells are air. */
+        final Map<Cell, String> blocks = new LinkedHashMap<>();
+
+        @Override
+        public String blockId(Cell cell) {
+            return cell == null ? null : blocks.get(cell);
+        }
+
         @Override
         public boolean entityFree(Cell cell) {
             return true;
@@ -256,8 +264,10 @@ final class CombatTestFakes {
             PISTON,
             POWER,
             ATTACK,
+            BREAK,
             SWING,
-            SLOT
+            SLOT,
+            STOP
         }
 
         record Send(int attempt, Kind kind, int number, BlockHitResult hit, boolean enqueued) {
@@ -269,12 +279,25 @@ final class CombatTestFakes {
         int ackSequence = -1;
         int attempts;
         final List<Send> sends = new ArrayList<>();
+        /** The cell whose vanilla destruction is currently in progress, if any. */
+        Cell breaking;
+        int stops;
 
         void reset() {
             attempts = 0;
             sends.clear();
             failOnAttempt = -1;
             ackSequence = -1;
+            breaking = null;
+            stops = 0;
+        }
+
+        Cell breaking() {
+            return breaking;
+        }
+
+        int stops() {
+            return stops;
         }
 
         int count(Kind kind) {
@@ -330,6 +353,23 @@ final class CombatTestFakes {
         @Override
         public SendResult attack(int entityId) {
             return attempt(Kind.ATTACK, entityId, null);
+        }
+
+        @Override
+        public SendResult breakBlock(BlockHitResult hit) {
+            SendResult result = attempt(Kind.BREAK, 0, hit);
+            if (result.enqueued() && hit != null) {
+                var pos = hit.getBlockPos();
+                breaking = new Cell(pos.getX(), pos.getY(), pos.getZ());
+            }
+            return result;
+        }
+
+        @Override
+        public void stopBreak() {
+            stops++;
+            sends.add(new Send(attempts, Kind.STOP, 0, null, true));
+            breaking = null;
         }
 
         @Override

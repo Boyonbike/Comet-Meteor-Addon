@@ -50,12 +50,20 @@ public final class PacketLedger {
      * that would exceed capacity. Zero is a successful no-op; negative values are rejected.
      */
     public boolean tryAcquire(int tick, int packets) {
-        if (tick < 0 || packets < 0) return false;
+        if (!canAcquire(tick, packets)) return false;
         if (packets == 0) return true;
-        int used = used(tick);
-        if ((long) used + packets > capacity) return false;
         packetsByTick.merge(tick, packets, Integer::sum);
         return true;
+    }
+
+    /**
+     * Non-reserving feasibility check for the same window {@link #tryAcquire} uses. Callers that may
+     * yield a tick to another action use this to avoid claiming capacity they cannot actually reserve.
+     */
+    public boolean canAcquire(int tick, int packets) {
+        if (tick < 0 || packets < 0) return false;
+        if (packets == 0) return true;
+        return (long) used(tick) + packets <= capacity;
     }
 
     /** Rolls back a reservation that never became a sent packet. Clamps at zero. */

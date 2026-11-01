@@ -123,6 +123,8 @@ public final class CrystalCombatController {
     private boolean enabled;
     /** Default-off production gate: the module setting owns this; the controller only obeys it. */
     private boolean trapEnabled;
+    /** Beta cleanup setting; off keeps the legacy manual-cleanup path and sends nothing. */
+    private boolean autoCleanup;
     /** The single tester mode selector; Hybrid is never accepted. */
     private Mode mode = Mode.DIRECT_ONLY;
     /** Beta 16-combination layout filter; only consulted by the PistonOnly trap. */
@@ -208,6 +210,7 @@ public final class CrystalCombatController {
             });
             if (effectiveTrap()) stack.pistonTrap().enable();
             else stack.pistonTrap().disable();
+            stack.pistonTrap().setAutoCleanup(autoCleanup);
         }
         engineGeneration = stack.session().isOpen() ? stack.session().actionGeneration() : null;
         enabled = true;
@@ -325,7 +328,20 @@ public final class CrystalCombatController {
 
     /** Applies new settings to the existing stack; hazards, risk and observations are preserved. */
     public void reconfigure(dev.tntcoating.core.combat.DirectSettings settings) {
-        if (stack != null && stack.engineHost() != null) stack.engineHost().reconfigure(settings);
+        if (stack == null) return;
+        if (stack.engineHost() != null) stack.engineHost().reconfigure(settings);
+        // The cleanup switch is trap-local (not part of the pure DirectSettings record), but every config
+        // change still re-applies it here so a live stack can never keep a stale cleanup mode.
+        if (stack.pistonTrap() != null) stack.pistonTrap().setAutoCleanup(autoCleanup);
+    }
+
+    /**
+     * Production setting bridge for the beta auto-cleanup. Off by default; toggling takes effect on the
+     * current trap immediately and never touches risk, hazards or the offhand.
+     */
+    public void setAutoCleanup(boolean value) {
+        autoCleanup = value;
+        if (stack != null && stack.pistonTrap() != null) stack.pistonTrap().setAutoCleanup(value);
     }
 
     /** Death: the runtime ends the action generation and keeps hazards and friend debt untouched. */
@@ -475,6 +491,21 @@ public final class CrystalCombatController {
         Stack live = stack;
         if (live == null || !live.session().isOpen()) return;
         // The trap sees the server-authored block update before the engine cache; neither path sends here.
+        if (live.pistonTrap() != null) live.pistonTrap().onBlockUpdate(cell);
+        if (live.engineHost() != null) live.engineHost().onBlockUpdated(cell);
+    }
+
+    /**
+     * Ordered applied block update with the old and new block ids. This is the only production entry point
+     * that lets the ledger answer a structural placement (and thus mark a cell inferred-ours); the legacy
+     * cell-only overload above deliberately cannot earn ownership.
+     */
+    public void observeBlockUpdate(Cell cell, String oldBlock, String newBlock) {
+        Stack live = stack;
+        if (live == null || !live.session().isOpen() || cell == null) return;
+        live.ledger().observe(new Observation(live.session().connection(), nextHostReceipt++,
+            live.intake().appliedRevision(), System.nanoTime(), clientTick, ObservationKind.BLOCK_UPDATE,
+            null, cell, null, null, new ObservationPayload.BlockUpdate(oldBlock, newBlock, false)));
         if (live.pistonTrap() != null) live.pistonTrap().onBlockUpdate(cell);
         if (live.engineHost() != null) live.engineHost().onBlockUpdated(cell);
     }
@@ -687,9 +718,10 @@ public final class CrystalCombatController {
     }
 
     /**
-     * Phase 6.5 cleanup starvation hook. The trap's manual-cleanup obligation starts the wait; the engine
-     * counts server ticks and names the gap because this build has no cleanup intent origin. No packet is
-     * sent and no hazard or risk reservation is touched.
+     * Phase 6.5 cleanup starvation hook. The trap owns the request now: its cleanup stage asks for the
+     * starvation wait and clears it when it finishes, stops or loses the trap. This hook only retires a
+     * wait whose connection or action generation is gone. No packet is sent and no hazard or risk
+     * reservation is touched here.
      */
     private void noteCleanup(int serverTick, CombatEngine engine, PistonTrapController trap) {
         if (!stack.session().isOpen()) {
@@ -700,12 +732,7 @@ public final class CrystalCombatController {
         ActionGeneration gen = stack.session().actionGeneration();
         if (engine.cleanupPriority().expired(conn, gen)) {
             engine.cleanupPriority().clear();
-            return;
         }
-        if (engine.cleanupPriority().state().waiting()) return;
-        if (!trap.manualCleanupRequired()) return;
-        EntityKey victim = trap.activeTrap().map(active -> active.plan().target()).orElse(null);
-        engine.cleanupPriority().request(serverTick, new CleanupPriority.Deadline(conn, gen), victim);
     }
 
     /** Appends one free-form tester debug record; no effect when the debug log is not running. */
@@ -773,8 +800,9 @@ public final class CrystalCombatController {
             if (pistonLayouts.empty()) return "all piston layouts disabled";
             if (stack.pistonTrap() != null) {
                 if (stack.pistonTrap().manualCleanupRequired()) {
-                    // Manual cleanup is the default: list the exact blocks this trap placed so the player
-                    // can remove them by hand before confirming. No cleanup packet path exists.
+                    // Manual cleanup is the default when auto-cleanup is off (or skipped a cell): list the
+                    // exact blocks this trap placed so the player can remove them by hand before
+                    // confirming. The beta auto path removes only inferred-ours cells.
                     String reason = stack.pistonTrap().lastFailure();
                     String blocks = stack.pistonTrap().manualCleanupText();
                     StringBuilder text = new StringBuilder("manual cleanup required");
@@ -798,7 +826,7 @@ public final class CrystalCombatController {
         }
         CombatEngine engine = engineOrNull();
         if (mode == Mode.HYBRID && engine != null && engine.cleanupPriority().state().due()) {
-            return "cleanup due: no cleanup intent in this build";
+            return "cleanup due: waiting for the trap's cleanup slot";
         }
         EntityKey self = stack.client().selfKey();
         if (self != null && stack.risk().debt(self).count() > 0) return "risk debt";

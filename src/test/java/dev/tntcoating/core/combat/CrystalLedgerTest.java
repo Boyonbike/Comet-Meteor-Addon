@@ -310,6 +310,43 @@ class CrystalLedgerTest {
     }
 
     @Test
+    void aStateOnlyUpdateOfOurBlockKeepsInferredOwnership() {
+        CrystalLedger ledger = new CrystalLedger();
+
+        PlacementId placement = ledger.reservePlacement(CONN, CELL, OBSIDIAN);
+        ledger.markPlacementSent(placement, 5);
+        ledger.observe(blockUpdate(10, 6, CELL, "minecraft:air", OBSIDIAN));
+        assertEquals(Ownership.INFERRED_OURS, ledger.ownership(CELL));
+
+        // A state change on the block we placed (for example a piston's extended property) keeps the
+        // same block id. It cannot move ownership to another player, so cleanup may still treat the
+        // block as ours.
+        ledger.observe(blockUpdate(11, 7, CELL, OBSIDIAN, OBSIDIAN));
+        assertEquals(Ownership.INFERRED_OURS, ledger.ownership(CELL));
+
+        // A real re-placement still contests the cell: the old state is not our block any more.
+        ledger.observe(blockUpdate(12, 8, CELL, "minecraft:air", OBSIDIAN));
+        assertEquals(Ownership.CONTESTED, ledger.ownership(CELL));
+    }
+
+    @Test
+    void aStateOnlyUpdateOfAPendingPlacementLeavesItPending() {
+        CrystalLedger ledger = new CrystalLedger();
+
+        PlacementId placement = ledger.reservePlacement(CONN, CELL, OBSIDIAN);
+        ledger.markPlacementSent(placement, 5);
+
+        // A property flip can arrive before the placement's own block update. It proves nothing about
+        // ownership, so the placement must stay pending rather than contesting the cell.
+        ledger.observe(blockUpdate(10, 6, CELL, OBSIDIAN, OBSIDIAN));
+        assertEquals(Ownership.NOT_OURS, ledger.ownership(CELL));
+
+        // The placement's real update still confirms it, which proves the pending entry survived.
+        ledger.observe(blockUpdate(11, 7, CELL, "minecraft:air", OBSIDIAN));
+        assertEquals(Ownership.INFERRED_OURS, ledger.ownership(CELL));
+    }
+
+    @Test
     void anIdenticalBlockUpdateThatCouldBelongToAnotherSendContestsTheCell() {
         CrystalLedger ledger = new CrystalLedger();
 

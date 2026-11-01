@@ -64,7 +64,7 @@ public final class PistonSequence {
         MANUAL_CLEANUP
     }
 
-    /** Ownership is vanilla-unprovable by design; automatic mining is only ever allowed for CONFIRMED_OURS. */
+    /** Ownership is vanilla-unprovable by design; automatic mining needs CONFIRMED_OURS or an explicit inferred opt-in. */
     public enum Ownership {
         CONFIRMED_OURS,
         INFERRED_OURS,
@@ -128,7 +128,7 @@ public final class PistonSequence {
         PistonPhase.ATTACK, PistonPhase.WAIT_REMOVE, PistonPhase.CLEANUP, PistonPhase.COOLDOWN);
 
     private final PistonPlanner.Plan plan;
-    private final Config config;
+    private Config config;
     private final Vec computedPushed;
     private final List<PistonPhase> history = new ArrayList<>();
 
@@ -150,7 +150,6 @@ public final class PistonSequence {
     private int stageStartTick;
     private int beginTick;
     private int structuralRetries;
-    private int cleanupRetries;
     private int damageCheckedTick = Integer.MIN_VALUE;
 
     public PistonSequence(PistonPlanner.Plan plan, Config config) {
@@ -250,6 +249,16 @@ public final class PistonSequence {
 
     public Config config() {
         return config;
+    }
+
+    /**
+     * Live setting change for the running trap: inferred ownership may only be mined while the beta
+     * auto-cleanup setting is on. Nothing else about the sequence changes, and contested cells stay manual.
+     */
+    public void allowInferredCleanup(boolean allow) {
+        if (config.allowInferredCleanup() == allow) return;
+        config = new Config(config.rttP99Ticks(), config.trapDeadlineTicks(),
+            config.cleanupDeadlineTicks(), allow);
     }
 
     /** Final crystal position computed from the authoritative piston events + measured push rule. */
@@ -466,7 +475,7 @@ public final class PistonSequence {
         broadLocksHeld = false;
     }
 
-    /** Ownership-aware cleanup: automatic mining only for CONFIRMED_OURS; manual by default. */
+    /** Ownership-aware cleanup: automatic mining for CONFIRMED_OURS, inferred only when explicitly enabled. */
     public CleanupAction cleanupAction(Ownership ownership) {
         Objects.requireNonNull(ownership, "ownership");
         return switch (ownership) {
@@ -535,10 +544,11 @@ public final class PistonSequence {
         int timeout = phase == PistonPhase.CLEANUP ? config.cleanupDeadlineTicks()
             : config.stageTimeoutTicks();
         if (tick - stageStartTick > timeout) {
-            if (phase == PistonPhase.CLEANUP && cleanupRetries < 1) {
-                cleanupRetries++;
-                stageStartTick = tick;
-                return Optional.of("cleanup-retry");
+            if (phase == PistonPhase.CLEANUP) {
+                // The cleanup deadline is a deadline, not evidence: end in the documented manual fallback
+                // with the remaining blocks still listed. Risk stays retained and nothing is retired.
+                transition(PistonPhase.MANUAL_CLEANUP, tick);
+                return Optional.of("cleanup-deadline");
             }
             stageFailed(phase, "timeout", tick);
             return Optional.of("timeout:" + phase.name().toLowerCase(java.util.Locale.ROOT));

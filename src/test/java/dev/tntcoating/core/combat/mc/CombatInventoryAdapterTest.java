@@ -124,6 +124,34 @@ final class CombatInventoryAdapterTest {
     }
 
     @Test
+    void toolSlotPicksTheBestHotbarPickaxeAndNeverTheOffhand() {
+        Fixture fixture = fixture(false, false);
+        fixture.client().hotbar[2] = "minecraft:iron_pickaxe";
+        fixture.client().hotbar[5] = "minecraft:diamond_pickaxe";
+        fixture.client().offhand = "minecraft:netherite_pickaxe";
+
+        assertEquals(5, fixture.adapter().toolSlot("minecraft:obsidian"),
+            "the best hotbar pickaxe, not the offhand one");
+        assertEquals(5, fixture.adapter().toolSlot("minecraft:piston"),
+            "a pickaxe is the tool for the piston too");
+    }
+
+    @Test
+    void toolSlotUsesTheCurrentSlotForAnInstantBreakAndRefusesWithoutAPickaxe() {
+        Fixture fixture = fixture(false, false);
+        fixture.client().selectedSlot = 1;
+        fixture.client().hotbar[1] = "minecraft:redstone_torch";
+        assertEquals(1, fixture.adapter().toolSlot("minecraft:redstone_torch"));
+
+        fixture.client().hotbar[1] = "";
+        fixture.client().offhand = "minecraft:diamond_pickaxe";
+        assertEquals(-1, fixture.adapter().toolSlot("minecraft:obsidian"),
+            "no hotbar pickaxe: send nothing rather than reach into the offhand");
+        assertEquals(1, fixture.adapter().toolSlot("minecraft:redstone_torch"),
+            "an empty hand is enough for the torch");
+    }
+
+    @Test
     void adapterSourceNeverCallsLoanPrepareOrSpeedmine() throws IOException {
         String source = Files.readString(Path.of(
             "src/main/java/dev/tntcoating/core/combat/mc/CombatInventoryAdapter.java"));

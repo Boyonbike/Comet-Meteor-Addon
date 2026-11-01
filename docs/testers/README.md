@@ -6,8 +6,10 @@ the serialised Hybrid stage on real servers and send back evidence.
 
 > **Beta warning:** test only on servers where losing gear is acceptable. CrystalCombat can misplace,
 > break or attack a crystal, spend pots, or leave you standing in an explosion. The piston trap is
-> beta: it can leave blocks and crystals in the world, and **cleanup is manual**. Do not take it to a
-> server, fight or kit you are not prepared to lose.
+> beta: it can leave blocks and crystals in the world, and **cleanup is manual by default**. The new
+> beta **auto-cleanup** switch can remove the trap's own power, piston and supports, but it is off by
+> default and never touches contested or pre-existing blocks. Do not take it to a server, fight or kit
+> you are not prepared to lose.
 
 ## What is in this build
 
@@ -35,9 +37,12 @@ the serialised Hybrid stage on real servers and send back evidence.
 - **Conservative profile only.** Min target damage 4, max self damage 6, remaining-health margin 2 and
   friend damage 2 are the production floor. Weaker values refuse to enable.
 - **Anti-suicide is locked on.** Turning it off disables the module immediately.
-- **No full combat UI and no automatic cleanup; defence tactics are present but default off.** The
-  module's normal Meteor settings screen shows its settings; there is no separate piston screen and no
-  cleanup/mining packet path.
+- **No full combat UI; cleanup is manual by default, with an off-by-default beta auto-cleanup.** The
+  module's normal Meteor settings screen shows its settings; there is no separate piston screen.
+  **auto-cleanup** (General, default off; description: *Beta: removes only the power, piston and
+  supports this module placed and saw confirmed. Contested blocks are always left for you.*) removes
+  only the trap's own confirmed cells through vanilla hotbar breaking on the dispatch path. Defence
+  tactics are present but default off.
 - Diagnostics are opt-in: the **Debug log** is off by default and keeps evidence in memory only.
 
 ## Computed position, not a server-confirmed position
@@ -87,6 +92,16 @@ world or an anarchy server where block loss is acceptable, and keep to one trap 
 - After manually removing the debris, run `.crystalcombat cleanup confirm` to release the trap slot.
   The command sends no packet and keeps the ledger hazards and sent risk as debt. Without it, PistonOnly
   stays inert with `manual cleanup required` in the info string.
+- **Optional beta auto-cleanup:** turn on **auto-cleanup** (off by default) and watch the trap remove its
+  own power, piston and supports after the crystal is resolved. It is deliberately narrow: only cells
+  this trap placed and saw confirmed are broken, power first, then the piston, then its supports;
+  contested, changed and pre-existing blocks are never touched. It uses a hotbar pickaxe for the piston
+  and obsidian (never the offhand); if the tool a cell needs is missing it sends nothing for that cell
+  and ends in manual cleanup, while a torch cell needs no tool and can still be removed. Obsidian
+  supports usually take longer than the 40-tick cleanup deadline, so expect
+  `manual cleanup required` with the remaining blocks even when the power and piston were removed.
+  Disable, death, respawn or a disconnect stops it immediately, cancels the destruction it started and
+  sends no further cleanup packet.
 - Support → piston → crystal → power order, each block confirmed before the next stage.
 - The piston faces the target; the power block lands only after a unique crystal spawn binds.
 - No attack before the authoritative piston extension events; exactly one swing.
@@ -165,12 +180,14 @@ Review the preview before `confirm`, and do not attach an export publicly if you
   plan is chosen, not how a packet is sent.
 - The computed final crystal position is not server-confirmed. C21 suppresses crystal position sync;
   the only evidence is the piston block events plus the audited numeric push rules.
-- **Manual cleanup is the default.** The trap does not mine, break or otherwise clean up its supports,
-  piston, power block or any crystal after a trap ends, aborts, times out, or when you disable the
-  module. Leave it and remove the blocks yourself only when safe; the trap slot stays occupied until
-  reconciliation so other traps cannot start over the same debris. Run `.crystalcombat cleanup confirm`
-  after removing the debris; it releases only the trap slot, sends no packets, and keeps hazards and
-  sent risk as debt.
+- **Manual cleanup is the default.** With **auto-cleanup** off, the trap does not mine, break or
+  otherwise clean up its supports, piston, power block or any crystal after a trap ends, aborts, times
+  out, or when you disable the module. Leave it and remove the blocks yourself only when safe; the trap
+  slot stays occupied until reconciliation so other traps cannot start over the same debris. Run
+  `.crystalcombat cleanup confirm` after removing the debris; it releases only the trap slot, sends no
+  packets, and keeps hazards and sent risk as debt. With **auto-cleanup** on, the trap breaks only the
+  cells it placed and saw confirmed (power, piston, supports), never contested or pre-existing blocks,
+  and the same `.crystalcombat cleanup confirm` still releases the slot and keeps the debt.
 - Each of the sixteen layouts is beta and not yet server-confirmed. "All 16 measured" means the
   audited local traces agree on the 1.02 push; it does not mean every server behaves identically.
 - There is no live module-level `buildStack` test (a source guard covers the trap/mode wiring); a real-client item is in

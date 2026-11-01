@@ -194,13 +194,29 @@ final class PistonSequenceTest {
     }
 
     @Test
-    void cleanupDeadlineBacksOffOnceThenEscalates() {
+    void cleanupDeadlineEscalatesStraightToManualWithoutRetrying() {
         PistonSequence seq = atCleanup(10);
-        assertEquals("cleanup-retry", seq.tick(52).orElseThrow());
-        assertEquals(PistonSequence.PistonPhase.CLEANUP, seq.phase());
-        seq.tick(93);
-        assertEquals(PistonSequence.PistonPhase.ABORTED, seq.phase());
+        assertEquals("cleanup-deadline", seq.tick(52).orElseThrow());
+        assertEquals(PistonSequence.PistonPhase.MANUAL_CLEANUP, seq.phase());
         assertTrue(seq.flags().riskRetained());
+        assertTrue(seq.flags().manualCleanupRequired());
+        assertTrue(seq.flags().noNewTrapUntilReconciled());
+        assertFalse(seq.flags().broadLocksHeld());
+    }
+
+    @Test
+    void inferredCleanupCanBeToggledOnALiveSequence() {
+        PistonSequence seq = planOnly(PistonSequence.Config.defaults());
+        assertEquals(PistonSequence.CleanupAction.MANUAL,
+            seq.cleanupAction(PistonSequence.Ownership.INFERRED_OURS));
+        seq.allowInferredCleanup(true);
+        assertEquals(PistonSequence.CleanupAction.MINE,
+            seq.cleanupAction(PistonSequence.Ownership.INFERRED_OURS));
+        assertEquals(PistonSequence.CleanupAction.MANUAL,
+            seq.cleanupAction(PistonSequence.Ownership.CONTESTED));
+        seq.allowInferredCleanup(false);
+        assertEquals(PistonSequence.CleanupAction.MANUAL,
+            seq.cleanupAction(PistonSequence.Ownership.INFERRED_OURS));
     }
 
     @Test
