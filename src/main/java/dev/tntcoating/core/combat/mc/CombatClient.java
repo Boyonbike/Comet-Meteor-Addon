@@ -70,6 +70,7 @@ public interface CombatClient {
      * Phase 4.6: whether a blocker/support may be placed on top of {@code base}. Read-only: the same
      * {@code isFaceSturdy} fact vanilla placement uses. Never mutates the world.
      */
+    /** Tests the top face of the supplied support block; callers pass placementCell.below(). */
     boolean supportBelow(Cell base);
 
     /** Registry id at the cell, or {@code null}/air when empty. Default is for lightweight fakes. */

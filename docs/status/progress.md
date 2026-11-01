@@ -239,3 +239,9 @@ The jar and source zip are rebuilt from a clean tree after this entry is committ
 - No client or server can be launched in this environment, so runtime behaviour, Barrier ack ordering on real servers and packet logs were not personally observed.
 
 Stopped as instructed: no Phase 7, no version ports and no P9 triage were started.
+
+## Later parity pass — 2026-11-01
+
+See [the three-version parity report](version-parity-2026-11-01.md) for the current
+verification totals, adapter corrections, tester builds and compatibility exceptions.
+The earlier stage report above is retained as historical evidence.
