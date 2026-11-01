@@ -169,4 +169,33 @@ final class ObservationIntakeTest {
             new ObservationIntake.RawSetback()), null);
         assertEquals(0, fixture.intake.queued());
     }
+
+    @Test
+    void deltaSyncedHealthIsCompletedFromAppliedEntity() {
+        Fixture fixture = fixture();
+        ObservationIntake intake = fixture.intake();
+        // Plain damage with no absorption: the server sends only the health field.
+        fixture.client().appliedHealth.put(1, new CombatClient.HealthPair(11.0, 0.0));
+        ObservationIntake.Receipt healthOnly = intake.record(1L, 3, 0,
+            new ObservationIntake.RawEntityData(1, List.of(new SynchedEntityData.DataValue<>(
+                HEALTH_ID, EntityDataSerializers.FLOAT, 11.0f))));
+        intake.apply(healthOnly, null);
+        // Absorption eaten without a health change: the server sends only the absorption field.
+        fixture.client().appliedHealth.put(1, new CombatClient.HealthPair(11.0, 2.5));
+        ObservationIntake.Receipt absorptionOnly = intake.record(1L, 4, 0,
+            new ObservationIntake.RawEntityData(1, List.of(new SynchedEntityData.DataValue<>(
+                ABSORPTION_ID, EntityDataSerializers.FLOAT, 2.5f))));
+        intake.apply(absorptionOnly, null);
+
+        List<Observation> observations = intake.drain();
+        org.junit.jupiter.api.Assertions.assertEquals(2, observations.size());
+        ObservationPayload.EntityData first = (ObservationPayload.EntityData) observations.get(0).payload();
+        ObservationPayload.EntityData second = (ObservationPayload.EntityData) observations.get(1).payload();
+        org.junit.jupiter.api.Assertions.assertTrue(first.healthKnown() && first.absorptionKnown());
+        org.junit.jupiter.api.Assertions.assertEquals(11.0, first.health());
+        org.junit.jupiter.api.Assertions.assertEquals(0.0, first.absorption());
+        org.junit.jupiter.api.Assertions.assertTrue(second.healthKnown() && second.absorptionKnown());
+        org.junit.jupiter.api.Assertions.assertEquals(11.0, second.health());
+        org.junit.jupiter.api.Assertions.assertEquals(2.5, second.absorption());
+    }
 }
