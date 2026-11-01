@@ -197,6 +197,33 @@ final class PistonPlannerTest {
     }
 
     @Test
+    void selfBoundPricesTheSweptMidPointNotOnlyItsEndpoints() {
+        PistonLayoutSelection.Combination east = PistonLayoutSelection.byId("east-feet-torch")
+            .orElseThrow();
+        Fake world = cradle();
+        world.self = new EntityKey(CONN, 98, UUID.randomUUID());
+        // The east push frames sit on z = 0.5 at x = -0.5 (start), 0.01 (mid) and 0.52 (final), all at y = -59.5. A player
+        // 1.97 blocks from the mid frame is 2.035 blocks from both endpoints, so only the mid frame is
+        // inside the fake's two-block blast radius. An endpoint-only self bound would accept this plan.
+        world.positions.put(world.self, new Vec(0.01, -59.5, 2.47));
+        PistonPlanner planner = new PistonPlanner();
+        planner.setSelection(PistonLayoutSelection.of(List.of(east)));
+        PistonPlanner.Result rejected = planner.tick(world, List.of(TARGET), 64);
+        assertTrue(rejected.plan().isEmpty(),
+            "the mid-point exposure must reject the plan; last reject " + rejected.lastReject());
+        assertEquals(PistonPlanner.Reject.SELF_BOUNDS, rejected.lastReject());
+
+        // Same layout and endpoints; only the mid frame moves outside the radius, so the plan appears.
+        world.positions.put(world.self, new Vec(0.01, -59.5, 2.57));
+        PistonPlanner acceptanceControl = new PistonPlanner();
+        acceptanceControl.setSelection(PistonLayoutSelection.of(List.of(east)));
+        PistonPlanner.Result accepted = acceptanceControl.tick(world, List.of(TARGET), 64);
+        assertTrue(accepted.plan().isPresent(),
+            "every swept frame outside the radius must accept the plan; last reject "
+                + accepted.lastReject());
+    }
+
+    @Test
     void unknownMotionIsRejectedAndNeverSampled() {
         Fake world = cradle();
         world.motionUnknown.add(world.self);

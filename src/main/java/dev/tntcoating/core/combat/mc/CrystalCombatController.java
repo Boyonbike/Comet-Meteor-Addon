@@ -773,7 +773,16 @@ public final class CrystalCombatController {
             if (pistonLayouts.empty()) return "all piston layouts disabled";
             if (stack.pistonTrap() != null) {
                 if (stack.pistonTrap().manualCleanupRequired()) {
-                    return "manual cleanup required: .crystalcombat cleanup confirm";
+                    // Manual cleanup is the default: list the exact blocks this trap placed so the player
+                    // can remove them by hand before confirming. No cleanup packet path exists.
+                    String reason = stack.pistonTrap().lastFailure();
+                    String blocks = stack.pistonTrap().manualCleanupText();
+                    StringBuilder text = new StringBuilder("manual cleanup required");
+                    if (!reason.isEmpty()) text.append(" (").append(reason).append(')');
+                    text.append(": ");
+                    if (!blocks.isEmpty()) text.append("remove ").append(blocks).append("; ");
+                    text.append(".crystalcombat cleanup confirm");
+                    return text.toString();
                 }
                 var active = stack.pistonTrap().activeTrap();
                 if (active.isPresent()) {

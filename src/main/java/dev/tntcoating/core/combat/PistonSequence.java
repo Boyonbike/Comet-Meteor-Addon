@@ -508,6 +508,15 @@ public final class PistonSequence {
         abort(reason, tick);
     }
 
+    /**
+     * Abort for a whole-trap reason that is not a failed placement (for example the target left the hole):
+     * structural retries never apply, even when the current phase is structural.
+     */
+    public void abortTrap(String reason, int tick) {
+        if (!began || phase == PistonPhase.ABORTED || phase == PistonPhase.MANUAL_CLEANUP) return;
+        abort(reason, tick);
+    }
+
     /** Advance deadlines. Returns a non-empty string when this tick changed the trap state. */
     public Optional<String> tick(int tick) {
         if (!began || phase == PistonPhase.ABORTED || phase == PistonPhase.MANUAL_CLEANUP) {

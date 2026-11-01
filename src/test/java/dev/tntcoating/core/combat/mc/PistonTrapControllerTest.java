@@ -306,6 +306,430 @@ final class PistonTrapControllerTest {
     }
 
     @Test
+    void verticalPushOutOfTheHoleDuringWaitPushAbortsWithoutAttack() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            int attempts = harness.fixture.sink.attempts;
+            // An explosion near the target destroys a block and lifts the target one block out of its hole.
+            // Our piston has not pushed it, and the crystal was placed for the old cell, so the planned
+            // attack is no longer verified.
+            harness.controller.onBlockUpdate(new Cell(3, -60, 0));
+            harness.world.positions.put(harness.target, new Vec(0.5, -59.0, 0.5));
+            harness.tick(7);
+
+            assertEquals(PistonSequence.PistonPhase.ABORTED, harness.sequence().phase());
+            assertEquals("target-pushed-vertically", harness.controller.lastFailure());
+            assertEquals(0, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+            assertEquals(attempts, harness.fixture.sink.attempts, "the abort sends nothing");
+            assertTrue(harness.controller.riskRetained());
+            assertTrue(harness.controller.manualCleanupRequired());
+            assertTrue(harness.debug.stream().anyMatch(line ->
+                    line.contains("external-disturbance") && line.contains("cell=Cell[x=3, y=-60, z=0]")),
+                harness.debug.toString());
+            assertTrue(harness.debug.stream().anyMatch(line ->
+                    line.contains("abort stage=WAIT_PUSH reason=target-pushed-vertically")),
+                harness.debug.toString());
+            assertTrue(harness.debug.stream().anyMatch(line ->
+                    line.contains("manual-cleanup-blocks")
+                        && line.contains("reason=target-pushed-vertically")
+                        && line.contains("power (-3, -60, 0)")
+                        && line.contains("piston (-2, -60, 0)")
+                        && line.contains("crystal (-1, -60, 0)")),
+                harness.debug.toString());
+            assertTrue(harness.incidents.stream().anyMatch(line ->
+                    line.contains("trap-aborted-after-power")
+                        && line.contains("reason=target-pushed-vertically")),
+                harness.incidents.toString());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void normalJumpInTheHoleDoesNotAbortTheTrap() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            // A normal jump: at most 0.4 blocks of rise per tick, then the fall back to the hole floor.
+            // There is no external block disturbance, so the trap must keep waiting for the piston.
+            double[] heights = {-59.6, -59.2, -58.8, -58.5, -58.9, -59.4, -60.0};
+            int tick = 7;
+            for (double y : heights) {
+                harness.world.positions.put(harness.target, new Vec(0.5, y, 0.5));
+                harness.tick(tick++);
+                assertEquals(PistonSequence.PistonPhase.WAIT_PUSH, harness.controller.phase(),
+                    "a jump is not an explosion push");
+            }
+            assertEquals("", harness.controller.lastFailure());
+            assertTrue(harness.debug.stream().noneMatch(line -> line.contains("external-disturbance")),
+                harness.debug.toString());
+
+            harness.world.powered.add(PISTON);
+            harness.world.extended.add(PISTON);
+            harness.tick(tick++);
+            harness.tick(tick);
+            assertEquals(1, harness.fixture.sink.count(FakeSink.Kind.ATTACK),
+                "the trap still attacks after a normal jump");
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void jumpWithDistantBlockUpdateDoesNotAbort() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            harness.world.positions.put(harness.target, new Vec(0.5, -59.6, 0.5));
+            harness.tick(7);
+            harness.world.positions.put(harness.target, new Vec(0.5, -59.2, 0.5));
+            harness.tick(8);
+            // The block change is outside the disturbance radius of the target: it cannot be the blast
+            // that lifted it, so even a sharp rise is not vertical-push evidence.
+            harness.controller.onBlockUpdate(new Cell(5, -60, 5));
+            harness.world.positions.put(harness.target, new Vec(0.5, -57.8, 0.5));
+            harness.tick(9);
+
+            assertNotEquals(PistonSequence.PistonPhase.ABORTED, harness.controller.phase());
+            assertEquals("", harness.controller.lastFailure());
+            assertTrue(harness.debug.stream().noneMatch(line -> line.contains("external-disturbance")),
+                harness.debug.toString());
+
+            harness.world.positions.put(harness.target, new Vec(0.5, -60.0, 0.5));
+            harness.tick(10);
+            harness.world.powered.add(PISTON);
+            harness.world.extended.add(PISTON);
+            harness.tick(11);
+            harness.tick(12);
+            assertEquals(1, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void verticalPushInWaitPushAbortsOnExternalDisturbance() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            int attempts = harness.fixture.sink.attempts;
+            harness.controller.onBlockUpdate(new Cell(3, -60, 0));
+            harness.world.positions.put(harness.target, new Vec(0.5, -58.9, 0.5));
+            harness.tick(7);
+
+            assertEquals(PistonSequence.PistonPhase.ABORTED, harness.sequence().phase());
+            assertEquals("target-pushed-vertically", harness.controller.lastFailure());
+            assertEquals(0, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+            assertEquals(attempts, harness.fixture.sink.attempts, "the abort sends nothing");
+            assertTrue(harness.controller.riskRetained());
+            assertTrue(harness.controller.manualCleanupRequired());
+            assertTrue(harness.debug.stream().anyMatch(line -> line.contains("external-disturbance")),
+                harness.debug.toString());
+            assertTrue(harness.debug.stream().anyMatch(line ->
+                    line.contains("abort stage=WAIT_PUSH reason=target-pushed-vertically")),
+                harness.debug.toString());
+            assertTrue(harness.incidents.stream().anyMatch(line ->
+                    line.contains("trap-aborted-after-power")
+                        && line.contains("reason=target-pushed-vertically")),
+                harness.incidents.toString());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void verticalPushInPowerAbortsBeforeTheAttack() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToPower();
+            int attempts = harness.fixture.sink.attempts;
+            harness.controller.onBlockUpdate(new Cell(3, -60, 0));
+            harness.world.positions.put(harness.target, new Vec(0.5, -58.9, 0.5));
+            harness.tick(7);
+            assertEquals(PistonSequence.PistonPhase.ABORTED, harness.sequence().phase());
+            assertEquals("target-pushed-vertically", harness.controller.lastFailure());
+            assertEquals(0, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+            assertEquals(attempts, harness.fixture.sink.attempts, "the abort sends nothing");
+            assertEquals(1, harness.fixture.sink.count(FakeSink.Kind.POWER));
+            assertTrue(harness.controller.riskRetained());
+            assertTrue(harness.controller.manualCleanupRequired());
+            assertTrue(harness.debug.stream().anyMatch(line ->
+                    line.contains("abort stage=POWER reason=target-pushed-vertically")),
+                harness.debug.toString());
+            assertTrue(harness.incidents.stream().anyMatch(line ->
+                    line.contains("trap-aborted-after-power")
+                        && line.contains("stage=POWER")),
+                harness.incidents.toString());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void explosionLiftInWaitPushAbortsWithoutABlockUpdate() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            int attempts = harness.fixture.sink.attempts;
+            // Deliver the blast through the runtime's registered passive observer: production wiring,
+            // not a direct controller call. No block update accompanies the explosion.
+            harness.explode(new Vec(1.5, -60.0, 0.5));
+            // The same server tick lifts the target one block out of the hole.
+            harness.world.positions.put(harness.target, new Vec(0.5, -59.0, 0.5));
+            harness.tick(7);
+
+            assertEquals(PistonSequence.PistonPhase.ABORTED, harness.sequence().phase());
+            assertEquals("target-pushed-vertically", harness.controller.lastFailure());
+            assertEquals(0, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+            assertEquals(attempts, harness.fixture.sink.attempts, "the abort sends nothing");
+            assertTrue(harness.controller.riskRetained());
+            assertTrue(harness.controller.manualCleanupRequired());
+            assertTrue(harness.debug.stream().anyMatch(line ->
+                    line.contains("external-explosion") && line.contains("distance=1.00")),
+                harness.debug.toString());
+            assertTrue(harness.debug.stream().noneMatch(line -> line.contains("external-disturbance")),
+                "no block update was delivered: " + harness.debug);
+            assertTrue(harness.debug.stream().anyMatch(line ->
+                    line.contains("abort stage=WAIT_PUSH reason=target-pushed-vertically")),
+                harness.debug.toString());
+            assertTrue(harness.debug.stream().anyMatch(line ->
+                    line.contains("manual-cleanup-blocks")
+                        && line.contains("reason=target-pushed-vertically")
+                        && line.contains("power (-3, -60, 0)")
+                        && line.contains("piston (-2, -60, 0)")
+                        && line.contains("crystal (-1, -60, 0)")),
+                harness.debug.toString());
+            assertTrue(harness.incidents.stream().anyMatch(line ->
+                    line.contains("trap-aborted-after-power")
+                        && line.contains("reason=target-pushed-vertically")),
+                harness.incidents.toString());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void explosionFarFromTheTargetDoesNotAbort() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            int attempts = harness.fixture.sink.attempts;
+            // The blast is far outside the eight-block evidence radius: it cannot have lifted the target.
+            harness.explode(new Vec(12.5, -60.0, 0.5));
+            harness.world.positions.put(harness.target, new Vec(0.5, -59.0, 0.5));
+            harness.tick(7);
+
+            assertNotEquals(PistonSequence.PistonPhase.ABORTED, harness.controller.phase());
+            assertEquals("", harness.controller.lastFailure());
+            assertEquals(0, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+            assertEquals(attempts, harness.fixture.sink.attempts);
+            assertTrue(harness.debug.stream().noneMatch(line -> line.contains("external-explosion")),
+                harness.debug.toString());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void sustainedHalfBlockRiseWithExplosionAborts() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            int attempts = harness.fixture.sink.attempts;
+            harness.explode(new Vec(1.5, -60.0, 0.5));
+            // A sustained lift of exactly 0.5 blocks per tick clears the strict 0.45 threshold; the old
+            // strict 0.5 comparison and the missing evidence source both let it through.
+            harness.world.positions.put(harness.target, new Vec(0.5, -59.5, 0.5));
+            harness.tick(7);
+            harness.world.positions.put(harness.target, new Vec(0.5, -59.0, 0.5));
+            harness.tick(8);
+
+            assertEquals(PistonSequence.PistonPhase.ABORTED, harness.sequence().phase());
+            assertEquals("target-pushed-vertically", harness.controller.lastFailure());
+            assertEquals(0, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+            assertEquals(attempts, harness.fixture.sink.attempts);
+            assertTrue(harness.controller.riskRetained());
+            assertTrue(harness.debug.stream().anyMatch(line ->
+                    line.contains("abort stage=WAIT_PUSH reason=target-pushed-vertically")),
+                harness.debug.toString());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void explosionDuringSupportsDoesNotAbort() {
+        Harness harness = new Harness();
+        try {
+            // A missing support keeps the trap in SUPPORTS while its placement is pending.
+            Cell support = new Cell(-1, -61, 0);
+            harness.world.blocks.remove(support);
+            harness.tick(1); // scan -> reserve
+            harness.tick(2); // reserve -> supports, support placement pending
+            assertEquals(PistonSequence.PistonPhase.SUPPORTS, harness.controller.phase());
+            harness.explode(new Vec(1.5, -60.0, 0.5));
+            // The phase guard ignores the blast before POWER: no evidence is armed and nothing aborts.
+            assertTrue(harness.debug.stream().noneMatch(line -> line.contains("external-explosion")),
+                harness.debug.toString());
+            assertEquals("", harness.controller.lastFailure());
+            assertNotEquals(PistonSequence.PistonPhase.ABORTED, harness.controller.phase());
+
+            // A pre-POWER lift is the pre-existing target-left-envelope rule, never vertical-push
+            // evidence: the ignored explosion must not have armed a false abort.
+            harness.world.positions.put(harness.target, new Vec(0.5, -59.0, 0.5));
+            harness.tick(3);
+            assertEquals(PistonSequence.PistonPhase.ABORTED, harness.sequence().phase());
+            assertTrue(harness.debug.stream().noneMatch(line ->
+                    line.contains("target-pushed-vertically")), harness.debug.toString());
+            assertTrue(harness.debug.stream().noneMatch(line -> line.contains("external-explosion")),
+                harness.debug.toString());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void ourOwnPlacementsAndPistonExtensionDoNotCountAsDisturbance() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPushWithSupport();
+            // The piston extension arrives through the same block-observation callback as an external
+            // change; it is a plan cell, so it must never be recorded as explosion evidence.
+            harness.controller.onBlockUpdate(harness.plan().push().extension());
+            // The support, piston and power were all confirmed through onBlockUpdate; none may be
+            // recorded as an external disturbance even though the target stays put.
+            harness.world.powered.add(PISTON);
+            harness.world.extended.add(PISTON);
+            harness.tick(7);
+            harness.tick(8);
+            harness.tick(9);
+
+            assertNotEquals(PistonSequence.PistonPhase.ABORTED, harness.controller.phase());
+            assertEquals("", harness.controller.lastFailure());
+            assertEquals(1, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+            assertTrue(harness.debug.stream().noneMatch(line -> line.contains("external-disturbance")),
+                harness.debug.toString());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void manualCleanupInfoStringListsSupportsWithTheirCoordinates() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPushWithSupport();
+            harness.controller.onBlockUpdate(new Cell(3, -60, 0));
+            harness.world.positions.put(harness.target, new Vec(0.5, -58.9, 0.5));
+            harness.tick(7);
+            assertEquals(PistonSequence.PistonPhase.ABORTED, harness.controller.phase());
+
+            String text = harness.controller.manualCleanupText();
+            assertTrue(text.contains("supports [(-1, -61, 0)]"), text);
+            assertTrue(text.contains("power (-3, -60, 0)"), text);
+            assertTrue(text.contains("piston (-2, -60, 0)"), text);
+            assertTrue(text.contains("crystal (-1, -60, 0)"), text);
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void manualCleanupCrystalMovesToThePushedCellAndDisappearsAfterTheAttack() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            assertTrue(harness.controller.manualCleanupText().contains("crystal (-1, -60, 0)"),
+                "before the push the crystal is still at the placement cell");
+
+            harness.world.powered.add(PISTON);
+            harness.world.extended.add(PISTON);
+            harness.tick(7);
+            assertEquals(PistonSequence.PistonPhase.WAIT_PUSH, harness.controller.phase());
+            String pushed = harness.controller.manualCleanupText();
+            assertTrue(pushed.contains("crystal (0, -60, 0)"), pushed);
+            assertFalse(pushed.contains("crystal (-1, -60, 0)"), pushed);
+
+            harness.tick(8);
+            harness.tick(9);
+            assertEquals(1, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+            String attacked = harness.controller.manualCleanupText();
+            assertFalse(attacked.contains("crystal"), attacked);
+            assertTrue(attacked.contains("power (-3, -60, 0)"), attacked);
+            assertTrue(attacked.contains("piston (-2, -60, 0)"), attacked);
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void manualCleanupOmitsTheCrystalAfterRemovalObservation() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            EntityKey spawn = new EntityKey(harness.fixture.ticket.conn(), 42, SPAWN_UUID);
+            harness.controller.onCrystalRemoved(spawn);
+            assertFalse(harness.controller.manualCleanupText().contains("crystal"),
+                harness.controller.manualCleanupText());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void downwardPushWithNearbyDisturbanceDoesNotAbort() {
+        Harness harness = new Harness();
+        try {
+            harness.advanceToWaitPush();
+            harness.controller.onBlockUpdate(new Cell(3, -60, 0));
+            // Explosion-style block evidence is present, but the target is pushed down
+            // (holed_vertical): the detector only matches upward impulses, so the trap must still attack.
+            harness.world.positions.put(harness.target, new Vec(0.5, -60.6, 0.5));
+            harness.tick(7);
+            assertNotEquals(PistonSequence.PistonPhase.ABORTED, harness.controller.phase());
+            harness.world.powered.add(PISTON);
+            harness.world.extended.add(PISTON);
+            harness.tick(8);
+            harness.tick(9);
+            assertEquals(1, harness.fixture.sink.count(FakeSink.Kind.ATTACK));
+            assertNotEquals("target-pushed-vertically", harness.controller.lastFailure());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void manualCleanupInfoStringListsTheBlocksTheTrapPlaced() {
+        Harness harness = new Harness();
+        CrystalCombatController module = new CrystalCombatController(() -> null, harness::stack);
+        try {
+            module.setMode(Mode.PISTON_ONLY);
+            module.setTrapEnabled(true);
+            module.setPistonLayouts(PistonLayoutSelection.of(List.of(
+                PistonLayoutSelection.byId("east-feet-torch").orElseThrow())));
+            assertTrue(module.enable());
+            harness.advanceToWaitPush();
+            harness.controller.onBlockUpdate(new Cell(3, -60, 0));
+            harness.world.positions.put(harness.target, new Vec(0.5, -59.0, 0.5));
+            harness.tick(7);
+            module.tick(8);
+
+            String reason = module.waitReason();
+            assertTrue(reason.startsWith("manual cleanup required"), reason);
+            assertTrue(reason.contains("target-pushed-vertically"), reason);
+            assertTrue(reason.contains("power (-3, -60, 0)"), reason);
+            assertTrue(reason.contains("piston (-2, -60, 0)"), reason);
+            assertTrue(reason.contains("crystal (-1, -60, 0)"), reason);
+            assertFalse(reason.contains("supports ["), reason);
+            assertTrue(reason.endsWith(".crystalcombat cleanup confirm"), reason);
+            assertEquals(reason, module.infoString());
+        } finally {
+            module.disable();
+        }
+    }
+
+    @Test
     void timeoutAndManualCleanupRetainSentRisk() {
         Harness harness = new Harness();
         harness.tick(1);
@@ -1222,6 +1646,14 @@ final class PistonTrapControllerTest {
             controller.tick(serverTick, TickBudget.unlimited());
         }
 
+        /**
+         * Delivers an explosion centre through the runtime's registered observer seam. This is exactly
+         * the production path: the runtime applies the EXPLOSION observation and forwards its centre.
+         */
+        void explode(Vec centre) {
+            fixture.runtime.explosionObserver().accept(centre);
+        }
+
         /** Removes a material from both the client hotbar and the planner's world view. */
         void removeMaterial(String itemId) {
             for (int slot = 0; slot < fixture.client.hotbar.length; slot++) {
@@ -1251,13 +1683,50 @@ final class PistonTrapControllerTest {
             throw new AssertionError("no free hotbar slot");
         }
 
-        /** Runs through piston + crystal + power dispatch and one binding spawn, ending in WAIT_PUSH. */
-        void advanceToWaitPush() {
+        /** Runs through piston + crystal dispatch and one binding spawn, ending in POWER. */
+        void advanceToPower() {
             tick(1); // scan -> supports
             tick(2); // supports settle -> piston
             tick(3); // piston packet sent, awaiting block observation
             confirmPiston();
             tick(4); // crystal packet
+            deliverSpawn();
+            tick(5); // bind -> power
+            tick(6); // power packet sent, awaiting block observation
+            assertEquals(PistonSequence.PistonPhase.POWER, controller.phase());
+            assertEquals(Optional.of(POWER), controller.pendingCell());
+        }
+
+        /** Runs through piston + crystal + power dispatch and one binding spawn, ending in WAIT_PUSH. */
+        void advanceToWaitPush() {
+            advanceToPower();
+            confirmPower();
+            assertEquals(PistonSequence.PistonPhase.WAIT_PUSH, controller.phase());
+        }
+
+        /**
+         * Same as {@link #advanceToWaitPush}, but the planner needs one support under the crystal; the
+         * support is placed and confirmed through the same block-observation callback as production.
+         */
+        void advanceToWaitPushWithSupport() {
+            Cell support = new Cell(-1, -61, 0);
+            world.blocks.remove(support);
+            tick(1); // scan -> supports
+            tick(2); // support packet sent, awaiting block observation
+            assertEquals(Optional.of(support), controller.pendingCell());
+            world.put(support, "minecraft:obsidian");
+            controller.onBlockUpdate(support);
+            tick(3); // piston packet sent, awaiting block observation
+            confirmPiston();
+            tick(4); // crystal packet
+            deliverSpawn();
+            tick(5); // bind -> power
+            tick(6); // power packet sent, awaiting block observation
+            confirmPower();
+            assertEquals(PistonSequence.PistonPhase.WAIT_PUSH, controller.phase());
+        }
+
+        private void deliverSpawn() {
             EntityKey spawn = new EntityKey(fixture.ticket.conn(), 42, SPAWN_UUID);
             controller.onCrystalSpawn(spawn, "minecraft:end_crystal", SPAWN_UUID, SOURCE);
             // The live world already contains the crystal at bind time, as production does.
@@ -1265,10 +1734,6 @@ final class PistonTrapControllerTest {
             world.positions.put(spawn, SOURCE.center());
             world.uuids.put(spawn, SPAWN_UUID);
             fixture.client.putCrystal(42, SPAWN_UUID, SOURCE.center());
-            tick(5); // bind -> power
-            tick(6); // power packet sent, awaiting block observation
-            confirmPower();
-            assertEquals(PistonSequence.PistonPhase.WAIT_PUSH, controller.phase());
         }
 
         /** Applies the server-authored piston block state and its observation event. */

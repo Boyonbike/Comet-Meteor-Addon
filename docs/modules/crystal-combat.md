@@ -65,6 +65,60 @@ The command releases only the single-trap slot and the plan's scheduler locks. I
 keeps the ledger hazards and sent risk as debt. Until it is run, the info string says `manual cleanup
 required`; `piston trap disabled` and `all piston layouts disabled` are reported separately.
 
+The info string also lists the blocks this trap actually placed, with their coordinates, so the player
+does not have to guess what the trap left behind. Only cells whose placement packet was sent are named:
+power first, then the piston, then any supports, then the crystal while it is still present (at the source
+cell before the push, at the computed pushed cell after it; it is omitted once the attack has been sent or
+its removal was observed). The abort reason is included when one exists, for example:
+
+```
+manual cleanup required (target-pushed-vertically): remove power (-3, -60, 0), piston (-2, -60, 0), crystal (-1, -60, 0); .crystalcombat cleanup confirm
+```
+
+The debug log records the same list and reason on the phase change as
+`manual-cleanup-blocks reason=... blocks=...`. Manual cleanup remains the only path in this build: no
+cleanup packet, mining request or block-break action is added by the list.
+
+## Vertical-push abort
+
+During POWER and WAIT_PUSH the trap watches the verified target. It aborts with
+`target-pushed-vertically` when the target rises faster than a vanilla jump (more than 0.45 blocks per
+tick; a jump peaks at about 0.42) and the client has recent evidence from either of two sources: an
+explosion observation whose centre is within eight blocks of the target, or a non-plan block change
+within four blocks, both within three server ticks. The explosion evidence comes from the runtime's
+passive explosion observer on the client-thread observation path; that callback only records the tick.
+The trap never sends anything on this path: no attack, no placement and no cleanup packet. The abort
+keeps the risk reservation and the crystal hazard and marks the trap as manual cleanup.
+
+**Residual limitation:** an outside explosion that lifts the target is not detected when the server
+sends neither an explosion observation nor any nearby non-plan block change — for example when the
+client sees only block updates for cells the trap itself placed, which are excluded as plan cells.
+
+## Unsupported or unconfirmed layouts
+
+All sixteen piston layouts are beta. The set is the four horizontal directions (east, west, north,
+south) × two heights (feet, eye) × two power kinds (redstone torch, redstone block). Every layout has a
+recorded Phase 0 fixture under `src/test/resources/combat/traces/piston_*` and is replayed through the
+real `PistonTrapController` and `PistonSequence` by
+`src/test/java/dev/tntcoating/core/combat/mc/PistonTraceReplayTest.java`, which uses the fixture's
+recorded piston/power blocks, crystal spawn, arena floor, the `piston_tick_start`/`piston_tick_end`
+progress values at their recorded tick offsets, and the crystal positions in `server_tick_end`; the
+computed push is checked against the recorded final crystal position and displacement, not against a
+second copy of the geometry constants.
+
+**The list of unsupported or unconfirmed layouts is empty.** The Phase 0.4 trace report
+(`docs/superpowers/audit/2026-10-29-trace-report.md`, Q7) checked all sixteen layouts against the server
+log and none disagreed with the expected outcome under the measured 1.02-block push rule; the offline
+geometry, planner, sequence, controller and replay tests agree. No layout is listed as unconfirmed or
+unsupported beyond the beta status above.
+
+Any other arrangement has no trace evidence and is not offered at all: the geometry check returns
+`UNSUPPORTED_LAYOUT` for a scenario that is not one of the sixteen, the planner never produces a plan
+for it, and no setting can turn it on. That includes vertical pistons, other power sources, a second
+push and layouts whose measured displacement differs from the audited trace. If a future recorded trace
+disagrees with the expected outcome, the affected layout must be listed here with the observed
+difference before it ships; until then the list stays empty.
+
 ## Serialised Hybrid (Phase 6.4 stage 1)
 
 Hybrid ships in its serialised stage: it changes which plan is chosen, never how a packet is sent. Both

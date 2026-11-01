@@ -286,6 +286,12 @@ public final class CombatRuntime implements AutoCloseable {
      */
     private volatile Consumer<DispatchResult> dispatchObserver = result -> { };
     /**
+     * Passive explosion observer, installed by the piston trap controller. It receives the centre of every
+     * applied EXPLOSION observation on the client thread, may only read or record and must never send or
+     * change state.
+     */
+    private volatile Consumer<Vec> explosionObserver = position -> { };
+    /**
      * Phase 4.1 shared per-tick budget. The controller installs it once per tick; every phase records its
      * work here, but running out never aborts observation application or reconciliation: only optional
      * planning/search (owned by the engine/cache) stops and resumes next tick.
@@ -727,6 +733,20 @@ public final class CombatRuntime implements AutoCloseable {
         return dispatchObserver;
     }
 
+    /**
+     * Installs the passive explosion observer; {@code null} restores the no-op default. It runs on the
+     * client thread while an EXPLOSION observation is applied, receives the explosion centre and must
+     * never send, reserve or change state.
+     */
+    public void setExplosionObserver(Consumer<Vec> observer) {
+        this.explosionObserver = observer == null ? position -> { } : observer;
+    }
+
+    /** Test seam: the observer the next applied explosion will report to. */
+    Consumer<Vec> explosionObserver() {
+        return explosionObserver;
+    }
+
     /** Test seam: the reconciler the next respawn transition will run. */
     Runnable respawnReconciler() {
         return respawnReconciler;
@@ -760,6 +780,10 @@ public final class CombatRuntime implements AutoCloseable {
             return;
         }
         risk.observe(observation);
+        if (kind == ObservationKind.EXPLOSION && observation.position() != null) {
+            // Passive, read-only seam reached only from the client-thread observation apply path.
+            explosionObserver.accept(observation.position());
+        }
     }
 
     private record ActionGenerationHolder(dev.tntcoating.core.combat.ActionGeneration generation,

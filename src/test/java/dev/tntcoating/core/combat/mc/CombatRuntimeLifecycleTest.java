@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.tntcoating.core.combat.Capability;
+import dev.tntcoating.core.combat.Cell;
 import dev.tntcoating.core.combat.CombatRiskBudget;
 import dev.tntcoating.core.combat.ConnectionKey;
 import dev.tntcoating.core.combat.EffectiveHealth;
@@ -21,9 +22,15 @@ import dev.tntcoating.core.combat.ExposureBound;
 import dev.tntcoating.core.combat.Intent;
 import dev.tntcoating.core.combat.MitigatedDamage;
 import dev.tntcoating.core.combat.MitigationEnvelope;
+import dev.tntcoating.core.combat.Observation;
+import dev.tntcoating.core.combat.ObservationKind;
+import dev.tntcoating.core.combat.ObservationPayload;
 import dev.tntcoating.core.combat.RiskId;
 import dev.tntcoating.core.combat.RiskRequest;
 import dev.tntcoating.core.combat.SafetyState;
+import dev.tntcoating.core.combat.Vec;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -343,5 +350,55 @@ final class CombatRuntimeLifecycleTest {
         fixture.runtime.onDeath();
         assertEquals(1, fixture.runtime.tickCount());
         assertEquals(0, fixture.scheduler.leaseCount());
+    }
+
+    @Test
+    void explosionObserverReceivesOnlyAppliedExplosionCentresAndSendsNothing() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        List<Vec> centres = new ArrayList<>();
+        fixture.runtime.setExplosionObserver(centres::add);
+        int attempts = fixture.sink.attempts;
+
+        fixture.intake.enqueueForTest(blockUpdateObservation(fixture, 1L));
+        fixture.runtime.tick(1);
+        assertTrue(centres.isEmpty(), "only EXPLOSION observations reach the observer");
+        assertEquals(attempts, fixture.sink.attempts, "applying observations never sends");
+
+        Vec centre = new Vec(0.5, -59.0, 0.5);
+        fixture.intake.enqueueForTest(explosionObservation(fixture, 2L, centre));
+        fixture.runtime.tick(2);
+        assertEquals(List.of(centre), centres);
+        assertEquals(attempts, fixture.sink.attempts, "the passive observer sends nothing");
+
+        fixture.runtime.setExplosionObserver(null);
+        fixture.intake.enqueueForTest(explosionObservation(fixture, 3L, new Vec(3.5, -60.0, 0.5)));
+        fixture.runtime.tick(3);
+        assertEquals(List.of(centre), centres, "null restores the no-op observer");
+        assertEquals(attempts, fixture.sink.attempts);
+    }
+
+    @Test
+    void explosionWithoutAPositionIsNotReported() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        List<Vec> centres = new ArrayList<>();
+        fixture.runtime.setExplosionObserver(centres::add);
+        fixture.intake.enqueueForTest(explosionObservation(fixture, 1L, null));
+        fixture.runtime.tick(1);
+        assertTrue(centres.isEmpty());
+        assertEquals(0, fixture.sink.attempts);
+    }
+
+    private static Observation explosionObservation(CombatRuntimeFixture fixture, long receiptSeq,
+                                                    Vec centre) {
+        return new Observation(fixture.session.connection(), receiptSeq, 0L, System.nanoTime(), 0,
+            ObservationKind.EXPLOSION, null, null, centre, null,
+            new ObservationPayload.Explosion(6.0f));
+    }
+
+    private static Observation blockUpdateObservation(CombatRuntimeFixture fixture, long receiptSeq) {
+        Cell cell = new Cell(0, -61, 0);
+        return new Observation(fixture.session.connection(), receiptSeq, 0L, System.nanoTime(), 0,
+            ObservationKind.BLOCK_UPDATE, null, cell, cell.center(), null,
+            new ObservationPayload.BlockUpdate("minecraft:stone", "minecraft:air", false));
     }
 }

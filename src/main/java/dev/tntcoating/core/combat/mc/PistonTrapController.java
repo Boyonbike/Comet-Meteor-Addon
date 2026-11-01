@@ -46,6 +46,7 @@ import dev.tntcoating.core.combat.Vec;
 import dev.tntcoating.core.combat.mc.CombatRuntime.PlanContext;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -75,6 +76,18 @@ public final class PistonTrapController {
     private static final int ATTACK_ID_OFFSET = 1000;
     /** Documented computed/client position tolerance for the diagnostic cross-check. */
     public static final double POSITION_TOLERANCE = PistonSequence.CROSS_CHECK_TOLERANCE;
+    /**
+     * A per-tick rise above this is an explosion impulse, not a normal jump or step. A vanilla jump peaks at
+     * about 0.42 blocks per tick; an explosion impulse is larger, and the comparison is strict, so a
+     * sustained 0.5-block-per-tick lift is evidence.
+     */
+    private static final double VERTICAL_PUSH_DELTA = 0.45;
+    /** An external block change this close to the target can be the explosion that lifted it. */
+    private static final double DISTURBANCE_RADIUS = 4.0;
+    /** An explosion centre this close to the target can have lifted it out of the hole. */
+    private static final double EXPLOSION_RADIUS = 8.0;
+    /** How many server ticks recorded explosion or disturbance evidence remains usable. */
+    private static final int DISTURBANCE_RECENCY_TICKS = 3;
 
     /**
      * Tester diagnostics seam. Implementations only append to the opt-in in-memory debug log; nothing here
@@ -193,6 +206,12 @@ public final class PistonTrapController {
     /** Phase 6.4 ranking-only scan; never begun, leased or sent until Hybrid selects it. */
     private PistonPlanner.Plan preview;
     private final List<PistonSequence.Spawn> spawns = new ArrayList<>();
+    /**
+     * Cells whose structural placement packet this trap actually sent, in send order. Manual cleanup is
+     * the default, so the info string and the debug log list exactly these blocks (plus the plan's
+     * power/piston and the crystal cell) for the player to remove by hand.
+     */
+    private final Set<Cell> sentStructural = new LinkedHashSet<>();
 
     /**
      * The crystal identities that existed when the placement was sent. The live world changes between
@@ -231,6 +250,20 @@ public final class PistonTrapController {
     private PlacementId placement;
     private RiskId crystalRisk;
     private Vec lastTargetPosition;
+    /** Server tick of the last target observation, so the vertical impulse stays a per-tick test. */
+    private int lastTargetTick = -1;
+    /**
+     * Last server-authored block change outside this trap's own plan and within
+     * {@link #DISTURBANCE_RADIUS} of the target; a secondary signal next to the explosion observation.
+     */
+    private Cell lastDisturbanceCell;
+    private int lastDisturbanceTick = -1;
+    /** Server tick of the last explosion observation near the target; primary vertical-push evidence. */
+    private int lastExplosionTick = -1;
+    /** True once the trap observed the piston push itself; manual cleanup then lists the pushed cell. */
+    private boolean pushObserved;
+    /** True once the sent crystal is known gone (attack sent or removal observed); cleanup stops listing it. */
+    private boolean crystalRemovedObserved;
     private String lastFailure = "";
     private String lastMaterialReport = "";
     /** Last plan-specific shortfall report; separate from the module-wide one above. */
@@ -252,6 +285,9 @@ public final class PistonTrapController {
         this.inventory = Objects.requireNonNull(inventory, "inventory");
         this.client = Objects.requireNonNull(client, "client");
         this.world = Objects.requireNonNull(world, "world");
+        // The runtime is constructed before the trap in every production stack; this trap is the only
+        // explosion observer consumer and the setter is idempotent.
+        this.runtime.setExplosionObserver(this::onExplosion);
     }
 
     public static Inventory inventory(CombatInventoryAdapter adapter) {
@@ -551,10 +587,53 @@ public final class PistonTrapController {
         return pending == null ? Optional.empty() : Optional.of(pending.cell());
     }
 
+    /**
+     * Compact manual-cleanup instructions for the live trap: the power, the piston, the supports this trap
+     * actually placed and, while it still exists, the crystal at its last known cell, with exact
+     * coordinates. The trap never breaks its own blocks, so MANUAL_CLEANUP is the default terminal action:
+     * the player removes these by hand and then runs {@code .crystalcombat cleanup confirm}. Empty when
+     * nothing of this trap was sent.
+     */
+    public String manualCleanupText() {
+        if (sequence == null) return "";
+        PistonGeometry.PistonPush push = sequence.plan().push();
+        List<String> parts = new ArrayList<>();
+        if (sentStructural.contains(push.power())) {
+            parts.add("power " + coordinates(push.power()));
+        }
+        if (sentStructural.contains(push.piston())) {
+            parts.add("piston " + coordinates(push.piston()));
+        }
+        List<String> supports = new ArrayList<>();
+        for (Cell cell : sentStructural) {
+            if (cell.equals(push.power()) || cell.equals(push.piston())) continue;
+            supports.add(coordinates(cell));
+        }
+        if (!supports.isEmpty()) parts.add("supports [" + String.join(", ", supports) + "]");
+        // The crystal only exists at the placement cell until the push moves it, and only until the
+        // sent attack (or an observed removal) destroys it. List it only while it is still there.
+        if (crystalDispatched && !crystalRemovedObserved) {
+            parts.add("crystal " + coordinates(crystalCleanupCell()));
+        }
+        return String.join(", ", parts);
+    }
+
+    private Cell crystalCleanupCell() {
+        if (!pushObserved) return sequence.plan().push().source();
+        Vec pushed = sequence.computedPushed();
+        return new Cell((int) Math.floor(pushed.x()), (int) Math.floor(pushed.y()),
+            (int) Math.floor(pushed.z()));
+    }
+
+    private static String coordinates(Cell cell) {
+        return "(" + cell.x() + ", " + cell.y() + ", " + cell.z() + ")";
+    }
+
     /** Disable stops all further ticks/sends without releasing hazards, risk or the trap slot. */
     public void disable() {
         enabled = false;
         pending = null;
+        resetDisturbance();
         if (sequence != null) sequence.disable();
         tracePhase();
     }
@@ -567,12 +646,14 @@ public final class PistonTrapController {
     public void death() {
         enabled = false;
         pending = null;
+        resetDisturbance();
         if (sequence != null) sequence.death();
         tracePhase();
     }
 
     public void respawn() {
         pending = null;
+        resetDisturbance();
         if (sequence != null) sequence.respawn();
     }
 
@@ -580,6 +661,7 @@ public final class PistonTrapController {
     public void connectionClosed() {
         enabled = false;
         pending = null;
+        resetDisturbance();
         if (sequence != null) sequence.disable();
     }
 
@@ -610,10 +692,15 @@ public final class PistonTrapController {
         crystalBaselineUuids = Set.of();
         crystalBaselineEntities = Set.of();
         lastTargetPosition = null;
+        lastTargetTick = -1;
         pending = null;
         blockObservationSerial = 0;
         reconciled = true;
         spawns.clear();
+        sentStructural.clear();
+        resetDisturbance();
+        pushObserved = false;
+        crystalRemovedObserved = false;
         lastFailure = "";
         observedPhase = null;
         positionChecked = false;
@@ -630,6 +717,7 @@ public final class PistonTrapController {
     public void onCrystalRemoved(EntityKey entity) {
         if (!enabled || sequence == null || entity == null) return;
         if (sequence.bound().map(PistonSequence.Spawn::entity).filter(entity::equals).isPresent()) {
+            crystalRemovedObserved = true;
             sequence.removalObserved(lastServerTick);
         }
     }
@@ -647,6 +735,60 @@ public final class PistonTrapController {
         blockObservationSerial++;
         observePistonState(cell);
         confirmBlock(cell);
+        recordDisturbance(cell);
+    }
+
+    /**
+     * Remembers a server-authored block change outside the plan and close to the verified target. The trap's
+     * own placements, its piston extension and its supports arrive through the same callback and are
+     * excluded by cell, so they can never fake explosion evidence.
+     */
+    private void recordDisturbance(Cell cell) {
+        if (sequence == null || lastServerTick < 0) return;
+        PistonPlanner.Plan plan = sequence.plan();
+        if (planCells(plan).contains(cell)) return;
+        double distance = cell.center().distance(world.position(plan.target()));
+        if (distance > DISTURBANCE_RADIUS) return;
+        lastDisturbanceCell = cell;
+        lastDisturbanceTick = lastServerTick;
+        debug("external-disturbance cell=" + cell + " tick=" + lastServerTick
+            + " distance=" + String.format(java.util.Locale.ROOT, "%.2f", distance));
+    }
+
+    /**
+     * Passive explosion observation from the runtime. An explosion close to the verified target is
+     * evidence that an outside blast may have lifted it out of the hole; this callback only records the
+     * tick. It never sends, reserves or changes the phase, and it ignores explosions before POWER.
+     */
+    public void onExplosion(Vec centre) {
+        if (!enabled || sequence == null || lastServerTick < 0 || centre == null) return;
+        PistonSequence.PistonPhase phase = sequence.phase();
+        if (phase != PistonSequence.PistonPhase.POWER
+            && phase != PistonSequence.PistonPhase.WAIT_PUSH) {
+            return;
+        }
+        double distance = centre.distance(world.position(sequence.plan().target()));
+        if (distance > EXPLOSION_RADIUS) return;
+        lastExplosionTick = lastServerTick;
+        debug("external-explosion centre=" + centre + " tick=" + lastServerTick
+            + " distance=" + String.format(java.util.Locale.ROOT, "%.2f", distance));
+    }
+
+    private static Set<Cell> planCells(PistonPlanner.Plan plan) {
+        PistonGeometry.PistonPush push = plan.push();
+        Set<Cell> cells = new LinkedHashSet<>();
+        cells.add(push.source());
+        cells.add(push.piston());
+        cells.add(push.extension());
+        cells.add(push.power());
+        for (Intent intent : plan.intents()) cells.add(intent.cell());
+        return cells;
+    }
+
+    private void resetDisturbance() {
+        lastDisturbanceCell = null;
+        lastDisturbanceTick = -1;
+        lastExplosionTick = -1;
     }
 
     public void onTargetChanged(EntityKey target) {
@@ -751,9 +893,14 @@ public final class PistonTrapController {
         reconciled = false;
         supportIndex = 0;
         spawns.clear();
+        sentStructural.clear();
         crystalBaselineUuids = Set.of();
         crystalBaselineEntities = Set.of();
         lastTargetPosition = world.position(plan.target());
+        lastTargetTick = serverTick;
+        resetDisturbance();
+        pushObserved = false;
+        crystalRemovedObserved = false;
         candidate.reservationAccepted(serverTick);
         return true;
     }
@@ -805,7 +952,10 @@ public final class PistonTrapController {
         }
         runtime.plan(intent, context);
         CombatRuntime.DispatchResult result = runtime.dispatch(intent, ticket);
-        if (result.status() == CombatRuntime.Status.SENT) return true;
+        if (result.status() == CombatRuntime.Status.SENT) {
+            sentStructural.add(intent.cell());
+            return true;
+        }
         if (result.status() == CombatRuntime.Status.FAILED) {
             fail(sequence.phase(), result.reason().name().toLowerCase(java.util.Locale.ROOT), serverTick);
         }
@@ -994,14 +1144,53 @@ public final class PistonTrapController {
     private void observeTarget(int serverTick) {
         EntityKey target = sequence.plan().target();
         Vec position = world.position(target);
-        if (lastTargetPosition != null && position.distance(lastTargetPosition) > 1.0e-6) {
-            sequence.targetMoved(position, world.withinAttackEnvelope(target, sequence.computedPushed()),
-                serverTick);
+        if (lastTargetPosition == null) {
             lastTargetPosition = position;
+            lastTargetTick = serverTick;
+        } else {
+            int elapsedTicks = lastTargetTick < 0 ? 1 : Math.max(1, serverTick - lastTargetTick);
+            if (position.distance(lastTargetPosition) > 1.0e-6) {
+                // POWER/WAIT_PUSH expect the piston's own horizontal push. An upward impulse that only an
+                // external blast can explain means the target left the hole: abort instead of firing the
+                // attack. A normal jump or step is smaller than VERTICAL_PUSH_DELTA per tick; downward
+                // motion (holed_vertical) never matches either.
+                PistonSequence.PistonPhase phase = sequence.phase();
+                if (watchingForVerticalPush(phase)
+                    && verticallyPushedOut(lastTargetPosition, position, serverTick, elapsedTicks)) {
+                    lastTargetPosition = position;
+                    lastTargetTick = serverTick;
+                    fail(phase, "target-pushed-vertically", serverTick, false);
+                    return;
+                }
+                sequence.targetMoved(position,
+                    world.withinAttackEnvelope(target, sequence.computedPushed()), serverTick);
+            }
+            lastTargetPosition = position;
+            lastTargetTick = serverTick;
         }
         if (!world.alive(target)) {
             sequence.targetMoved(position, false, serverTick);
         }
+    }
+
+    private static boolean watchingForVerticalPush(PistonSequence.PistonPhase phase) {
+        return phase == PistonSequence.PistonPhase.POWER
+            || phase == PistonSequence.PistonPhase.WAIT_PUSH;
+    }
+
+    /**
+     * An explosion-like upward per-tick impulse plus recent evidence: either an explosion observation near
+     * the target or a non-plan block change near it. Jumping (about 0.42 blocks per tick at most) and
+     * stepping never clear the impulse threshold.
+     */
+    private boolean verticallyPushedOut(Vec previous, Vec current, int serverTick, int elapsedTicks) {
+        double risePerTick = (current.y() - previous.y()) / Math.max(1, elapsedTicks);
+        if (risePerTick <= VERTICAL_PUSH_DELTA) return false;
+        boolean explosion = lastExplosionTick >= 0
+            && serverTick - lastExplosionTick <= DISTURBANCE_RECENCY_TICKS;
+        boolean disturbance = lastDisturbanceTick >= 0
+            && serverTick - lastDisturbanceTick <= DISTURBANCE_RECENCY_TICKS;
+        return explosion || disturbance;
     }
 
     private void observePower(int serverTick) {
@@ -1051,6 +1240,7 @@ public final class PistonTrapController {
         // A placed piston block is not progress: only an authoritative powered/extended state (or the
         // client's own push cross-check) proves the extension happened.
         if (world.pistonPowered(piston) || world.pistonExtended(piston)) {
+            pushObserved = true;
             sequence.pistonProgress(1.0, serverTick);
         }
     }
@@ -1103,6 +1293,9 @@ public final class PistonTrapController {
                 incident("attack-computed-unobserved computed=" + sequence.computedPushed()
                     + " crystal=" + bound.entity() + " observed=false");
             }
+            // The sent attack is the terminal evidence that the crystal is gone; manual cleanup must stop
+            // listing it even before a separate removal observation arrives.
+            crystalRemovedObserved = true;
             sequence.attackSent(serverTick);
         } else {
             lastFailure = result.reason().name().toLowerCase(java.util.Locale.ROOT);
@@ -1149,11 +1342,21 @@ public final class PistonTrapController {
     }
 
     private void fail(PistonSequence.PistonPhase stage, String reason, int serverTick) {
+        fail(stage, reason, serverTick, true);
+    }
+
+    /**
+     * @param retryStructural true for a failed placement (the sequence may retry a structural stage);
+     *     false for a whole-trap failure such as a vertical push, which must abort even in POWER
+     */
+    private void fail(PistonSequence.PistonPhase stage, String reason, int serverTick,
+                      boolean retryStructural) {
         lastFailure = reason;
         crystalBaselineUuids = Set.of();
         crystalBaselineEntities = Set.of();
         boolean wasTerminal = terminal();
-        sequence.stageFailed(stage, reason, serverTick);
+        if (retryStructural) sequence.stageFailed(stage, reason, serverTick);
+        else sequence.abortTrap(reason, serverTick);
         debug("abort stage=" + stage + " reason=" + reason + " phase=" + sequence.phase());
         if (!wasTerminal && stage.ordinal() >= PistonSequence.PistonPhase.POWER.ordinal()) {
             incident("trap-aborted-after-power stage=" + stage + " reason=" + reason);
@@ -1210,6 +1413,12 @@ public final class PistonTrapController {
         PistonSequence.PistonPhase phase = sequence.phase();
         if (phase == observedPhase) return;
         debug("stage " + (observedPhase == null ? "-" : observedPhase.name()) + " -> " + phase);
+        if ((phase == PistonSequence.PistonPhase.MANUAL_CLEANUP
+            || phase == PistonSequence.PistonPhase.ABORTED) && observedPhase != phase) {
+            String blocks = manualCleanupText();
+            debug("manual-cleanup-blocks reason=" + (lastFailure.isEmpty() ? "unspecified" : lastFailure)
+                + " blocks=" + (blocks.isEmpty() ? "none" : blocks));
+        }
         if (phase == PistonSequence.PistonPhase.MANUAL_CLEANUP
             && observedPhase != PistonSequence.PistonPhase.MANUAL_CLEANUP) {
             incident("manual-cleanup-required previous="
