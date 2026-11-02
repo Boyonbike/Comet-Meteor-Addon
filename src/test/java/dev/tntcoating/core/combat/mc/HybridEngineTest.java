@@ -293,4 +293,21 @@ final class HybridEngineTest {
             new ObservationPayload.Spawn(EngineHarness.END_CRYSTAL)));
         return key;
     }
+
+    /** A paused pass must not leave the previous tick's trap selection standing for the controller. */
+    @Test
+    void aPausedTickDropsThePreviousTrapSelection() {
+        EngineHarness harness = EngineHarness.create(BASE_SETTINGS, SELF);
+        harness.engine.setMode(Mode.HYBRID);
+        Opportunity trap = PistonOpportunity.of(trapPlan(bindTrapCrystal(harness), 12.0),
+            new MitigationEnvelope(0L)).orElseThrow();
+        harness.engine.setCommittedPlan(trap);
+        harness.tick();
+        assertTrue(harness.engine.trapSelected());
+
+        harness.world.eating = true;
+        harness.tick();
+
+        assertFalse(harness.engine.trapSelected(), "eating pauses the trap hand-off too");
+    }
 }

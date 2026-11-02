@@ -518,7 +518,12 @@ public final class CombatRiskBudget {
         }
     }
 
-    /** Connection close clears exactly that connection's risk, pending pairs and quiet tombstones. */
+    /**
+     * Connection close clears exactly that connection's risk, pending pairs and quiet tombstones, and the
+     * death/respawn holds. A death belongs to the connection it happened on: only a respawn on that same
+     * connection could clear it, so leaving from the death screen would otherwise pause every later
+     * connection. A player who rejoins still dead is reported dead again by the server's health update.
+     */
     public void connectionClosed(ConnectionKey conn) {
         if (conn == null) return;
         clearProbeEvidence();
@@ -529,6 +534,8 @@ public final class CombatRiskBudget {
         lastAppliedRevisions.keySet().removeIf(key -> key.conn().equals(conn));
         tombstones.removeIf(tombstone -> tombstone.conn.equals(conn));
         if (pendingHealth.isEmpty()) suspensions.remove(SuspensionCause.INCOHERENT_HEALTH);
+        suspensions.remove(SuspensionCause.DEATH);
+        suspensions.remove(SuspensionCause.RESPAWN);
     }
 
     /**

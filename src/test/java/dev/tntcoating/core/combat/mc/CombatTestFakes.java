@@ -39,6 +39,7 @@ final class CombatTestFakes {
 
         final Map<Integer, EntityState> entities = new LinkedHashMap<>();
         final Map<Integer, HealthPair> appliedHealth = new LinkedHashMap<>();
+        final Map<Integer, HealthFields> healthFields = new LinkedHashMap<>();
         final List<Snapshot.Crystal> crystals = new ArrayList<>();
         Vec eye = new Vec(0.5, 65.0, 0.5);
         double blockRange = 4.5;
@@ -85,6 +86,11 @@ final class CombatTestFakes {
         @Override
         public HealthPair appliedHealth(int entityId) {
             return appliedHealth.get(entityId);
+        }
+
+        @Override
+        public HealthFields healthFields(int entityId) {
+            return healthFields.getOrDefault(entityId, HealthFields.HEALTH_AND_ABSORPTION);
         }
 
         @Override

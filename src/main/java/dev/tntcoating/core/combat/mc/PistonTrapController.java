@@ -17,6 +17,8 @@ import dev.tntcoating.core.combat.CombatRiskBudget;
 import dev.tntcoating.core.combat.CombatScheduler;
 import dev.tntcoating.core.combat.CombatSession;
 import dev.tntcoating.core.combat.CrystalLedger;
+import dev.tntcoating.core.combat.DirectPause;
+import dev.tntcoating.core.combat.DirectSettings;
 import dev.tntcoating.core.combat.EffectiveHealth;
 import dev.tntcoating.core.combat.EntityKey;
 import dev.tntcoating.core.combat.ExposureBound;
@@ -56,6 +58,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Phase 5.1 client-thread piston trap runtime. Pure planning and sequencing stay in {@link PistonPlanner}
@@ -156,6 +159,10 @@ public final class PistonTrapController {
 
         default long mitigationRevision() {
             return 0L;
+        }
+
+        /** Live settings change; a world that derives nothing from the settings ignores it. */
+        default void reconfigure(DirectSettings settings) {
         }
 
         default boolean withinAttackEnvelope(EntityKey target, Vec pushed) {
@@ -289,6 +296,13 @@ public final class PistonTrapController {
      * slot here instead of building a second scheduler; {@code null} in stacks that do not wire it.
      */
     private CleanupPriority cleanupPriority;
+    /**
+     * The module's Pauses settings (eating, health floor, lag and the rest), shared with the direct engine.
+     * Null means nothing pauses, which is also the default for stacks that do not wire it.
+     */
+    private Supplier<DirectPause> pauseSource = () -> null;
+    /** The pause that stopped the last tick, or null; read by the visible wait reason in PistonOnly. */
+    private DirectPause pause;
     /** Per-trap cleanup intent id source; distinct from the structural and attack ids. */
     private long cleanupIntentSequence;
 
@@ -442,7 +456,12 @@ public final class PistonTrapController {
         // The planner already rejects a candidate whose own power item is gone; keep the offering
         // contract explicit here so no stale/mis-gated plan can ever leave as a preview.
         PistonPlanner.Plan candidate = plan.orElseThrow();
-        if (!planMaterialsPresent(candidate)) return Optional.empty();
+        if (!planMaterialsPresent(candidate)) {
+            // The sticky plan lost its own power item (e.g. torch swapped for a block): rescan next tick so
+            // another enabled layout can be offered instead of idling until an explicit reconcile.
+            planner.reset();
+            return Optional.empty();
+        }
         preview = candidate;
         return PistonOpportunity.of(preview, new MitigationEnvelope(world.mitigationRevision()));
     }
@@ -452,6 +471,8 @@ public final class PistonTrapController {
         PistonPlanner.Plan plan = preview;
         preview = null;
         if (plan == null || !enabled || !session.isOpen()) return false;
+        pause = pauseSource.get();
+        if (pause != null) return false;
         return beginPlan(plan, serverTick);
     }
 
@@ -461,6 +482,9 @@ public final class PistonTrapController {
         this.lastMaterialReport = "";
         this.lastPlanMaterialReport = "";
         planner.setSelection(this.layouts);
+        // comet-sticky-reset: a completed scan is sticky, so without this a plan for a layout that was just
+        // disabled could still be previewed or started. An active trap keeps its plan until reconcile.
+        if (sequence == null) planner.reset();
     }
 
     public PistonLayoutSelection layouts() {
@@ -606,6 +630,11 @@ public final class PistonTrapController {
         return autoCleanup;
     }
 
+    /** Live settings change from the module config path; forwarded to the world's ranges and limits. */
+    public void reconfigure(DirectSettings settings) {
+        world.reconfigure(settings);
+    }
+
     /**
      * Live setting change from the module config path. Turning it on lets the current trap use inferred
      * ownership; turning it off immediately stops cleanup admission and clears the starvation request.
@@ -620,6 +649,16 @@ public final class PistonTrapController {
             stopCleanupDestruction();
             clearCleanupPriority();
         }
+    }
+
+    /** Wires the module's Pauses settings into this trap; null restores "never paused". */
+    public void setPauseSource(Supplier<DirectPause> source) {
+        pauseSource = source == null ? () -> null : source;
+    }
+
+    /** The pause that stopped the last trap tick, or null when it ran. */
+    public DirectPause pause() {
+        return pause;
     }
 
     /** Wires the engine-owned cleanup starvation signal into this trap. */
@@ -692,6 +731,7 @@ public final class PistonTrapController {
         stopCleanupDestruction();
         enabled = false;
         pending = null;
+        pause = null;
         clearCleanupPriority();
         cleanupIntentSequence = 0;
         resetDisturbance();
@@ -897,6 +937,13 @@ public final class PistonTrapController {
 
     public void tick(int serverTick, TickBudget budget) {
         if (!enabled || serverTick < 0 || budget == null) return;
+        // A paused tick sends nothing and starts nothing. Stage timers keep running on server ticks, so a
+        // long pause mid-trap ends in the sequence's own timeout handling, never a late send.
+        pause = pauseSource.get();
+        if (pause != null) {
+            preview = null;
+            return;
+        }
         try {
             tickInternal(serverTick, budget);
         } finally {
@@ -909,6 +956,13 @@ public final class PistonTrapController {
         world.onServerTick(serverTick);
         if (sequence != null) {
             Optional<String> tickReason = sequence.tick(serverTick);
+            if (sequence.completed()) {
+                // A clean finish: release the slot, footprint and per-trap state exactly as a confirmed
+                // cleanup would, so the next scan may begin a new trap. Hazards and sent risk stay.
+                debug("cooldown-complete tick=" + serverTick);
+                reconcile();
+                return;
+            }
             if (tickReason.isPresent()) {
                 boolean awaiting = pending != null;
                 String reason = tickReason.get();
@@ -982,7 +1036,10 @@ public final class PistonTrapController {
         reportMissingMaterials();
         if (!missingMaterials().isEmpty()) return false;
         // Module-wide materials present is not enough: this exact plan needs its own power item.
-        if (!planMaterialsPresent(plan)) return false;
+        if (!planMaterialsPresent(plan)) {
+            planner.reset();
+            return false;
+        }
         PistonSequence.Config config = new PistonSequence.Config(0,
             PistonSequence.TRAP_DEADLINE_TICKS, PistonSequence.CLEANUP_DEADLINE_TICKS, autoCleanup);
         PistonSequence candidate = new PistonSequence(plan, config);

@@ -248,6 +248,10 @@ public final class ObservationIntake implements ObservationListener {
             case RawEntityData data -> {
                 EntityKey entity = client.entity(data.entityId());
                 if (entity == null) return;
+                // Data ids are per class: an Interaction's height shares the health id and a Display's view
+                // range the absorption id. Reading those as health would open a pair nothing can complete.
+                CombatClient.HealthFields fields = client.healthFields(data.entityId());
+                if (fields == CombatClient.HealthFields.NONE) return;
                 boolean healthKnown = false;
                 boolean absorptionKnown = false;
                 double healthValue = 0.0;
@@ -256,7 +260,8 @@ public final class ObservationIntake implements ObservationListener {
                     if (value.id() == dataIds.health() && value.value() instanceof Float health) {
                         healthKnown = true;
                         healthValue = health;
-                    } else if (value.id() == dataIds.absorption()
+                    } else if (fields == CombatClient.HealthFields.HEALTH_AND_ABSORPTION
+                        && value.id() == dataIds.absorption()
                         && value.value() instanceof Float absorption) {
                         absorptionKnown = true;
                         absorptionValue = absorption;
@@ -379,6 +384,15 @@ public final class ObservationIntake implements ObservationListener {
 
     public void setClientTick(int clientTick) {
         this.clientTick = clientTick;
+        if (!dimensionKnown) {
+            // The login packet is not observed, so the dimension the connection started in is read from
+            // the applied world on the first tick. Otherwise the first portal trip would look like a respawn.
+            String dimension = client.dimensionId();
+            if (dimension != null && !dimension.isEmpty()) {
+                lastDimension = dimension;
+                dimensionKnown = true;
+            }
+        }
     }
 
     public long currentConnectionId() {

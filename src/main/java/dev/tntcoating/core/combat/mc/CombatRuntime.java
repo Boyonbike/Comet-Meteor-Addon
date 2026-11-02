@@ -863,8 +863,13 @@ public final class CombatRuntime implements AutoCloseable {
             if (changed) {
                 // A dimension change starts a new connection epoch and migrates sent self/friend debt.
                 // Treating it as a respawn would clear migrated self debt.
+                boolean dead = risk.suspensionCauses()
+                    .contains(dev.tntcoating.core.combat.SuspensionCause.DEATH);
                 onDimensionChanged();
-                return;
+                // Dying in the Nether or the End respawns in the Overworld: that is still the respawn the
+                // DEATH hold waits for, so it continues below on the new epoch. Without this the hold
+                // never clears.
+                if (!dead) return;
             }
             ActionGenerationHolder holder = beginGenerationTransition();
             session.respawn();

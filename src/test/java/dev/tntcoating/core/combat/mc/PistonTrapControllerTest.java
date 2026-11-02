@@ -19,6 +19,7 @@ import dev.tntcoating.core.combat.Cell;
 import dev.tntcoating.core.combat.CleanupPriority;
 import dev.tntcoating.core.combat.CombatRiskBudget;
 import dev.tntcoating.core.combat.ConnectionKey;
+import dev.tntcoating.core.combat.DirectPause;
 import dev.tntcoating.core.combat.EffectiveHealth;
 import dev.tntcoating.core.combat.EntityKey;
 import dev.tntcoating.core.combat.HazardId;
@@ -1245,6 +1246,27 @@ final class PistonTrapControllerTest {
     }
 
     @Test
+    void theNextPreviewOffersAnotherLayoutAfterTheTorchIsGone() {
+        Harness harness = new Harness();
+        try {
+            assertTrue(harness.controller.previewPlan(1, TickBudget.unlimited()).isPresent());
+            harness.removeMaterial(PistonGeometry.PowerKind.REDSTONE_TORCH.itemId());
+            harness.addMaterial(PistonGeometry.PowerKind.REDSTONE_BLOCK.itemId());
+            assertFalse(harness.controller.startPreviewed(1), "the stale torch plan is still refused");
+
+            // The refusal resets the sticky scan, so later previews can offer a redstone-block layout
+            // instead of idling until an explicit reconcile.
+            boolean offered = false;
+            for (int tick = 2; tick <= 40 && !offered; tick++) {
+                offered = harness.controller.previewPlan(tick, TickBudget.unlimited()).isPresent();
+            }
+            assertTrue(offered, "a rescan must offer a layout the hotbar can still build");
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
     void redstoneBlockPlanStillStartsWhenOnlyTheTorchIsGone() {
         Harness harness = new Harness();
         try {
@@ -1605,6 +1627,37 @@ final class PistonTrapControllerTest {
         }
     }
 
+    @Test
+    void trapReArmsAfterAnObservedDeathAndRespawn() {
+        Harness harness = new Harness();
+        CrystalCombatController module = new CrystalCombatController(() -> null, harness::stack);
+        try {
+            module.setMode(Mode.PISTON_ONLY);
+            module.setTrapEnabled(true);
+            assertTrue(module.enable());
+            module.tick(1, TickBudget.unlimited());
+            assertTrue(harness.controller.enabled());
+
+            // Production sees death and respawn only through the runtime; the controller's own
+            // onDeath/onRespawn are never called, so the tick's generation check must re-arm the trap.
+            harness.fixture.runtime.onDeath();
+            module.tick(2, TickBudget.unlimited());
+            assertFalse(harness.controller.enabled(), "a generation transition stops the trap at once");
+            module.tick(3, TickBudget.unlimited());
+            assertFalse(harness.controller.enabled(), "the trap stays off while the death pause holds");
+
+            harness.fixture.runtime.onRespawn();
+            for (int tick = 4; tick <= 6; tick++) module.tick(tick, TickBudget.unlimited());
+            assertTrue(harness.controller.enabled(),
+                "the trap re-arms once respawn reconciled; status=" + module.waitReason());
+            assertTrue(harness.controller.manualCleanupRequired(),
+                "the interrupted trap still needs manual cleanup");
+            assertTrue(module.waitReason().startsWith("manual cleanup required"), module.waitReason());
+        } finally {
+            module.disable();
+        }
+    }
+
     // --------------------------------------------------------------- beta auto-cleanup
 
     @Test
@@ -1651,6 +1704,45 @@ final class PistonTrapControllerTest {
             harness.observeBlock(support, "minecraft:obsidian", "minecraft:air");
             harness.tick(33);
             assertEquals(PistonSequence.PistonPhase.COOLDOWN, harness.controller.phase());
+        } finally {
+            harness.controller.disable();
+        }
+    }
+
+    @Test
+    void successfulAutoCleanupCompletesTheCooldownAndFreesTheSlot() {
+        Harness harness = new Harness();
+        try {
+            harness.controller.setAutoCleanup(true);
+            harness.advanceToCleanup();
+            for (int tick = 10; tick <= 30; tick++) harness.tick(tick);
+            harness.world.blocks.remove(POWER);
+            harness.observeBlock(POWER, "minecraft:redstone_torch", "minecraft:air");
+            harness.tick(31);
+            harness.world.blocks.remove(PISTON);
+            harness.observeBlock(PISTON, "minecraft:piston", "minecraft:air");
+            harness.tick(32);
+            Cell support = new Cell(-1, -61, 0);
+            if (harness.world.blocks.containsKey(support)) {
+                harness.world.blocks.remove(support);
+                harness.observeBlock(support, "minecraft:obsidian", "minecraft:air");
+            }
+            harness.tick(33);
+            assertEquals(PistonSequence.PistonPhase.COOLDOWN, harness.controller.phase());
+            PistonSequence finished = harness.sequence();
+
+            int end = 33 + PistonSequence.COOLDOWN_TICKS + 1;
+            for (int tick = 34; tick <= end; tick++) harness.tick(tick);
+            assertTrue(finished.completed(), "the cooldown ends on its own timer");
+            assertFalse(finished.history().contains(PistonSequence.PistonPhase.ABORTED),
+                "a clean finish is never reported as an abort: " + finished.history());
+            assertFalse(finished.history().contains(PistonSequence.PistonPhase.MANUAL_CLEANUP),
+                finished.history().toString());
+            assertTrue(harness.controller.activeTrap().isEmpty() || harness.sequence() != finished,
+                "the finished trap released the single-trap slot");
+            assertFalse(harness.controller.manualCleanupRequired());
+            assertTrue(harness.incidents.stream().noneMatch(line -> line.contains("timeout")),
+                harness.incidents.toString());
         } finally {
             harness.controller.disable();
         }
@@ -2857,6 +2949,32 @@ final class PistonTrapControllerTest {
         @Override
         public boolean redstoneComponent(Cell cell) {
             return false;
+        }
+    }
+
+    @Test
+    void pistonOnlyHonoursThePausesSettings() {
+        Harness harness = new Harness();
+        CrystalCombatController controller = new CrystalCombatController(() -> null, harness::stack);
+        DirectPause[] pause = {DirectPause.EATING};
+        harness.controller.setPauseSource(() -> pause[0]);
+        try {
+            controller.setMode(Mode.PISTON_ONLY);
+            controller.setTrapEnabled(true);
+            assertTrue(controller.enable());
+            int before = harness.fixture.sink.attempts;
+            controller.tick(10);
+            controller.tick(11);
+
+            assertFalse(harness.controller.activeTrap().isPresent(), "no trap starts while eating");
+            assertEquals(before, harness.fixture.sink.attempts, "a paused trap never sends");
+            assertEquals("paused: eating", controller.waitReason());
+
+            pause[0] = null;
+            controller.tick(12);
+            assertTrue(harness.controller.activeTrap().isPresent(), "the trap resumes once the pause clears");
+        } finally {
+            controller.disable();
         }
     }
 }

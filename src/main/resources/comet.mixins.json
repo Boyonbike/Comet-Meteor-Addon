@@ -10,6 +10,7 @@
     "EntityArgumentAccessor",
     "ChatScreenMixin",
     "GUIMoveMixin",
+    "TooltipWrapMixin",
     "ChatFriendHighlightMixin",
     "TabListHighlightMixin",
     "CometModuleOrderMixin",
