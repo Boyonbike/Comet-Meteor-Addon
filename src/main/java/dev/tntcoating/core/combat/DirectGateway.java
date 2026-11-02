@@ -13,6 +13,10 @@ package dev.tntcoating.core.combat;
 public interface DirectGateway {
     DirectSendResult send(DirectDispatch dispatch);
 
+    /** Live settings change; a gateway that derives nothing from the settings ignores it. */
+    default void reconfigure(DirectSettings settings) {
+    }
+
     enum DirectSendResult {
         SENT,
         BLOCKED,

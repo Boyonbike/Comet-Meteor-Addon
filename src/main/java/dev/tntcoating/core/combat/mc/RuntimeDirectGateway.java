@@ -21,12 +21,17 @@ import java.util.Objects;
 public final class RuntimeDirectGateway implements DirectGateway {
     private final CombatRuntime runtime;
     private final CombatClient client;
-    private final DirectSettings settings;
+    private volatile DirectSettings settings;
 
     public RuntimeDirectGateway(CombatRuntime runtime, CombatClient client, DirectSettings settings) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.client = Objects.requireNonNull(client, "client");
         this.settings = Objects.requireNonNull(settings, "settings");
+    }
+
+    @Override
+    public void reconfigure(DirectSettings next) {
+        settings = Objects.requireNonNull(next, "next");
     }
 
     @Override

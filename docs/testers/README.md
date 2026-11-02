@@ -140,7 +140,8 @@ in the module's info string as `[risk: strict]`, `[risk: barrier]` or `[risk: me
 the debug-log header as `risk-model=<key>`.
 
 **show-risk-debt** (Render, on by default) draws the published snapshot in the top-left corner:
-`risk debt: N outstanding (bound X)` and, when risk is suspended, `suspended: <cause>`. It is
+`unresolved crystals: N (up to X damage)` and, when the aura is paused for safety, `paused: <reason>`
+(for example `paused: rubber-banded, resuming shortly`). It is
 read-only, fed by a snapshot from the client tick, shows nothing while the module is disabled or when
 there is no debt or suspension, and clears when you leave the world.
 

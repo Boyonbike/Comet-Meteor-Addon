@@ -56,8 +56,9 @@ public final class PistonTrapWorld implements PistonTrapController.World {
 
     private final DirectWorldSource source;
     private final CombatDamageAdapter damage;
-    private final DirectSettings settings;
-    private final Safety safety;
+    /** Both replaced together on every config change; the stack outlives disable. */
+    private volatile DirectSettings settings;
+    private volatile Safety safety;
     private final CombatMotionModel motionModel = new CombatMotionModel();
     private final Map<EntityKey, Track> tracks = new HashMap<>();
     private final AtomicLong planIds = new AtomicLong();
@@ -72,6 +73,14 @@ public final class PistonTrapWorld implements PistonTrapController.World {
         this.damage = Objects.requireNonNull(damage, "damage");
         this.settings = Objects.requireNonNull(settings, "settings");
         this.safety = Objects.requireNonNull(safety, "safety");
+    }
+
+    /** Live settings change: ranges and the self, friend and target limits apply from the next check. */
+    @Override
+    public void reconfigure(DirectSettings next) {
+        Objects.requireNonNull(next, "next");
+        settings = next;
+        safety = next.safety();
     }
 
     /**

@@ -32,7 +32,7 @@ final class RiskDebtSnapshotTest {
         RiskDebtSnapshot snapshot = new RiskDebtSnapshot(2, 12.5, List.of());
 
         assertTrue(snapshot.visible());
-        assertEquals(List.of("risk debt: 2 outstanding (bound 12.50)"), snapshot.displayLines());
+        assertEquals(List.of("unresolved crystals: 2 (up to 12.5 damage)"), snapshot.displayLines());
     }
 
     @Test
@@ -40,7 +40,7 @@ final class RiskDebtSnapshotTest {
         RiskDebtSnapshot snapshot = new RiskDebtSnapshot(0, 0.5, List.of());
 
         assertTrue(snapshot.visible());
-        assertEquals(List.of("risk debt: 0 outstanding (bound 0.50)"), snapshot.displayLines());
+        assertEquals(List.of("unresolved crystals: 0 (up to 0.5 damage)"), snapshot.displayLines());
     }
 
     @Test
@@ -49,7 +49,7 @@ final class RiskDebtSnapshotTest {
             List.of(SuspensionCause.SETBACK, SuspensionCause.SERVER_STALL));
 
         assertTrue(snapshot.visible());
-        assertEquals(List.of("suspended: setback, server stall"), snapshot.displayLines());
+        assertEquals(List.of("paused: rubber-banded, resuming shortly; server stalled"), snapshot.displayLines());
     }
 
     @Test
@@ -57,8 +57,8 @@ final class RiskDebtSnapshotTest {
         RiskDebtSnapshot snapshot = new RiskDebtSnapshot(1, 3.0, List.of(SuspensionCause.DEATH));
 
         assertEquals(List.of(
-            "risk debt: 1 outstanding (bound 3.00)",
-            "suspended: death"), snapshot.displayLines());
+            "unresolved crystals: 1 (up to 3.0 damage)",
+            "paused: dead, resumes after respawn"), snapshot.displayLines());
     }
 
     @Test

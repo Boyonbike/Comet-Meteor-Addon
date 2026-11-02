@@ -17,7 +17,7 @@ public final class CombatProfiles {
     public static final Safety CONSERVATIVE_SAFETY = CombatDamagePolicy.conservativeSafety();
 
     private static final double MIN_TARGET = CombatDamagePolicy.MIN_TARGET_DAMAGE;
-    private static final double MAX_SELF = CombatDamagePolicy.MAX_SELF_DAMAGE;
+    private static final double MAX_SELF = CombatDamagePolicy.MAX_SELF_DAMAGE_CEILING;
     private static final double MIN_REMAINING = CombatDamagePolicy.MIN_REMAINING_HEALTH;
     private static final double MAX_FRIEND = CombatDamagePolicy.MAX_FRIEND_DAMAGE;
 
@@ -27,8 +27,9 @@ public final class CombatProfiles {
     /**
      * Returns {@code safety} unchanged when it is at least as strict as the conservative profile, otherwise
      * throws. Rejected: any non-finite or negative value, a target floor below four, a self ceiling above
-     * six, a remaining-health margin below two, or a friend ceiling above two. Stricter profiles are
-     * accepted: they can only reduce what the budget will allow.
+     * {@link CombatDamagePolicy#MAX_SELF_DAMAGE_CEILING}, a remaining-health margin below two, or a friend
+     * ceiling above two. The Conservative self value is six; a higher self ceiling is the player's opt-in,
+     * and the cumulative remaining-health margin still bounds every reservation.
      */
     public static Safety productionSafety(Safety safety) {
         if (safety == null) throw new IllegalArgumentException("safety is required");
@@ -42,7 +43,7 @@ public final class CombatProfiles {
         }
         if (safety.maxSelf() > MAX_SELF) {
             throw new IllegalArgumentException("maxSelf " + safety.maxSelf()
-                + " is weaker than the conservative ceiling " + MAX_SELF);
+                + " is above the self-damage ceiling " + MAX_SELF);
         }
         if (safety.minRemaining() < MIN_REMAINING) {
             throw new IllegalArgumentException("minRemaining " + safety.minRemaining()

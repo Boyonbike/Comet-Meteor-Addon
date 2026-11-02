@@ -118,28 +118,33 @@ public final class CrystalCombatController {
     private Boolean concurrencyLoggedSetting;
     private Mode concurrencyLoggedMode;
     private final EnumSet<SuspensionCause> lastSuspensions = EnumSet.noneOf(SuspensionCause.class);
+    /**
+     * Server ticks a non-evidence suspension (setback, connection change, queue overflow, malformed damage
+     * data) must persist before the controller trusts a fresh applied snapshot and reconciles. Without this
+     * only a respawn ever reconciled, so these causes stalled the module until the player died.
+     */
+    static final int RECONCILE_SETTLE_TICKS = 5;
+    private static final Set<SuspensionCause> SETTLE_RECONCILABLE = EnumSet.of(SuspensionCause.SETBACK,
+        SuspensionCause.CONNECTION_CHANGE, SuspensionCause.QUEUE_OVERFLOW, SuspensionCause.MISSING_DAMAGE_DATA);
+    private int reconcilableSince = -1;
     /** Opt-in tester diagnostics; null while the Debug log setting is off or nothing was enabled yet. */
     private CombatDebugHost debugHost;
 
     private Stack stack;
     private boolean enabled;
-    /** Default-off production gate: the module setting owns this; the controller only obeys it. */
+    /** Production gate: the module's piston-trap setting owns this; the controller only obeys it. */
     private boolean trapEnabled;
     /** Beta cleanup setting; off keeps the legacy manual-cleanup path and sends nothing. */
     private boolean autoCleanup;
-    /** The single tester mode selector; Hybrid is never accepted. */
+    /** The single runner mode selector: DirectOnly, PistonOnly or serialised Hybrid. */
     private Mode mode = Mode.DIRECT_ONLY;
     /**
      * Last risk model pushed to the live budget (or the one the next built stack starts with). The model is
      * live state, not a build input: switching it never rebuilds the stack and never touches debt.
      */
     private RiskModel riskModel = RiskModel.defaultModel();
-    /** Beta 16-combination layout filter; only consulted by the PistonOnly trap. */
+    /** Beta 16-combination layout filter; consulted by the trap planner in PistonOnly and Hybrid. */
     private PistonLayoutSelection pistonLayouts = PistonLayoutSelection.all();
-    /**
-     * Budget of the tick currently executing. Event callbacks (spawn/removal/block/target) happen on the
-     * same client thread and inherit it so the spawn-event pass is charged to the same tick.
-     */
     private String refusalReason;
     private volatile String info = DISABLED;
     /** Client-tick-published view for the read-only renderer; never queried from render code. */
@@ -155,6 +160,13 @@ public final class CrystalCombatController {
      * lifecycle transition aborts the engine sequence exactly once before any work in the new generation.
      */
     private ActionGeneration engineGeneration;
+    /**
+     * The action generation the trap last ran in. Tracked apart from {@link #engineGeneration}, which only
+     * advances while the engine runs, so PistonOnly sees every transition exactly once too.
+     */
+    private ActionGeneration trapGeneration;
+    /** A generation transition stopped the trap; it re-arms once the budget is no longer suspended. */
+    private boolean trapRearmPending;
 
     public CrystalCombatController(Readiness readiness, StackFactory stackFactory) {
         this(readiness, stackFactory, new CombatMetrics());
@@ -222,6 +234,8 @@ public final class CrystalCombatController {
             stack.pistonTrap().setAutoCleanup(autoCleanup);
         }
         engineGeneration = stack.session().isOpen() ? stack.session().actionGeneration() : null;
+        trapGeneration = engineGeneration;
+        trapRearmPending = false;
         enabled = true;
         stack.runtime().onEnabled();
         lastSuspensions.clear();
@@ -245,6 +259,8 @@ public final class CrystalCombatController {
         }
         if (stack != null && stack.pistonTrap() != null) stack.pistonTrap().disable();
         engineGeneration = null;
+        trapGeneration = null;
+        trapRearmPending = false;
         riskSnapshot = RiskDebtSnapshot.empty();
         info = refusalReason != null ? refusalReason : DISABLED;
     }
@@ -277,12 +293,8 @@ public final class CrystalCombatController {
                     stack.engineHost().onObservationApplied(observation);
                 }
             }, budget);
-            if (enabled && stack.pistonTrap() != null
-                && !Objects.equals(engineGeneration, stack.session().actionGeneration())) {
-                // A dimension change (or any generation transition) must stop trap sends immediately;
-                // the retained sequence/hazards stay until explicit reconciliation.
-                stack.pistonTrap().disable();
-            }
+            reconcileSettledSuspension(serverTick);
+            if (enabled && stack.pistonTrap() != null) syncTrapGeneration();
             if (enabled && mode == Mode.HYBRID) hybridBeforeTick(serverTick, budget);
             if (enabled && stack.engineHost() != null && mode != Mode.PISTON_ONLY) {
                 ActionGeneration current = stack.session().actionGeneration();
@@ -326,6 +338,24 @@ public final class CrystalCombatController {
     }
 
     /**
+     * A death, respawn or dimension change (any generation transition) stops trap sends immediately; a
+     * retained sequence becomes manual cleanup and keeps its hazards until explicit reconciliation. The
+     * trap re-arms on a later tick once the budget is no longer suspended, so it never stays off silently
+     * after the first death. Re-arming is checked before the transition so it always waits at least one tick.
+     */
+    private void syncTrapGeneration() {
+        if (trapRearmPending && !stack.risk().suspended()) {
+            trapRearmPending = false;
+            if (effectiveTrap()) stack.pistonTrap().enable();
+        }
+        ActionGeneration current = stack.session().actionGeneration();
+        if (Objects.equals(trapGeneration, current)) return;
+        trapGeneration = current;
+        stack.pistonTrap().disable();
+        trapRearmPending = true;
+    }
+
+    /**
      * A dimension change migrates the budget but starts a new ledger connection epoch, so the old epoch is
      * closed <em>after</em> the tick that observed the change. Only the old connection's ledger state is
      * dropped; every other connection and the risk budget stay untouched.
@@ -341,6 +371,7 @@ public final class CrystalCombatController {
     public void reconfigure(dev.tntcoating.core.combat.DirectSettings settings) {
         if (stack == null) return;
         if (stack.engineHost() != null) stack.engineHost().reconfigure(settings);
+        if (stack.pistonTrap() != null) stack.pistonTrap().reconfigure(settings);
         // The cleanup switch is trap-local (not part of the pure DirectSettings record), but every config
         // change still re-applies it here so a live stack can never keep a stale cleanup mode.
         if (stack.pistonTrap() != null) stack.pistonTrap().setAutoCleanup(autoCleanup);
@@ -391,6 +422,32 @@ public final class CrystalCombatController {
         refresh();
     }
 
+    /**
+     * Reconciles a suspension whose causes are all non-evidence ones once they have persisted for
+     * {@link #RECONCILE_SETTLE_TICKS} server ticks, through the same ledger-rescan path a respawn uses. A
+     * pending death waits for the respawn path; incoherent-health and widening holds survive reconciliation.
+     */
+    private void reconcileSettledSuspension(int serverTick) {
+        Set<SuspensionCause> causes = stack.risk().suspensionCauses();
+        boolean reconcilable = stack.client().selfKey() != null
+            && !causes.contains(SuspensionCause.DEATH)
+            && !causes.contains(SuspensionCause.RESPAWN)
+            && causes.stream().anyMatch(SETTLE_RECONCILABLE::contains);
+        if (!reconcilable) {
+            reconcilableSince = -1;
+            return;
+        }
+        if (reconcilableSince < 0) {
+            reconcilableSince = serverTick;
+            return;
+        }
+        if (serverTick - reconcilableSince < RECONCILE_SETTLE_TICKS) return;
+        reconcilableSince = -1;
+        stack.ledger().reconcile(stack.runtime().capture());
+        stack.runtime().onReconciled();
+        debugMarker("RECONCILE settled causes=" + causes);
+    }
+
     /** Connection close: clears that connection's ledger state only, then waits for a new session. */
     public void onLeft() {
         // The close below retires this connection's risk and ledger state, so the renderer must stop
@@ -407,6 +464,7 @@ public final class CrystalCombatController {
         }
         endEngineGeneration();
         engineGeneration = null;
+        trapGeneration = null;
         trackedConnection = null;
         refresh();
     }
@@ -440,7 +498,11 @@ public final class CrystalCombatController {
      * does not repeat it. Hazards and sent risk remain untouched; only the engine sequence is stopped.
      */
     private void endEngineGeneration() {
-        if (stack == null || stack.engineHost() == null) return;
+        if (stack == null) return;
+        // The caller already stopped or re-armed the trap for this transition; the tick must not repeat it.
+        trapGeneration = stack.session().isOpen() ? stack.session().actionGeneration() : null;
+        trapRearmPending = false;
+        if (stack.engineHost() == null) return;
         stack.engineHost().onGenerationEnded();
         // A generation boundary always drops the Hybrid trap sentinel; the next tick may re-arm it only
         // if the trap is still enabled and owns a sequence.
@@ -506,7 +568,7 @@ public final class CrystalCombatController {
      */
     public void observeBlockUpdate(Cell cell) {
         Stack live = stack;
-        if (live == null || !live.session().isOpen()) return;
+        if (live == null || !live.session().isOpen() || cell == null) return;
         // The trap sees the server-authored block update before the engine cache; neither path sends here.
         if (live.pistonTrap() != null) live.pistonTrap().onBlockUpdate(cell);
         if (live.engineHost() != null) live.engineHost().onBlockUpdated(cell);
@@ -539,8 +601,9 @@ public final class CrystalCombatController {
     }
 
     /**
-     * Production setting bridge. Off is the default: the trap stays dormant and DirectOnly behaviour is
-     * unchanged. On only arms the trap while the runtime itself is enabled; hazards/risk are never cleared.
+     * Production setting bridge for the piston-trap setting. Off keeps the trap dormant; DirectOnly never
+     * arms it either way. On only arms the trap while the runtime itself is enabled; hazards/risk are never
+     * cleared.
      */
     public void setTrapEnabled(boolean value) {
         trapEnabled = value;
@@ -710,7 +773,7 @@ public final class CrystalCombatController {
             engine.offerPlans(committed.map(List::of).orElse(List.of()));
             engine.setCommittedPlan(committed.orElse(null));
             logConcurrency(engine, view.isPresent() ? "trap-view" : "trap-view-unavailable");
-            noteCleanup(serverTick, engine, trap);
+            noteCleanup(engine);
             return;
         }
         engine.clearActiveTrap();
@@ -721,7 +784,7 @@ public final class CrystalCombatController {
             ? trap.previewPlan(serverTick, budget).map(List::of).orElse(List.of())
             : List.of());
         logConcurrency(engine, "no-active-trap");
-        noteCleanup(serverTick, engine, trap);
+        noteCleanup(engine);
     }
 
     /**
@@ -757,7 +820,7 @@ public final class CrystalCombatController {
      * wait whose connection or action generation is gone. No packet is sent and no hazard or risk
      * reservation is touched here.
      */
-    private void noteCleanup(int serverTick, CombatEngine engine, PistonTrapController trap) {
+    private void noteCleanup(CombatEngine engine) {
         if (!stack.session().isOpen()) {
             engine.cleanupPriority().clear();
             return;
@@ -817,17 +880,21 @@ public final class CrystalCombatController {
         if (!stack.session().isOpen()) return WAITING_FOR_CONNECTION;
         Set<SuspensionCause> causes = stack.risk().suspensionCauses();
         if (!causes.isEmpty()) {
-            StringBuilder text = new StringBuilder("suspended: ");
+            StringBuilder text = new StringBuilder("paused: ");
             boolean first = true;
             for (SuspensionCause cause : causes) {
-                if (!first) text.append(", ");
-                text.append(cause.name().toLowerCase(java.util.Locale.ROOT).replace('_', ' '));
+                if (!first) text.append("; ");
+                text.append(cause.label());
                 first = false;
             }
             return text.toString();
         }
         if (stack.engineHost() != null && stack.engineHost().pause() != null) {
             return "paused: " + stack.engineHost().pause().describe();
+        }
+        // PistonOnly never ticks the engine, so the trap reports the shared Pauses settings itself.
+        if (mode == Mode.PISTON_ONLY && stack.pistonTrap() != null && stack.pistonTrap().pause() != null) {
+            return "paused: " + stack.pistonTrap().pause().describe();
         }
         if (mode != Mode.DIRECT_ONLY) {
             if (!trapEnabled) return "piston trap disabled";
@@ -846,6 +913,7 @@ public final class CrystalCombatController {
                     text.append(".crystalcombat cleanup confirm");
                     return text.toString();
                 }
+                if (trapRearmPending) return "piston trap: re-arming after respawn or world change";
                 var active = stack.pistonTrap().activeTrap();
                 if (active.isPresent()) {
                     return "piston trap: " + active.orElseThrow().phase().name()
@@ -863,7 +931,7 @@ public final class CrystalCombatController {
             return "cleanup due: waiting for the trap's cleanup slot";
         }
         EntityKey self = stack.client().selfKey();
-        if (self != null && stack.risk().debt(self).count() > 0) return "risk debt";
+        if (self != null && stack.risk().debt(self).count() > 0) return "waiting for your crystals to resolve";
         if (stack.client().crystals().isEmpty()) return "no crystals";
         if (mode == Mode.HYBRID) return "hybrid: idle";
         return "idle";

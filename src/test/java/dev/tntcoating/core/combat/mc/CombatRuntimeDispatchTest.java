@@ -561,7 +561,7 @@ final class CombatRuntimeDispatchTest {
     void productionBoundaryRejectsPermissiveSafetyProfiles() {
         assertEquals(IllegalArgumentException.class,
             org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
-                () -> new CombatRuntimeFixture(40, false, new Safety(4.0, 7.0, 2.0, 2.0)))
+                () -> new CombatRuntimeFixture(40, false, new Safety(4.0, 37.0, 2.0, 2.0)))
                 .getClass());
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
             () -> new CombatRuntimeFixture(40, false, new Safety(4.0, 6.0, 1.5, 2.0)));
@@ -575,7 +575,7 @@ final class CombatRuntimeDispatchTest {
     void planContextWithPermissiveSafetyIsRejected() {
         CombatRuntimeFixture fixture = new CombatRuntimeFixture();
         SafetyState weak = new SafetyState(fixture.ticket.conn(), fixture.ticket.gen(),
-            fixture.self(), fixture.healthySelf(), Map.of(), new Safety(4.0, 7.0, 2.0, 2.0));
+            fixture.self(), fixture.healthySelf(), Map.of(), new Safety(4.0, 37.0, 2.0, 2.0));
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
             () -> new PlanContext(weak, fixture.exposure(), fixture.estimate(),
                 fixture.healthySelf(), false, 0, "minecraft:end_crystal", 0, "", false));

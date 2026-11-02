@@ -151,4 +151,22 @@ public interface CombatClient {
     default HealthPair appliedHealth(int entityId) {
         return null;
     }
+
+    /** Which of the two synched health fields an entity class actually defines. */
+    enum HealthFields {
+        /** Not a living entity: a value at either id is some other field. */
+        NONE,
+        /** A living entity without synched absorption. */
+        HEALTH,
+        /** A player: health and synched absorption. */
+        HEALTH_AND_ABSORPTION
+    }
+
+    /**
+     * The synched health fields of the entity with this network id. Entity-data ids are numbered per class,
+     * so a non-living entity can carry an unrelated float at the health or absorption id.
+     */
+    default HealthFields healthFields(int entityId) {
+        return HealthFields.HEALTH_AND_ABSORPTION;
+    }
 }

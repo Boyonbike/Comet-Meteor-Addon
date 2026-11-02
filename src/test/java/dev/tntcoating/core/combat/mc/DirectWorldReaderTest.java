@@ -170,4 +170,21 @@ class DirectWorldReaderTest {
             new Vec(0, 0, 0).distance(crystal), 1.0).value(),
             "the minimum corner would understate the bound on a diagonal approach");
     }
+
+    @Test
+    void aCrystalTheLedgerNeverSawReadsAsObservedAndNotOwn() {
+        dev.tntcoating.core.combat.CombatSession session = new dev.tntcoating.core.combat.CombatSession();
+        session.open();
+        dev.tntcoating.core.combat.CrystalLedger ledger = new dev.tntcoating.core.combat.CrystalLedger();
+        dev.tntcoating.core.combat.EntityKey key = new dev.tntcoating.core.combat.EntityKey(
+            session.connection(), 42, java.util.UUID.nameUUIDFromBytes("untracked".getBytes()));
+        assertEquals(dev.tntcoating.core.combat.CrystalState.OBSERVED, DirectWorldReader.crystalState(ledger, key));
+        assertEquals(false, ledger.own(key));
+    }
+
+    @Test
+    void breakRangeUsesAttackRangeInSightAndWallsRangeBehindBlocks() {
+        assertEquals(5.0, DirectWorldReader.breakRange(true, 5.0, 0.0), 1.0e-9);
+        assertEquals(0.0, DirectWorldReader.breakRange(false, 5.0, 0.0), 1.0e-9);
+    }
 }

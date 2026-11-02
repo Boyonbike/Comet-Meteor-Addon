@@ -48,7 +48,7 @@ public final class CrystalCombatRender {
         event.graphics.fill(x, y, x + width, y + height, BACKGROUND);
         for (int i = 0; i < lines.size(); i++) {
             String line = lines.get(i);
-            int colour = line.startsWith("suspended:") ? SUSPENSION_COLOUR : DEBT_COLOUR;
+            int colour = line.startsWith("paused:") ? SUSPENSION_COLOUR : DEBT_COLOUR;
             event.graphics.text(font, line, x + PADDING, y + PADDING + i * LINE_HEIGHT, colour, false);
         }
     }

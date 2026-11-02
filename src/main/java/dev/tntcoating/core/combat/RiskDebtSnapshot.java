@@ -49,12 +49,12 @@ public record RiskDebtSnapshot(int count, double bound, List<SuspensionCause> ca
     public List<String> displayLines() {
         List<String> lines = new ArrayList<>(2);
         if (count > 0 || bound > 0.0) {
-            lines.add(String.format(Locale.ROOT, "risk debt: %d outstanding (bound %.2f)", count, bound));
+            lines.add(String.format(Locale.ROOT, "unresolved crystals: %d (up to %.1f damage)", count, bound));
         }
         if (!causes.isEmpty()) {
-            lines.add("suspended: " + causes.stream()
-                .map(cause -> cause.name().toLowerCase(Locale.ROOT).replace('_', ' '))
-                .collect(Collectors.joining(", ")));
+            lines.add("paused: " + causes.stream()
+                .map(SuspensionCause::label)
+                .collect(Collectors.joining("; ")));
         }
         return List.copyOf(lines);
     }

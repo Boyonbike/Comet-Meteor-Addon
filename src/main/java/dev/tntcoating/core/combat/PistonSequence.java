@@ -40,6 +40,11 @@ public final class PistonSequence {
     public static final int TRAP_DEADLINE_TICKS = 100;
     /** Cleanup deadline: cleanup must finish or escalate within 40 ticks. */
     public static final int CLEANUP_DEADLINE_TICKS = 40;
+    /**
+     * Cooldown after a successful cleanup. It ends on its own timer, never through the stage timeout or the
+     * trap deadline: a trap that finished cleanly is complete, not failed.
+     */
+    public static final int COOLDOWN_TICKS = 10;
     /** Structural stages may be retried at most twice. */
     public static final int MAX_STRUCTURAL_RETRIES = 2;
     /** Minimum stage timeout even on a zero-latency connection. */
@@ -146,6 +151,7 @@ public final class PistonSequence {
     private boolean powerSent;
     private boolean crossCheckUsed;
     private boolean clientDisagreement;
+    private boolean completed;
     private Spawn bound;
     private int stageStartTick;
     private int beginTick;
@@ -309,12 +315,7 @@ public final class PistonSequence {
             }
             case WAIT_REMOVE -> transition(PistonPhase.CLEANUP, tick);
             case CLEANUP -> transition(PistonPhase.COOLDOWN, tick);
-            case COOLDOWN -> {
-                cleanupPending = false;
-                broadLocksHeld = false;
-                // riskRetained stays true: only the risk budget retires risk, on evidence.
-                history.add(PistonPhase.COOLDOWN);
-            }
+            case COOLDOWN -> cooldownCompleted(tick);
             default -> {
             }
         }
@@ -473,6 +474,13 @@ public final class PistonSequence {
         if (phase != PistonPhase.COOLDOWN) return;
         // riskRetained stays true: cooldown completion never retires risk.
         broadLocksHeld = false;
+        cleanupPending = false;
+        completed = true;
+    }
+
+    /** True once the cooldown after a successful cleanup ended; the owner may then release the slot. */
+    public boolean completed() {
+        return completed;
     }
 
     /** Ownership-aware cleanup: automatic mining for CONFIRMED_OURS, inferred only when explicitly enabled. */
@@ -530,6 +538,12 @@ public final class PistonSequence {
     public Optional<String> tick(int tick) {
         if (!began || phase == PistonPhase.ABORTED || phase == PistonPhase.MANUAL_CLEANUP) {
             return Optional.empty();
+        }
+        if (phase == PistonPhase.COOLDOWN) {
+            // The trap already succeeded: neither the stage timeout nor the trap deadline applies.
+            if (completed || tick - stageStartTick < COOLDOWN_TICKS) return Optional.empty();
+            cooldownCompleted(tick);
+            return Optional.of("cooldown-complete");
         }
         if (tick - beginTick >= config.trapDeadlineTicks()) {
             // Deadline changes retry/backoff only: risk stays, broad locks are released, exclusions stay.

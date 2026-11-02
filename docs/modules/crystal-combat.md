@@ -7,8 +7,9 @@ Current build: **tester.4** — [cross-version timing test notes](../testers/tes
 Module: **crystal-combat**.
 
 **CrystalCombat** is the audited crystal-aura / piston-crystal combat module for Meteor 26.2. It is
-**DirectOnly by default**. The piston trap is an opt-in beta in the `-tester.4` build and is not
-server-confirmed. This is beta software: test on worlds where losing gear is acceptable.
+**DirectOnly by default**. The piston trap is a beta in the `-tester.4` build and is not
+server-confirmed; it runs only when you pick PistonOnly or Hybrid (the `piston-trap` setting is on by
+default, but DirectOnly never arms it). This is beta software: test on worlds where losing gear is acceptable.
 
 The module sends only through one runtime dispatch path. Planners never send, rotations are requested
 only from dispatch, and the offhand item is never touched. Meteor's own CrystalAura is suppressed while
@@ -29,6 +30,11 @@ silently running without the guard.
 A live mode or safety change aborts unsent work and keeps hazards and already-sent risk. The old trap
 sequence becomes `MANUAL_CLEANUP` and cannot resume.
 
+A death, respawn or dimension change stops the trap the same way. The trap re-arms itself on a later
+tick once the pause for that event has cleared; a sequence that was in progress still needs manual
+cleanup and `.crystalcombat cleanup confirm`. While it waits, the info string reads `piston trap:
+re-arming after respawn or world change`.
+
 ## Safety
 
 Every opportunity is priced before reservation. The summed outstanding risk bound must leave the
@@ -37,7 +43,16 @@ current, stronger one. A timeout only changes retry/backoff: it never retires ri
 hazard. Sent risk retires only on the safety model's evidence. The anti-suicide setting is locked on.
 
 The default safety envelope is minimum target damage 4, maximum self damage 6, remaining margin 2 and
-maximum friend damage 2. Stricter values are accepted; looser values are refused.
+maximum friend damage 2. Stricter values are accepted. `max-self-damage` may be raised up to 36, the same
+range as Meteor's `max-damage`; selecting the Conservative profile resets it to 6. The other three floors
+cannot be loosened. Raising the self ceiling never bypasses the remaining-health margin: every
+reservation still needs effective health minus all outstanding self risk to stay above the margin.
+
+The self bound is a worst case: only blast-resistant blocks count as cover and armour that could break
+before the hit is ignored. Out in the open, that bound is above 6 for every crystal within place range,
+even in full Protection IV netherite (about 14 at 4.5 blocks on Hard, about 7 on Normal). At the default
+of 6 the module therefore reports `running: no verified opportunity` unless cover blocks the blast; raise
+`max-self-damage` (Custom profile) to fight in the open.
 
 ### Risk models
 
@@ -101,7 +116,8 @@ closed connection cannot leave stale debt or suspension on screen until the next
 - **Timing** — motion prediction and hurt-sync.
 - **Piston** — piston-trap, beta auto-cleanup and the sixteen beta layout toggles.
 - **Defence** — dangerous-crystal break and anti-piston.
-- **Pauses** — eating/drinking, mining, screens, Baritone, health floor and lag.
+- **Pauses** — eating/drinking, mining, screens, Baritone, health floor and lag. They pause the piston
+  trap as well as direct play, in every mode.
 - **Experimental** — footprint-scoped concurrency.
 - **Render** — the read-only `show-risk-debt` overlay.
 - **Diagnostics** — opt-in debug log, identity export and incident marker (documented deviation from the
@@ -185,6 +201,9 @@ The automatic path is deliberately narrow:
   reserve (packet budget and hotbar slot), still evaluating non-imminent defence. The cleanup deadline
   is 40 ticks from entering `CLEANUP`; if the debris is not gone (obsidian supports usually take longer
   than that window) the sequence enters `MANUAL_CLEANUP` and lists what remains.
+- When every cell is gone the trap enters `COOLDOWN` for 10 ticks, then releases its slot by itself:
+  no `.crystalcombat cleanup confirm` is needed and the next trap may start. The cooldown never times
+  out into an abort, and hazards and sent risk stay with the ledger and budget as usual.
 - Disable, death, respawn or a connection change stops cleanup immediately and cancels the vanilla
   destruction it started; no cleanup packet is sent afterwards. Hazard and risk retention are unchanged.
 

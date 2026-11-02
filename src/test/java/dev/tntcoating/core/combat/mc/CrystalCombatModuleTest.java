@@ -178,8 +178,8 @@ final class CrystalCombatModuleTest {
         assertTrue(fixture.crystals.unresolved(hazard), "death never retires hazards");
         assertEquals(0, fixture.scheduler.leaseCount());
         assertEquals(0, fixture.sink.attempts);
-        assertTrue(controller.waitReason().startsWith("suspended: "));
-        assertTrue(controller.waitReason().contains("death"));
+        assertTrue(controller.waitReason().startsWith("paused: "));
+        assertTrue(controller.waitReason().contains("dead"));
     }
 
     @Test
@@ -238,12 +238,12 @@ final class CrystalCombatModuleTest {
             fixture.exposure(4.0), new ServerTickInterval(10, 12), fixture.state());
         assertTrue(risk.isPresent(), "fixture risk reservation must succeed");
         fixture.budget.mayHaveLeft(risk.orElseThrow());
-        assertEquals("risk debt", controller.waitReason());
+        assertEquals("waiting for your crystals to resolve", controller.waitReason());
 
         fixture.budget.suspend(SuspensionCause.SETBACK);
-        assertEquals("suspended: setback", controller.waitReason());
+        assertEquals("paused: rubber-banded, resuming shortly", controller.waitReason());
         fixture.budget.resumeAfterReconciliation();
-        assertEquals("risk debt", controller.waitReason());
+        assertEquals("waiting for your crystals to resolve", controller.waitReason());
 
         controller.onLeft();
         assertEquals("waiting for connection", controller.waitReason());
@@ -557,6 +557,38 @@ final class CrystalCombatModuleTest {
             "passive ticks must not overwrite the disabled status with an active wait reason");
     }
 
+    @Test
+    void settledSetbackReconcilesWithoutRespawn() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        CrystalCombatController controller = controller(fixture);
+        org.junit.jupiter.api.Assertions.assertTrue(controller.enable());
+        controller.tick(10);
+        fixture.budget.suspend(SuspensionCause.SETBACK);
+        controller.tick(11);
+        org.junit.jupiter.api.Assertions.assertTrue(fixture.budget.suspended(), "a fresh setback holds sends");
+        for (int tick = 12; tick <= 11 + CrystalCombatController.RECONCILE_SETTLE_TICKS; tick++) {
+            controller.tick(tick);
+        }
+        org.junit.jupiter.api.Assertions.assertFalse(fixture.budget.suspended(),
+            "a settled setback reconciles instead of stalling until death");
+        org.junit.jupiter.api.Assertions.assertEquals(0, fixture.sink.attempts, "reconciliation never sends");
+    }
+
+    @Test
+    void pendingDeathIsNeverReconciledByTheSettleTimer() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        CrystalCombatController controller = controller(fixture);
+        org.junit.jupiter.api.Assertions.assertTrue(controller.enable());
+        fixture.budget.suspend(SuspensionCause.SETBACK);
+        fixture.budget.suspend(SuspensionCause.DEATH);
+        for (int tick = 1; tick <= 4 * CrystalCombatController.RECONCILE_SETTLE_TICKS; tick++) {
+            controller.tick(tick);
+        }
+        org.junit.jupiter.api.Assertions.assertTrue(
+            fixture.budget.suspensionCauses().contains(SuspensionCause.DEATH),
+            "death waits for the respawn reconcile");
+    }
+
     private static CrystalCombatController controller(CombatRuntimeFixture fixture) {
         return new CrystalCombatController(() -> null, fixture::controllerStack);
     }
@@ -600,5 +632,65 @@ final class CrystalCombatModuleTest {
                 List.of(new SynchedEntityData.DataValue<>(9, EntityDataSerializers.FLOAT, health),
                     new SynchedEntityData.DataValue<>(10, EntityDataSerializers.FLOAT, 0.0f))));
         fixture.intake.apply(receipt, null);
+    }
+
+    @Test
+    void leavingWhileDeadDoesNotPauseTheNextConnection() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        CrystalCombatController controller = controller(fixture);
+        assertTrue(controller.enable());
+        controller.tick(1);
+        fixture.intake.enqueueForTest(death(fixture, 2));
+        controller.tick(2);
+        assertTrue(fixture.budget.suspensionCauses().contains(SuspensionCause.DEATH));
+
+        controller.onLeft();
+        controller.onJoined();
+        controller.tick(3);
+
+        assertFalse(fixture.budget.suspensionCauses().contains(SuspensionCause.DEATH),
+            "a death on a closed connection must not pause the next one");
+        assertFalse(controller.waitReason().startsWith("paused: "), controller.waitReason());
+    }
+
+    @Test
+    void dyingInAnotherDimensionResumesAfterTheOverworldRespawn() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        CrystalCombatController controller = controller(fixture);
+        assertTrue(controller.enable());
+        controller.tick(1);
+        respawn(fixture, "minecraft:the_nether");
+        controller.tick(2);
+        ConnectionKey nether = fixture.session.connection();
+        fixture.intake.enqueueForTest(death(fixture, 3));
+        controller.tick(3);
+
+        respawn(fixture, "minecraft:overworld");
+        controller.tick(4);
+
+        assertNotEquals(nether, fixture.session.connection(), "the respawn still starts a new epoch");
+        assertTrue(fixture.budget.suspensionCauses().isEmpty(),
+            () -> "the respawn reconciles: " + fixture.budget.suspensionCauses());
+    }
+
+    @Test
+    void theFirstPortalTripAfterJoiningIsADimensionChange() {
+        CombatRuntimeFixture fixture = new CombatRuntimeFixture();
+        CrystalCombatController controller = controller(fixture);
+        assertTrue(controller.enable());
+        ConnectionKey joined = fixture.session.connection();
+        controller.tick(1);
+
+        respawn(fixture, "minecraft:the_nether");
+        controller.tick(2);
+
+        assertNotEquals(joined, fixture.session.connection(),
+            "the joining dimension is seeded, so the first portal trip is not mistaken for a respawn");
+        assertTrue(fixture.budget.suspensionCauses().contains(SuspensionCause.CONNECTION_CHANGE));
+    }
+
+    private static Observation death(CombatRuntimeFixture fixture, int tick) {
+        return new Observation(fixture.session.connection(), 900L + tick, 1L, 1_000L, tick,
+            ObservationKind.DEATH, fixture.self(), null, null, null, new ObservationPayload.Death());
     }
 }

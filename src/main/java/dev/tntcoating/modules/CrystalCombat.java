@@ -12,6 +12,7 @@ import dev.tntcoating.core.CrystalCombatSettingsMigration;
 import dev.tntcoating.core.combat.Cell;
 import dev.tntcoating.core.combat.mc.CombatDamageAdapter;
 import dev.tntcoating.core.combat.CombatEngine;
+import dev.tntcoating.core.combat.CombatDamagePolicy;
 import dev.tntcoating.core.combat.CombatProfiles;
 import dev.tntcoating.core.combat.CombatRiskBudget;
 import dev.tntcoating.core.combat.ConnectionKey;
@@ -64,7 +65,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.CompoundTag;
 
 /**
- * CrystalCombat v2.1, Phase 2d: activation, disable and visibility for the audited combat runtime.
+ * CrystalCombat v2.1 module shell: activation, disable and visibility for the audited combat runtime.
  *
  * <p>This module is a lifecycle shell. It owns settings and the visible wait reason; every send remains in
  * {@link CombatRuntime#dispatch}. It never toggles another module, never writes Meteor settings and never
@@ -83,7 +84,7 @@ import net.minecraft.nbt.CompoundTag;
  * <p>Phase 3.1 wires the verified DirectOnly baseline: the controller owns one engine host that reads a world
  * snapshot after the runtime applied the tick's receipts and hands at most one place or one verified break
  * per tick to {@link dev.tntcoating.core.combat.CombatEngine}. The visible wait reason now includes the
- * engine pause ("paused: eating"), while "no crystals", "risk debt", "suspended: &lt;cause&gt;" and
+ * engine pause ("paused: eating"), while "no crystals", "waiting for your crystals to resolve", "paused: &lt;cause&gt;" and
  * "waiting for connection" keep their existing priority. Metrics record tick time, suspensions and risk-debt
  * samples; the remaining Phase 4.7 counters stay zero until their phases.
  */
@@ -112,25 +113,23 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Mode> mode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("mode")
-        .description("DirectOnly is the production engine. PistonOnly is the beta single-push tester "
-            + "mode with manual cleanup. Hybrid ranks direct plans against the trap but runs one plan at "
-            + "a time: a committed trap blocks direct plans while defence keeps evaluating.")
+        .description("DirectOnly: normal crystal aura. PistonOnly (beta): piston trap only. Hybrid: uses "
+            + "whichever plan is better, one at a time.")
         .defaultValue(Mode.DIRECT_ONLY)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Profile> profile = sgGeneral.add(new EnumSetting.Builder<Profile>()
         .name("profile")
-        .description("Conservative re-applies the four audited safety defaults when selected; Custom keeps "
-            + "your values. Every conservative floor is still enforced. The plan's third profile is not "
-            + "implemented and is not offered.")
+        .description("Conservative resets the safety settings to the tested defaults. Custom keeps your own "
+            + "values; safety limits still apply.")
         .defaultValue(Profile.CONSERVATIVE)
         .onChanged(value -> profileChanged())
         .build());
 
     private final Setting<Double> targetRange = sgGeneral.add(new DoubleSetting.Builder()
         .name("target-range")
-        .description("Target search radius for later planners; no planner is active in this milestone.")
+        .description("How far away a player can be targeted.")
         .defaultValue(6.0)
         .min(0.0)
         .max(24.0)
@@ -140,7 +139,7 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Boolean> antiSuicide = sgSafety.add(new BoolSetting.Builder()
         .name("anti-suicide")
-        .description("Locked on: refuses to enable with a weaker safety model.")
+        .description("Always on. CrystalCombat will not run with this off.")
         .defaultValue(true)
         .onChanged(value -> configChanged())
         .build());
@@ -157,7 +156,7 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Double> minTargetDamage = sgSafety.add(new DoubleSetting.Builder()
         .name("min-target-damage")
-        .description("Instants below this estimated target damage are never worth spending risk on. Never below 4.")
+        .description("Skip crystals that would deal less than this to the target. Never below 4.")
         .defaultValue(4.0)
         .min(0.0)
         .max(100.0)
@@ -167,17 +166,18 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Double> maxSelfDamage = sgSafety.add(new DoubleSetting.Builder()
         .name("max-self-damage")
-        .description("Instants that can hurt the player for more than this are rejected. This profile's ceiling is 6.")
+        .description("Skip crystals that could deal you more than this, up to 36. Selecting Conservative "
+            + "resets it to 6. The remaining-health margin still applies.")
         .defaultValue(6.0)
         .min(0.0)
-        .max(100.0)
-        .sliderRange(0.0, 20.0)
+        .max(CombatDamagePolicy.MAX_SELF_DAMAGE_CEILING)
+        .sliderRange(0.0, CombatDamagePolicy.MAX_SELF_DAMAGE_CEILING)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Double> remainingHealthMargin = sgSafety.add(new DoubleSetting.Builder()
         .name("remaining-health-margin")
-        .description("Minimum health that must remain after the worst case. Never below 2.")
+        .description("Health you must keep after the worst-case hit. Never below 2.")
         .defaultValue(2.0)
         .min(0.0)
         .max(20.0)
@@ -187,7 +187,7 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Double> maxFriendDamage = sgSafety.add(new DoubleSetting.Builder()
         .name("max-friend-damage")
-        .description("The most damage an explosion may deal to a friend, per friend. Ceiling 2.")
+        .description("Most damage a crystal may deal to each friend. Never above 2.")
         .defaultValue(2.0)
         .min(0.0)
         .max(20.0)
@@ -197,7 +197,7 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Double> placeRange = sgDirect.add(new DoubleSetting.Builder()
         .name("place-range")
-        .description("Maximum placement interaction distance.")
+        .description("How far away crystals can be placed.")
         .defaultValue(4.5)
         .min(0.0)
         .max(8.0)
@@ -207,7 +207,7 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Double> attackRange = sgDirect.add(new DoubleSetting.Builder()
         .name("attack-range")
-        .description("Maximum crystal attack interaction distance.")
+        .description("How far away crystals can be broken.")
         .defaultValue(3.0)
         .min(0.0)
         .max(8.0)
@@ -217,7 +217,7 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Double> wallsRange = sgDirect.add(new DoubleSetting.Builder()
         .name("walls-range")
-        .description("How far behind obstruction a target may be attacked or placed at. Zero stays strict.")
+        .description("How far through walls you can place or break. 0 means only what you can see.")
         .defaultValue(3.0)
         .min(0.0)
         .max(8.0)
@@ -227,52 +227,55 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Boolean> ownOnly = sgDirect.add(new BoolSetting.Builder()
         .name("own-only")
-        .description("Only break crystals spawned from this module's own placements.")
+        .description("Only break crystals this module placed.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> support = sgDirect.add(new BoolSetting.Builder()
         .name("support")
-        .description("Experimental: allows at most one obsidian support block when no direct base exists, then places the crystal on it. Off keeps the Phase 3 direct-base choice; counted as two actions. Not promoted until Phase 9 evidence.")
+        .description("Experimental: if there is no obsidian to place on, place one obsidian block first. "
+            + "Uses two actions.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> surroundGap = sgDirect.add(new BoolSetting.Builder()
         .name("surround-gap")
-        .description("Experimental: when the target stands in a one-column hole, prefers a crystal placement in that open column if an obsidian/bedrock base is already under it. Off keeps the normal Phase 3/4 choice. Never mines, never places support in the gap and never relaxes a safety bound.")
+        .description("Experimental: if the target is in a one-block hole, prefer placing in the open gap "
+            + "when obsidian or bedrock is already under it.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> motionPrediction = sgTiming.add(new BoolSetting.Builder()
         .name("motion-prediction")
-        .description("Experimental: prices the target at its predicted reachable positions and self/friends at the most exposed predicted position. Off keeps the Phase 3 current-box model; not promoted until Phase 9 evidence.")
+        .description("Experimental: aim where the target is about to move, and check your own safety where "
+            + "you are about to move. Needs live testing.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> hurtSync = sgTiming.add(new BoolSetting.Builder()
         .name("hurt-sync")
-        .description("Experimental: re-ranks the target using its observed damage-immunity window and waits for the window to expire when that is expected to be worth it. Off keeps the Phase 3 estimates. No raw-hit feed is wired yet, so the model stays unknown in production.")
+        .description("Experimental: time hits around the target's damage cooldown. Has no effect in-game "
+            + "yet. Needs live testing.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> pistonTrap = sgPiston.add(new BoolSetting.Builder()
         .name("piston-trap")
-        .description("Beta: single-push piston trap with block-by-block confirmation. It runs in "
-            + "PistonOnly and in Hybrid while a trap is committed; one trap at a time. Cleanup is manual "
-            + "unless auto-cleanup is on. After removing the debris, run .crystalcombat cleanup confirm to "
-            + "release the trap slot. Not yet server-confirmed.")
+        .description("Beta: push a crystal into the target with a piston. One trap at a time. Clean up "
+            + "afterwards, then run .crystalcombat cleanup confirm.")
         .defaultValue(true)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> autoCleanup = sgPiston.add(new BoolSetting.Builder()
         .name("auto-cleanup")
-        .description("Beta: removes only the power, piston and supports this module placed and saw confirmed. Contested blocks are always left for you.")
+        .description("Beta: break the power, piston and supports this module placed after a trap. Blocks it "
+            + "is unsure about are left for you.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
@@ -283,56 +286,58 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Boolean> dangerousCrystalBreak = sgDefence.add(new BoolSetting.Builder()
         .name("dangerous-crystal-break")
-        .description("Experimental defence: breaks an observed enemy crystal in attack range when its whole-hull detonation would breach the self margin. Still requires the self/friend ceilings, the remaining margin and a risk-budget reservation; never breaks own or ledger-protected crystals. Off by default in the Conservative tester build.")
+        .description("Experimental defence: break an enemy crystal near you that could take you below your "
+            + "health margin. Never breaks your own.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> antiPiston = sgDefence.add(new BoolSetting.Builder()
         .name("anti-piston")
-        .description("Experimental defence: reacts to a piston within two blocks of the feet/head that faces self. Breaks an enemy crystal in the push-path cell when safe, otherwise places one obsidian blocker in that cell. Mining the power source is not implemented. Off by default in the Conservative tester build.")
+        .description("Experimental defence: if an enemy piston faces you, break the crystal in its path or "
+            + "block it with obsidian.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> pauseWhenEating = sgPauses.add(new BoolSetting.Builder()
         .name("pause-when-eating")
-        .description("Stops placing and attacking while the player is eating or drinking.")
+        .description("Pause while eating food.")
         .defaultValue(true)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> pauseWhenDrinking = sgPauses.add(new BoolSetting.Builder()
         .name("pause-when-drinking")
-        .description("Stops placing and attacking while the player is drinking a potion.")
+        .description("Pause while drinking a potion.")
         .defaultValue(true)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> pauseOnBaritone = sgPauses.add(new BoolSetting.Builder()
         .name("pause-on-baritone")
-        .description("Stops combat while Baritone is pathing.")
+        .description("Pause while Baritone is pathing.")
         .defaultValue(true)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> pauseWhenMining = sgPauses.add(new BoolSetting.Builder()
         .name("pause-when-mining")
-        .description("Stops placing and attacking while the player is mining and not done with the block.")
+        .description("Pause while you are mining a block.")
         .defaultValue(true)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> pauseOnScreens = sgPauses.add(new BoolSetting.Builder()
         .name("pause-on-screens")
-        .description("Stops combat while any screen is open.")
+        .description("Pause while any screen is open.")
         .defaultValue(true)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Double> healthFloor = sgPauses.add(new DoubleSetting.Builder()
         .name("health-floor")
-        .description("The player pauses combat at or below this health.")
+        .description("Pause at or below this health.")
         .defaultValue(6.0)
         .min(0.0)
         .max(20.0)
@@ -342,40 +347,44 @@ public final class CrystalCombat extends Module {
 
     private final Setting<Boolean> pauseOnLag = sgPauses.add(new BoolSetting.Builder()
         .name("pause-on-lag")
-        .description("Stops combat when the server tick stalls or the observation queue overflows.")
+        .description("Pause when the server is lagging.")
         .defaultValue(true)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> footprintConcurrency = sgExperimental.add(new BoolSetting.Builder()
         .name("footprint-concurrency")
-        .description("Experimental Phase 6.3: admits a direct plan during a committed footprint trap only when the audited structural/entity/swept/target-motion/resource/risk rows prove compatibility; otherwise the direct plan waits, exactly like serialised Hybrid. Off by default: serialised Hybrid is the shipped behaviour and this path is not promoted without tester evidence.")
+        .description("Experimental: in Hybrid, allow a normal crystal plan to run during a piston trap when "
+            + "it cannot interfere. Off: one plan at a time.")
         .defaultValue(false)
         .onChanged(value -> configChanged())
         .build());
 
     private final Setting<Boolean> showRiskDebt = sgRender.add(new BoolSetting.Builder()
         .name("show-risk-debt")
-        .description("Show outstanding risk debt and the current suspension cause while CrystalCombat is enabled. Read-only: it never changes a plan, a send or a safety decision.")
+        .description("Show how many of your crystals are still unresolved and why the aura is paused. "
+            + "Display only.")
         .defaultValue(true)
         .build());
 
     private final Setting<Boolean> debugLog = sgDiagnostics.add(new BoolSetting.Builder()
         .name("debug-log")
-        .description("Keeps the last five minutes of audited observations and incident markers in memory for a tester export. Off by default; nothing is written to disk unless exported.")
+        .description("Keep the last five minutes of combat events in memory for a tester export. Nothing is "
+            + "saved unless you export.")
         .defaultValue(false)
         .onChanged(value -> debugLogChanged())
         .build());
 
     private final Setting<Boolean> exportIncludeIdentities = sgDiagnostics.add(new BoolSetting.Builder()
         .name("export-include-identities")
-        .description("Include other players' names and UUIDs in an export. Off by default; chat and server addresses are never included.")
+        .description("Include other players' names and UUIDs in exports. Chat and server addresses are "
+            + "never included.")
         .defaultValue(false)
         .build());
 
     private final Setting<Keybind> incidentKey = sgDiagnostics.add(new KeybindSetting.Builder()
         .name("incident-marker-key")
-        .description("Writes a 'something went wrong here' incident marker into the debug log.")
+        .description("Press to mark 'something went wrong here' in the debug log.")
         .defaultValue(Keybind.none())
         .action(this::writeManualIncident)
         .build());
@@ -396,8 +405,6 @@ public final class CrystalCombat extends Module {
     private Object sessionToken;
     /** Monotonic server-tick counter for the runtime; never reset, because the runtime rejects backwards ticks. */
     private int tickCounter;
-    /** Active client ticks served; proves the runtime is being driven even while no planner exists yet. */
-    private long attempts;
 
     public CrystalCombat() {
         super(TntCoatingAddon.CATEGORY, "crystal-combat",
@@ -497,7 +504,6 @@ public final class CrystalCombat extends Module {
             return;
         }
         if (!isActive()) return;
-        attempts++;
         if (!controller.enabled()) return;
         advance();
     }
@@ -576,7 +582,7 @@ public final class CrystalCombat extends Module {
      * or safety envelope that the enable check would refuse.
      */
     static String settingsRefusal(Mode mode, Profile profile, boolean antiSuicide, Safety safety) {
-        if (!antiSuicide) return "anti-suicide is locked on";
+        if (!antiSuicide) return "anti-suicide must stay on";
         if (profile == null) return "profile is required";
         if (profile != Profile.CONSERVATIVE && profile != Profile.CUSTOM) {
             return "profile " + profile + " is not implemented yet";
@@ -631,6 +637,8 @@ public final class CrystalCombat extends Module {
         // The trap's cleanup stage asks this shared priority for its starvation window; the engine owns
         // the instance so Hybrid can yield the next free slot to it.
         trap.setCleanupPriority(engine.cleanupPriority());
+        // The Pauses settings apply to the trap in every mode, read through the engine host's world.
+        trap.setPauseSource(engineHost::trapPause);
         return new CrystalCombatController.Stack(runtime, session, ledger, scheduler, risk, client,
             intake, engineHost, hurtModel, trap);
     }

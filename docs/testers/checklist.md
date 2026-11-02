@@ -25,9 +25,9 @@ build; run it before Phase 2c enables automatic combat.
    the entity-data health/absorption observation and the block-changed ack appear in the same order as
    the packets in the client trace, and the health/absorption pair shares one applied revision.
 3. **Split health pair.** Force a health change that sends health and absorption in two packets
-   (equip an absorption source such as a golden apple while damaged). Expected: the budget suspends
-   with `INCOHERENT_HEALTH` until both fields arrive from one applied bundle; no retirement happens
-   from the absorption-only observation.
+   (equip an absorption source such as a golden apple while damaged). Expected: the missing field is
+   read back from the already-applied entity, so the budget gets a coherent pair at that revision and
+   does not stay on `paused: waiting for a health update`; the aura keeps working.
 4. **SetHealth carries no absorption.** Respawn or join. Expected: `ClientboundSetHealthPacket` alone
    never fabricates absorption and never retires a hazard; self effective health only becomes coherent
    from the metadata pair (audit C19).
@@ -88,11 +88,11 @@ build; run it before Phase 2c enables automatic combat.
     packets, unsent work is dropped, sent debt keeps counting, and the ledger keeps observing passively
     (no cleanup packets, rule 8).
 21. **Server stall.** Freeze the client for more than a second of server ticks. Expected: the budget
-    suspends on server-tick stall and refuses sends until reconciliation; the scheduler and budget each
-    tick once per server tick (not once per frame).
+    pauses through `pause-on-lag` (TPS / stale server feedback) and resumes when the server recovers; the
+    scheduler and budget each tick once per server tick (not once per frame).
 22. **Queue saturation.** Run the trace recorder and a busy crystal fight to saturate the receipt queue.
-    Expected: intake overflow suspends spending before the next tick's sends, and reconciliation clears
-    the suspension only after the queue is drained.
+    Expected: intake overflow suspends spending before the next tick's sends (`paused: catching up on
+    packets`), and the automatic reconcile about five server ticks later clears it once the queue drained.
 
 ## CrystalAura suppression (Phase 2c)
 
@@ -139,7 +139,7 @@ connections; the unit tests cover the same transitions with fakes only.
     ledger-bound crystal stays protected from Meteor after disabling `CrystalCombat`, and protection ends
     only when the hazard retires or the ledger forgets it.
 31. **Death and respawn.** Die with a sent placement and an unresolved crystal hazard. Expected: the
-    action generation ends, the info string reports `suspended: death`, hazards and friend debt stay, and
+    action generation ends, the info string reports `paused: dead, resumes after respawn`, hazards and friend debt stay, and
     after respawn the wait reason clears only after the ledger reconcile; no send occurs before that
     reconcile. Repeat with the module disabled: hazards and debt remain, no packets are sent.
 32. **Connection close and quick reconnect.** Disconnect while `CrystalCombat` is enabled, then rejoin.
@@ -153,9 +153,12 @@ connections; the unit tests cover the same transitions with fakes only.
     the same way; `anti-suicide` cannot be turned off. Changing a setting mid-combat ends in-flight
     actions (`onConfigChanged`) and sends nothing.
 34. **Suspensions and lag pause.** Stall the client for more than a second of server ticks, then saturate
-    the observation queue. Expected: the info string reports `suspended: queue overflow` (or the stall
-    cause), the module sends nothing until reconciliation, and the suspension counter in a debug build
-    increments once per episode, not once per tick.
+    the observation queue. Expected: the info string reports `paused: catching up on packets` (or the
+    engine's lag pause), the module sends nothing until the automatic reconcile about five server ticks
+    later, and the suspension counter in a debug build increments once per episode, not once per tick.
+    Repeat with a setback (`/tp` or an ender pearl) and a dimension change: expected `paused:
+    rubber-banded, resuming shortly` / `paused: world changed, resuming shortly`, then the aura resumes
+    on its own without dying.
 35. **Metrics wiring.** In a development build with metrics exposed, fight one crystal target. Expected:
     `combat_tick_ms`, suspension and risk-debt samples update once per server tick; all Phase 4.7 table
     counters exist and stay zero until their phase instrumentation lands (no merged counters);
@@ -188,7 +191,7 @@ jar. The info string must show the build version and short commit (for example
 39. **Open target.** Fight a player standing in the open with obsidian and crystals available. Expected:
     CrystalCombat places, breaks and attacks through the audited path; no packet comes from the render
     thread (F3 profiler shows no send in frames); the info string moves between `idle`, `no crystals`,
-    `risk debt` and a suspension reason. No speculative crystal or attack IDs appear in the debug log.
+    `waiting for your crystals to resolve` and a pause reason. No speculative crystal or attack IDs appear in the debug log.
 40. **Holed target.** Fight a target standing in a one-block hole (feet covered by the hole, head exposed
     or covered). Expected: CrystalCombat either places a crystal that can actually damage the target or
     stays on `idle`/refuses; it must not spam placements into a covered face, and any explosion risk is
@@ -217,11 +220,11 @@ jar. The info string must show the build version and short commit (for example
 46. **Death and respawn.** Die while CrystalCombat is enabled and a placement risk is sent. Expected: the
     debug log records a `self-death` incident (module enabled), the action generation ends, no packet is
     sent after death, and sent self debt stays counted. After respawn the ledger reconcile clears the
-    suspension once; the info string must not clear `suspended: death` before that reconcile. Repeat with
+    suspension once; the info string must not clear `paused: dead, resumes after respawn` before that reconcile. Repeat with
     the module disabled: the death is not recorded as an incident and no packet is sent.
 47. **Low TPS / high ping.** Fight through a server tick stall or 300+ ms ping. Expected: the runtime
-    suspends on a server stall, refuses sends until reconciliation, and does not use timeouts to retire
-    risk. The debug log records the suspension change with `SERVER_STALL` if that cause is raised.
+    pauses through `pause-on-lag` while the server lags and does not use timeouts to retire risk.
+    (`SERVER_STALL` is reserved and not raised in this build.)
 48. **Debug log ring and incidents.** With the debug log on, let a fight run for more than five minutes
     (or start it, wait, then check). Expected: the buffer holds at most the most recent five minutes;
     incident markers appear for self death, above-bound self damage, debt older than 30 seconds,
@@ -530,7 +533,7 @@ numbered in the same style as the rest of the checklist; work through them in or
     only Barrier sends a probe packet.
 82. **Strict retirement.** Place and break a crystal, take no damage, and watch the debt. Expected: the
     explosion or removal alone does not retire it; a causally later coherent health update does. If no
-    update arrives, the debt stays visible and the aura may wait on `risk debt`.
+    update arrives, the debt stays visible and the aura may wait on `waiting for your crystals to resolve`.
 83. **Barrier on local vanilla.** On a local vanilla server, use Barrier for a trap or direct crystal.
     Expected: one side-effect-free `ABORT_DESTROY_BLOCK` probe is sent after our explosion, no block
     breaks and no inventory or offhand change occurs, and harmless reservations retire after the ack
@@ -540,7 +543,7 @@ numbered in the same style as the rest of the checklist; work through them in or
     the explosion or removal is observed, while a crystal sent but not yet exploded still counts as
     debt. This is the weakest model; record any damage taken before the next health update.
 85. **Debt and suspension display.** Toggle `show-risk-debt`. Expected: on, the top-left overlay shows
-    `risk debt: N outstanding (bound X)` and any `suspended: <cause>`, and updates after a
+    `unresolved crystals: N (up to X damage)` and any `paused: <reason>`, and updates after a
     health/explosion event; off, it draws nothing. It is read-only and clears on leaving the world.
 86. **Auto-cleanup.** With `auto-cleanup` off, confirm the trap leaves debris and the manual cleanup
     text lists the blocks. Turn it on for a trap with power and piston debris. Expected: it breaks only

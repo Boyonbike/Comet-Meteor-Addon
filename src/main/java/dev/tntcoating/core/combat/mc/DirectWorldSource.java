@@ -6,10 +6,15 @@
 
 package dev.tntcoating.core.combat.mc;
 
+import dev.tntcoating.core.combat.DirectSettings;
 import dev.tntcoating.core.combat.DirectWorld;
 
 /** Supplies one read-only world view per planning pass; production reads Minecraft, tests feed traces. */
 public interface DirectWorldSource {
     /** The current view, or null when there is no local player/level/connection yet. */
     DirectWorld read();
+
+    /** Live settings change; a source that derives nothing from the settings ignores it. */
+    default void reconfigure(DirectSettings settings) {
+    }
 }

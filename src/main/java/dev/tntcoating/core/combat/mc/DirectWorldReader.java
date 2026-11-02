@@ -102,7 +102,8 @@ public final class DirectWorldReader implements DirectWorldSource {
     private final CrystalLedger ledger;
     private final CombatDamageAdapter damage;
     private final CombatHurtModel hurtModel;
-    private final DirectSettings settings;
+    /** Replaced on every config change; the stack outlives disable, so a captured copy would go stale. */
+    private volatile DirectSettings settings;
 
     public DirectWorldReader(Minecraft mc, CombatSession session, CombatClient client,
                              ObservationIntake intake, CrystalLedger ledger,
@@ -116,6 +117,12 @@ public final class DirectWorldReader implements DirectWorldSource {
         this.damage = Objects.requireNonNull(damage, "damage");
         this.hurtModel = Objects.requireNonNull(hurtModel, "hurtModel");
         this.settings = Objects.requireNonNull(settings, "settings");
+    }
+
+    /** Later reads stamp the new safety envelope into their {@link SafetyState}. */
+    @Override
+    public void reconfigure(DirectSettings next) {
+        settings = Objects.requireNonNull(next, "next");
     }
 
     /** One immutable read of the world, or null when there is no local player or level yet. */
@@ -175,11 +182,21 @@ public final class DirectWorldReader implements DirectWorldSource {
             self.getBoundingBox().inflate(32.0))) {
             if (crystal == null || crystal.isRemoved() || !crystal.isAlive()) continue;
             EntityKey key = new EntityKey(connection, crystal.getId(), crystal.getUUID());
-            CrystalState state = ledger.state(key);
+            CrystalState state = crystalState(ledger, key);
             result.add(new DirectCrystal(key, toVec(crystal.position()), toBox(crystal.getBoundingBox()),
                 state, ledger.own(key), state == CrystalState.QUARANTINED, Math.max(0, crystal.tickCount)));
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * The ledger state of a crystal present in the applied world. The ledger only learns a crystal from its
+     * spawn observation or a rescan, so one that predates the session or whose spawn was lost is unknown
+     * here; like a rescan, record it as an observed crystal that is not ours.
+     */
+    static CrystalState crystalState(CrystalLedger ledger, EntityKey key) {
+        CrystalState state = ledger.state(key);
+        return state != null ? state : CrystalState.OBSERVED;
     }
 
     private List<DirectItem> hotbar(LocalPlayer player) {
@@ -272,6 +289,11 @@ public final class DirectWorldReader implements DirectWorldSource {
                 return expiring;
             }
         };
+    }
+
+    /** Break reach: the attack range with a clear line of sight to the crystal, the walls range without one. */
+    static double breakRange(boolean clearSight, double attackRange, double wallsRange) {
+        return clearSight ? attackRange : wallsRange;
     }
 
     /** A piece at or below the breakage fraction is assumed broken by the mitigation envelope. */
@@ -490,16 +512,12 @@ public final class DirectWorldReader implements DirectWorldSource {
                                         double wallsRange) {
             Vec3 start = toVec3(eye);
             Vec3 end = toVec3(crystalPosition);
-            HitResult hit = mc.level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER,
+            // Sight is judged to the middle of the crystal: its position is its feet, on the base block's
+            // top face, where the ray would end on the base block itself.
+            Vec3 sight = crystalBox != null ? toVec3(crystalBox.center()) : end;
+            HitResult hit = mc.level.clip(new ClipContext(start, sight, ClipContext.Block.COLLIDER,
                 ClipContext.Fluid.NONE, player));
-            double range = attackRange;
-            if (hit.getType() == HitResult.Type.MISS) {
-                range = wallsRange;
-            } else if (hit instanceof BlockHitResult block
-                && !block.getBlockPos().equals(BlockPos.containing(crystalPosition.x(),
-                    crystalPosition.y(), crystalPosition.z()))) {
-                range = wallsRange;
-            }
+            double range = breakRange(hit.getType() == HitResult.Type.MISS, attackRange, wallsRange);
             return start.distanceToSqr(end) <= range * range;
         }
 

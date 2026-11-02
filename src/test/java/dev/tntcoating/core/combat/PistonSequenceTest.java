@@ -286,6 +286,24 @@ final class PistonSequenceTest {
     }
 
     @Test
+    void cooldownCompletesOnItsOwnTimerAndNeverTimesOut() {
+        PistonSequence seq = atCleanup(10);
+        seq.cleanupCompleted(11);
+        assertEquals(PistonSequence.PistonPhase.COOLDOWN, seq.phase());
+        for (int tick = 12; tick < 11 + PistonSequence.COOLDOWN_TICKS; tick++) {
+            assertTrue(seq.tick(tick).isEmpty(), "still cooling down at " + tick);
+        }
+        assertEquals(java.util.Optional.of("cooldown-complete"), seq.tick(11 + PistonSequence.COOLDOWN_TICKS));
+        assertTrue(seq.completed());
+        assertEquals(PistonSequence.PistonPhase.COOLDOWN, seq.phase());
+        // Neither the stage timeout nor the trap deadline may turn the finished trap into a failure.
+        assertTrue(seq.tick(11 + PistonSequence.TRAP_DEADLINE_TICKS * 2).isEmpty());
+        assertEquals(PistonSequence.PistonPhase.COOLDOWN, seq.phase());
+        assertFalse(seq.flags().manualCleanupRequired());
+        assertTrue(seq.flags().riskRetained(), "completion never retires risk");
+    }
+
+    @Test
     void cleanupAndCooldownCompletionNeverRetireRisk() {
         PistonSequence seq = atCleanup(10);
         assertTrue(seq.flags().riskRetained());

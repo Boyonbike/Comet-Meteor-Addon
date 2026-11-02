@@ -31,9 +31,16 @@ class CombatProfilesTest {
     }
 
     @Test
-    void productionRejectsWeakerSelfCeiling() {
+    void productionAcceptsRaisedSelfCeilingUpToMeteorRange() {
+        assertDoesNotThrow(() -> CombatProfiles.productionSafety(new Safety(4.0, 14.0, 2.0, 2.0)));
+        assertDoesNotThrow(() -> CombatProfiles.productionSafety(
+            new Safety(4.0, CombatDamagePolicy.MAX_SELF_DAMAGE_CEILING, 2.0, 2.0)));
+    }
+
+    @Test
+    void productionRejectsSelfCeilingAboveMeteorRange() {
         assertThrows(IllegalArgumentException.class,
-            () -> CombatProfiles.productionSafety(new Safety(4.0, 6.5, 2.0, 2.0)));
+            () -> CombatProfiles.productionSafety(new Safety(4.0, 36.5, 2.0, 2.0)));
     }
 
     @Test

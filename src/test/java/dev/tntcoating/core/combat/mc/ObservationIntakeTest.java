@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.tntcoating.core.combat.Box;
 import dev.tntcoating.core.combat.CombatSession;
 import dev.tntcoating.core.combat.EntityKey;
 import dev.tntcoating.core.combat.Observation;
@@ -351,5 +352,29 @@ final class ObservationIntakeTest {
         org.junit.jupiter.api.Assertions.assertTrue(second.healthKnown() && second.absorptionKnown());
         org.junit.jupiter.api.Assertions.assertEquals(11.0, second.health());
         org.junit.jupiter.api.Assertions.assertEquals(2.5, second.absorption());
+    }
+
+    @Test
+    void nonHealthFloatsAtSharedDataIdsAreIgnored() {
+        Fixture fixture = fixture();
+        ObservationIntake intake = fixture.intake();
+        // An Interaction's height sits at the health id and a Display's view range at the absorption id.
+        int hologram = fixture.client().putEntity(2, UUID.nameUUIDFromBytes("hologram".getBytes()),
+            "minecraft:interaction", new Vec(3.5, 64.0, 3.5), Box.around(new Vec(3.5, 64.0, 3.5), 0.5));
+        fixture.client().healthFields.put(hologram, CombatClient.HealthFields.NONE);
+        intake.apply(intake.record(1L, 3, 0, new ObservationIntake.RawEntityData(hologram, List.of(
+            new SynchedEntityData.DataValue<>(HEALTH_ID, EntityDataSerializers.FLOAT, 1.8f)))), null);
+        intake.apply(intake.record(1L, 4, 0, new ObservationIntake.RawEntityData(hologram, List.of(
+            new SynchedEntityData.DataValue<>(ABSORPTION_ID, EntityDataSerializers.FLOAT, 64.0f)))), null);
+        assertEquals(0, intake.queued());
+
+        // A mob has health but no synched absorption: a float at the absorption id is not its absorption.
+        int mob = fixture.client().putEntity(3, UUID.nameUUIDFromBytes("mob".getBytes()),
+            "minecraft:zombie", new Vec(5.5, 64.0, 5.5), Box.around(new Vec(5.5, 64.0, 5.5), 0.5));
+        fixture.client().healthFields.put(mob, CombatClient.HealthFields.HEALTH);
+        fixture.client().appliedHealth.put(mob, new CombatClient.HealthPair(15.0, 0.0));
+        intake.apply(intake.record(1L, 5, 0, new ObservationIntake.RawEntityData(mob, List.of(
+            new SynchedEntityData.DataValue<>(ABSORPTION_ID, EntityDataSerializers.FLOAT, 7.0f)))), null);
+        assertEquals(0, intake.queued());
     }
 }

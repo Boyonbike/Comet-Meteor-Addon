@@ -61,13 +61,13 @@ final class CrystalCombatRiskSnapshotTest {
         assertTrue(snapshot.visible(), "a sent action with outstanding risk must be displayed");
         assertTrue(snapshot.count() >= 1, "outstanding risk counts as debt");
         assertTrue(snapshot.bound() > 0.0, "outstanding risk carries a positive bound");
-        assertTrue(snapshot.displayLines().get(0).startsWith("risk debt: "));
+        assertTrue(snapshot.displayLines().get(0).startsWith("unresolved crystals: "));
         assertEquals(1, snapshot.displayLines().size(), "no suspension yet");
 
         fixture.budget.suspend(SuspensionCause.SERVER_STALL);
         controller.tick(2);
         assertTrue(controller.riskSnapshot().causes().contains(SuspensionCause.SERVER_STALL));
-        assertEquals(List.of("suspended: server stall"),
+        assertEquals(List.of("paused: server stalled"),
             controller.riskSnapshot().displayLines().subList(1, 2),
             "the source's suspension is published on its own line");
         assertEquals(2, controller.riskSnapshot().displayLines().size());
@@ -120,7 +120,7 @@ final class CrystalCombatRiskSnapshotTest {
         assertEquals(0, snapshot.count());
         assertEquals(0.0, snapshot.bound());
         assertTrue(snapshot.visible(), "the suspension is the reason players need to see");
-        assertEquals(List.of("suspended: setback"), snapshot.displayLines());
+        assertEquals(List.of("paused: rubber-banded, resuming shortly"), snapshot.displayLines());
         assertEquals(0, fixture.sink.attempts, "sampling never sends");
     }
 

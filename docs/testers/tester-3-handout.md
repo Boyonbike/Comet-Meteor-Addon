@@ -69,12 +69,13 @@ Only Barrier sends the extra packet. Strict and Meteor-style send no probe.
 `show-risk-debt` (Render, on by default) draws in the top-left corner:
 
 ```text
-risk debt: 2 outstanding (bound 12.00)
-suspended: incoherent health
+unresolved crystals: 2 (up to 12.0 damage)
+paused: rubber-banded, resuming shortly
 ```
 
-If the aura stalls with debt, record the model, the count and bound, and the suspension cause, then
-note whether it clears after the next health update or explosion. If the debt never clears during a
+If the aura stalls with unresolved crystals, record the model, the count and damage, and the pause
+reason, then note whether it clears after the next health update or explosion. Rubber-band, world-change
+and packet pauses should clear on their own within a second; a death pause clears after respawn. If the debt never clears during a
 quiet period, or the cause does not match what you did, stop and send the log. The overlay is
 read-only; it never changes a plan or a packet.
 
@@ -150,4 +151,5 @@ happens:
   release the slot;
 - auto-cleanup breaks a block it did not place, or breaks a pre-existing block;
 - an attack without a crystal, at the wrong target, or after disable/death;
-- the aura stays on `risk debt` or `suspended: ...` through a quiet period and never recovers.
+- the aura stays on `waiting for your crystals to resolve` or `paused: ...` through a quiet period and
+  never recovers.
