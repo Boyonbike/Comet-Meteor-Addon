@@ -351,6 +351,9 @@ public final class CombatEngine {
      */
     public void tick(int serverTick, DirectWorld world, Snapshot snapshot, DirectGateway gateway,
                      TickBudget budget) {
+        // The trap hand-off is per tick: a pass that returns early (pause, resolved sequence, no world)
+        // must not leave last tick's selection standing, or the controller would start a trap while paused.
+        trapSelected = false;
         if (disabled || !session.isOpen()) return;
         if (budget == null) budget = TickBudget.unlimited();
         cache.onSession(session.connection().epoch(), session.config());
@@ -678,7 +681,10 @@ public final class CombatEngine {
             candidates.add(view);
         }
         candidates.addAll(offeredPlans);
-        if (committedPlan != null) candidates.add(committedPlan);
+        // The trap owner may also offer its committed plan; rank it once so it cannot crowd the list.
+        if (committedPlan != null && offeredPlans.stream().noneMatch(plan -> plan.id() == committedPlan.id())) {
+            candidates.add(committedPlan);
+        }
 
         HybridGate gate = new HybridGate(world, directPlans);
         Choice choice = CombatChoice.choose(candidates, snapshot, gate);
@@ -1210,6 +1216,17 @@ public final class CombatEngine {
     public Optional<DirectPause> pauseReason(int serverTick, DirectWorld world) {
         if (disabled) return Optional.of(DirectPause.SCREEN);
         if (risk.suspended()) return Optional.of(DirectPause.SUSPENDED);
+        return playerPause(world);
+    }
+
+    /**
+     * The Pauses settings alone: eating, drinking, mining, screens, Baritone, the health floor and lag.
+     * They describe the player and the server rather than this engine, so the piston trap honours them
+     * too, including in PistonOnly where the engine itself never ticks.
+     */
+    public Optional<DirectPause> playerPause(DirectWorld world) {
+        if (world == null) return Optional.empty();
+        DirectSettings settings = this.settings;
         if (settings.pauseOnEating() && world.eating()) return Optional.of(DirectPause.EATING);
         if (settings.pauseOnDrinking() && world.drinking()) return Optional.of(DirectPause.DRINKING);
         if (settings.pauseOnMining() && world.mining()) return Optional.of(DirectPause.MINING);

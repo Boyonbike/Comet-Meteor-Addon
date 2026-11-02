@@ -27,6 +27,11 @@ public final class CombatDamagePolicy {
     public static final double MIN_TARGET_DAMAGE = 4.0;
     /** Plan defaults: maximum acceptable self upper bound. */
     public static final double MAX_SELF_DAMAGE = 6.0;
+    /**
+     * Highest self upper bound a player may opt into, matching Meteor's {@code max-damage} range. The default
+     * above stays the Conservative value; the cumulative remaining-health margin still applies on top.
+     */
+    public static final double MAX_SELF_DAMAGE_CEILING = 36.0;
     /** Plan defaults: required effective-health remainder after self damage (strictly greater). */
     public static final double MIN_REMAINING_HEALTH = 2.0;
     /** Plan defaults: maximum acceptable friend upper bound. */

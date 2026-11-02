@@ -29,6 +29,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Block;
@@ -344,5 +345,14 @@ public final class MinecraftCombatClient implements CombatClient {
         if (mc.level == null) return null;
         if (!(mc.level.getEntity(entityId) instanceof LivingEntity living)) return null;
         return new HealthPair(living.getHealth(), living.getAbsorptionAmount());
+    }
+
+    @Override
+    public HealthFields healthFields(int entityId) {
+        if (mc.level == null) return HealthFields.NONE;
+        Entity entity = mc.level.getEntity(entityId);
+        if (entity instanceof Player) return HealthFields.HEALTH_AND_ABSORPTION;
+        if (entity instanceof LivingEntity) return HealthFields.HEALTH;
+        return HealthFields.NONE;
     }
 }

@@ -37,7 +37,7 @@ final class CrystalCombatRiskSnapshotTest {
         assertTrue(controller.riskSnapshot().visible());
         assertTrue(controller.riskSnapshot().causes().contains(SuspensionCause.DEATH));
         assertTrue(controller.riskSnapshot().displayLines().stream()
-            .anyMatch(line -> line.contains("suspended: death")));
+            .anyMatch(line -> line.contains("paused: dead, resumes after respawn")));
     }
 
     @Test

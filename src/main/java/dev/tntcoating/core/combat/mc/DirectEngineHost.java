@@ -116,13 +116,27 @@ public final class DirectEngineHost {
         engine.onGenerationEnded();
     }
 
-    /** Applies a live settings change; the caller must have ended the generation first. */
+    /**
+     * Applies a live settings change; the caller must have ended the generation first. The reader stamps
+     * the safety envelope into every world view and the gateway reads rotations, so both follow the engine.
+     */
     public void reconfigure(DirectSettings settings) {
+        reader.reconfigure(settings);
+        gateway.reconfigure(settings);
         engine.reconfigure(settings);
     }
 
     public DirectPause pause() {
         return engine.pause();
+    }
+
+    /**
+     * The Pauses settings evaluated against a fresh world read, for the piston trap. PistonOnly never ticks
+     * the engine, so its own pause cannot be reused there. Null when nothing pauses or no world exists.
+     */
+    public DirectPause trapPause() {
+        DirectWorld world = reader.read();
+        return world == null ? null : engine.playerPause(world).orElse(null);
     }
 
     public CombatEngine engine() {
